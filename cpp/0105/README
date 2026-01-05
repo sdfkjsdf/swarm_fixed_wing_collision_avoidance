@@ -1,4 +1,4 @@
 
-[0105]의 시뮬링크 프로토타입 수정으로 다 다시 해주어야 하는 내용들
+[0104]의 시뮬링크 프로토타입 수정으로 다 다시 해주어야 하는 내용들
   1. 지금 setpoint 관련 주는 방식 자체가 달라짐 ( 기존에는 setpoint가 n,e,d,v 이었다면은 foramtion control 단에서는 아예 제어 입력에 yawrate, ne좌표계에서 표현된 속도) 로 제공
   2. 이전에는 q_cmd에 지금 g(seta) gradient g(seta)으로 saturation을 잘랐다면은 지금은 아에 dot seta_sp/dt 에서 잘라주어야 함
