@@ -1,0 +1,9 @@
+현재 구현이 된 것
+
+1. 비행영역보호 내용 수정 완료
+2. formation control의 출력인 ground_speed,roll의 setpoint, yawrate의 setpoint을 받을 수 있도록 수정
+
+앞으로 해야 할 것
+
+1.Ts 메시지 빌더를 만들어야 함
+2.formation control 제어 입력을 만들어야 함
