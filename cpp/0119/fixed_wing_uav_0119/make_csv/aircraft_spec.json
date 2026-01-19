@@ -1,0 +1,16 @@
+{
+  "max_speed": 40,
+  "min_speed": 22,
+  "max_roll": 40,
+  "min_roll": -40,
+  "max_pitch": 20,
+  "min_pitch": -10,
+  "max_p": 45,
+  "min_p": -45,
+  "max_q": 30,
+  "min_q": -30,
+  "max_r": 15,
+  "min_r": -15,
+  "max_at": 5,
+  "min_at": 0
+}
