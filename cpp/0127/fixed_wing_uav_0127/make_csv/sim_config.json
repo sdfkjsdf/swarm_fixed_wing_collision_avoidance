@@ -1,0 +1,6 @@
+{
+  "leader_follower_mode": true,
+  "wingman_distance": 50,
+  "right_angle_deg": 45,
+  "left_angle_deg": -45
+}
