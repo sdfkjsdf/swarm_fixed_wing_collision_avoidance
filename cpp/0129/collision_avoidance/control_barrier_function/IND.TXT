@@ -1,0 +1,44 @@
+#include <matrix/math.hpp>
+
+// 타입 정의 (사용자 환경에 맞게)
+using Vector11d = matrix::Vector<double, 11>;
+using Vector4d  = matrix::Vector<double, 4>;
+using Matrix11x4d = matrix::Matrix<double, 11, 4>;
+
+// 클래스 멤버 함수 구현
+void DynamicsLinearization::calculate_Bd_via_IND()
+{
+    const double epsilon = 1e-4; // 섭동 크기 (튜닝 가능)
+    const double dt = m_dt;
+
+    // 1. 기준 상태 (Nominal Drift) 계산: u = 0
+    // 입력이 0일 때 RK4를 한 번 돌려서 어디로 가는지 확인
+    Vector4d u_zero;
+    u_zero.setZero();
+    
+    // step_rk4는 현재 상태 x_k와 입력 u를 받아 x_{k+1}을 반환하는 함수라고 가정
+    Vector11d x_drift = step_rk4(m_x_k, u_zero, dt);
+
+    // 2. 각 입력 채널별로 섭동을 주어 변화량 측정 (IND)
+    // 4개의 입력 채널 (Roll, Pitch, Yaw, Thrust 등)
+    for (int i = 0; i < 4; i++) {
+        
+        // 섭동 입력 생성 (0에서 i번째만 살짝 톡 건드림)
+        Vector4d u_pert = u_zero;
+        u_pert(i) = epsilon; 
+
+        // 섭동된 상태 계산
+        Vector11d x_perturbed = step_rk4(m_x_k, u_pert, dt);
+
+        // 3. 차분(Finite Difference) 계산: (변한거 - 원래거) / 변화량
+        // B_d의 i번째 열(Column)을 채움
+        Vector11d col_i = (x_perturbed - x_drift) / epsilon;
+
+        // PX4 matrix 라이브러리에서 열(Column)에 값 넣기
+        for (int row = 0; row < 11; row++) {
+            m_Bd(row, i) = col_i(row);
+        }
+    }
+}
+
+지금 이 코드는 만약에 나중에 안될 떄 쓰기 위한 코드임.....
