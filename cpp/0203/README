@@ -1,14 +1,6 @@
-지금 단일개체에 대한 Fixed_wing_model을 구현
-클래스: ClassName (PascalCase)
+[구현을 한 내용 ]
+일단 중앙집중형 형태로 우선적으로 구현을 완료하였음
 
-파일: 클래스명과 완전 동일
-
-GainParameter.h/.cpp
-
-GenerateRollPitchSetPoint.h/.cpp
-
-NdiParameter.h/.cpp
-
-FixedWingDynamics.h/.cpp
-
-FixedWingSpec.h/.cpp
+[구현을 해야 하는 내용]
+전체 제약조건에 대해서 지금 일단 qp 솔버가 돌아가는지 안 돌아가는 지를 확인을 해야 함
+확인 후 지금 나중에 판단을 해야 함
