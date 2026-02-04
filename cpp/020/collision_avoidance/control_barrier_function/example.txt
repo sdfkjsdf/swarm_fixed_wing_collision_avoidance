@@ -1,0 +1,59 @@
+#include <collision_avoidance/control_barrier_function/QpOasesHelper.h>
+
+void solve_cbf_qp()
+{
+    const int nV = 4;  // [p_cmd, q_cmd, r_cmd, at_cmd]
+    const int nC = 1;  // CBF 제약
+
+    // 목적 함수
+    matrix::Matrix<double, nV, nV> H_mat;
+    H_mat.setIdentity();
+    
+    matrix::Vector<double, nV> g_vec;
+    // ... 설정 ...
+
+    // 제약조건 A*x >= b (CBF)
+    matrix::Matrix<double, nC, nV> A_mat;
+    // ... 설정 ...
+
+    // 변수 바운드: -C1 <= x <= C2
+    // 예: p_cmd, q_cmd, r_cmd는 ±30 deg/s, at_cmd는 ±5 m/s²
+    matrix::Vector<double, nV> c1, c2;
+    c1(0) = 0.5; c1(1) = 0.5; c1(2) = 0.5; c1(3) = 5.0;  // 하한 크기
+    c2(0) = 0.5; c2(1) = 0.5; c2(2) = 0.5; c2(3) = 5.0;  // 상한 크기
+
+    // ===== qpOASES 배열로 변환 =====
+    real_t H[nV * nV], g[nV], A[nC * nV];
+    real_t lb[nV], ub[nV];       // 변수 바운드
+    real_t lbA[nC], ubA[nC];     // 제약 바운드
+
+    qp_helper::toQpArray(H_mat, H);
+    qp_helper::toQpArray(g_vec, g);
+    qp_helper::toQpArray(A_mat, A);
+
+    // -c1 <= x <= c2
+    qp_helper::setVariableBounds(c1, c2, lb, ub);
+
+    // 또는 대칭이면: -c <= x <= c
+    // qp_helper::setVariableBoundsSymmetric(c, lb, ub);
+
+    // 또는 모두 같으면: -0.5 <= x_i <= 0.5
+    // qp_helper::setVariableBoundsUniform(0.5, lb, ub);
+
+    // CBF 제약: A*x >= b
+    qp_helper::setGeq(b_cbf, lbA, ubA);
+
+    // ===== QP 풀기 =====
+    QProblem qp(nV, nC);
+    Options options;
+    options.printLevel = PL_NONE;
+    qp.setOptions(options);
+
+    int nWSR = 100;
+    qp.init(H, g, A, lb, ub, lbA, ubA, nWSR);  // lb, ub 추가!
+
+    // 결과
+    real_t u_arr[nV];
+    qp.getPrimalSolution(u_arr);
+    matrix::Vector<double, nV> u_opt = qp_helper::toVector<nV>(u_arr);
+}
