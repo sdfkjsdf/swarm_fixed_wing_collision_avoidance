@@ -1,0 +1,139 @@
+================================================================================
+Git 다른 계정 Private 레포에 업로드하는 방법
+================================================================================
+
+[사전 준비]
+1. GitHub에서 Personal Access Token (PAT) 발급
+   - Settings > Developer settings > Personal access tokens > Generate new token
+   - repo 권한 체크
+   - 토큰 복사해두기
+
+================================================================================
+
+[순서]
+
+1. 작업 폴더 이동 (원본 폴더 바깥에서 clone 해야 순환 복사 방지)
+   cd c:\Users\alvin\Documents
+
+2. 기존 clone 폴더가 있으면 삭제
+   Remove-Item -Recurse -Force swarm_fixed_wing_collision_avoidance
+
+3. 토큰으로 clone
+   git clone https://토큰@github.com/사용자명/레포명.git
+
+4. clone한 폴더로 이동
+   cd swarm_fixed_wing_collision_avoidance
+
+5. Git 사용자 설정 (해당 레포에만 적용)
+   git config user.email "your_email@gmail.com"
+   git config user.name "사용자명"
+
+6. 기존 폴더 내용 삭제 (덮어쓰기 위해)
+   Remove-Item -Recurse -Force "GitHub폴더경로\*"
+
+7. 원본 폴더 복사 (build, .vs 폴더 제외)
+   robocopy "로컬원본폴더경로" "GitHub폴더경로" /E /XD build .vs
+   
+   또는 PowerShell:
+   Copy-Item -Path "로컬원본폴더경로\*" -Destination "GitHub폴더경로" -Recurse -Exclude "build",".vs"
+
+8. 스테이징 & 커밋
+   git add .
+   git commit -m "커밋 메시지"
+
+9. 푸시
+   git push
+
+   만약 rejected 에러 발생 시:
+   git push --force
+
+================================================================================
+
+[GitHub 폴더 경로 지정 방법]
+
+clone 후 로컬 폴더 구조 = GitHub 레포 구조
+
+예시 레포 구조:
+swarm_fixed_wing_collision_avoidance/
+├── cpp/
+│   ├── 0105/
+│   ├── 0109/
+│   ├── 0130/
+│   └── 0131/
+├── simulink_prototype/
+└── README.md
+
+| 업로드 위치              | GitHub폴더경로 값      |
+|-------------------------|----------------------|
+| cpp/0130/               | "cpp\0130"           |
+| cpp/0131/ (새 폴더)      | "cpp\0131"           |
+| simulink_prototype/test/ | "simulink_prototype\test" |
+| 레포 루트에 바로          | "."                  |
+
+※ clone한 폴더 안에서 상대 경로로 지정
+※ 새 폴더는 자동 생성됨
+
+================================================================================
+
+[문제 해결]
+
+Q: "fatal: You are not currently on a branch" 에러
+A: git rebase --abort
+   git checkout main
+   git push --force
+
+Q: "circular copy" 순환 복사 에러
+A: clone을 원본 폴더 바깥에서 해야 함
+
+Q: "Please tell me who you are" 에러
+A: git config user.email "이메일"
+   git config user.name "이름"
+
+Q: "rejected - fetch first" 에러  
+A: git push --force (본인 레포면 OK)
+
+Q: PowerShell에서 rmdir /s /q 안됨
+A: Remove-Item -Recurse -Force 폴더명
+
+Q: "컨테이너를 기존 리프 항목에 복사할 수 없습니다" 에러
+A: 기존 폴더 삭제 후 복사
+   Remove-Item -Recurse -Force "GitHub폴더경로\*"
+
+================================================================================
+
+[요약 - 한 번에 실행]
+
+※ 아래 값들을 본인 환경에 맞게 수정:
+   - 토큰: GitHub Personal Access Token
+   - 사용자명: GitHub 사용자명
+   - 레포명: GitHub 레포지토리 이름
+   - 이메일: GitHub 계정 이메일
+   - 로컬원본폴더경로: 업로드할 폴더의 전체 경로
+   - GitHub폴더경로: 레포 내 업로드 위치 (상대 경로)
+
+cd c:\Users\alvin\Documents
+Remove-Item -Recurse -Force 레포명
+git clone https://토큰@github.com/사용자명/레포명.git
+cd 레포명
+git config user.email "이메일"
+git config user.name "사용자명"
+Remove-Item -Recurse -Force "GitHub폴더경로\*"
+robocopy "로컬원본폴더경로" "GitHub폴더경로" /E /XD build .vs
+git add .
+git commit -m "커밋 메시지"
+git push --force
+
+================================================================================
+
+[실제 사용 예시]
+
+예시 1: cpp/0130에 업로드
+robocopy "c:\Users\alvin\Documents\fixed_wing_uav_0130" "cpp\0130" /E /XD build .vs
+
+예시 2: cpp/0131 새 폴더에 업로드
+robocopy "c:\Users\alvin\Documents\fixed_wing_uav_0131" "cpp\0131" /E /XD build .vs
+
+예시 3: simulink 폴더에 업로드
+robocopy "c:\Users\alvin\Documents\my_simulink" "simulink_prototype\0130" /E /XD build .vs
+
+================================================================================

@@ -1,1 +1,14 @@
+지금 단일개체에 대한 Fixed_wing_model을 구현
+클래스: ClassName (PascalCase)
 
+파일: 클래스명과 완전 동일
+
+GainParameter.h/.cpp
+
+GenerateRollPitchSetPoint.h/.cpp
+
+NdiParameter.h/.cpp
+
+FixedWingDynamics.h/.cpp
+
+FixedWingSpec.h/.cpp
