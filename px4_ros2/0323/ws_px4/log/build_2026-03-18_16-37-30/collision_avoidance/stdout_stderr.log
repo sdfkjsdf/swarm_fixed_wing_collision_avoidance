@@ -1,0 +1,12 @@
+[35m[1mConsolidate compiler generated dependencies of target collision_avoidance_node[0m
+[ 50%] [32mBuilding CXX object CMakeFiles/collision_avoidance_node.dir/src/main.cpp.o[0m
+[01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/main.cpp:[m[K In function ‘[01m[Kint main(int, char**)[m[K’:
+[01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/main.cpp:2:7:[m[K [01;31m[Kerror: [m[K‘[01m[Krclcpp[m[K’ has not been declared
+    2 |       [01;31m[Krclcpp[m[K::init(argc, argv);
+      |       [01;31m[K^~~~~~[m[K
+[01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/main.cpp:3:7:[m[K [01;31m[Kerror: [m[K‘[01m[Krclcpp[m[K’ has not been declared
+    3 |       [01;31m[Krclcpp[m[K::shutdown();
+      |       [01;31m[K^~~~~~[m[K
+gmake[2]: *** [CMakeFiles/collision_avoidance_node.dir/build.make:76: CMakeFiles/collision_avoidance_node.dir/src/main.cpp.o] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:137: CMakeFiles/collision_avoidance_node.dir/all] Error 2
+gmake: *** [Makefile:146: all] Error 2

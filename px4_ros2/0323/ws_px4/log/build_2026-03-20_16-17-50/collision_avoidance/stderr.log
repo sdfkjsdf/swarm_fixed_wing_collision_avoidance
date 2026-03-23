@@ -1,0 +1,6 @@
+/usr/bin/ld: CMakeFiles/collision_avoidance_node.dir/src/CollisionAvoidanceControl.cpp.o: in function `safetyfilter::CollisionAvoidanceControl::arm()':
+CollisionAvoidanceControl.cpp:(.text+0x670): undefined reference to `safetyfilter::CollisionAvoidanceControl::publish_vehicle_command(unsigned short, float, float)'
+collect2: error: ld returned 1 exit status
+gmake[2]: *** [CMakeFiles/collision_avoidance_node.dir/build.make:176: collision_avoidance_node] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:137: CMakeFiles/collision_avoidance_node.dir/all] Error 2
+gmake: *** [Makefile:146: all] Error 2

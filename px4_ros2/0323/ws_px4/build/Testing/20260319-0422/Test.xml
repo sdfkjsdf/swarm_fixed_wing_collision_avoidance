@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Site BuildName="(empty)"
+	BuildStamp="20260319-0422-Experimental"
+	Name="leedonghyuck-System-Product-Name"
+	Generator="ctest-3.22.1"
+	CompilerName="/usr/bin/c++"
+	CompilerVersion="11.4.0"
+	OSName="Linux"
+	Hostname="leedonghyuck-System-Product-Name"
+	OSRelease="6.8.0-106-generic"
+	OSVersion="#106~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Fri Mar  6 08:44:59 UTC "
+	OSPlatform="x86_64"
+	Is64Bits="1"
+	VendorString="AuthenticAMD"
+	VendorID="Advanced Micro Devices"
+	FamilyID="23"
+	ModelID="113"
+	ProcessorCacheSize="512"
+	NumberOfLogicalCPU="32"
+	NumberOfPhysicalCPU="16"
+	TotalVirtualMemory="2047"
+	TotalPhysicalMemory="64204"
+	LogicalProcessorsPerPhysical="2"
+	ProcessorClockFrequency="4275.1"
+	>
+	<Testing>
+		<StartDateTime>Mar 19 13:22 KST</StartDateTime>
+		<StartTestTime>1773894178</StartTestTime>
+		<TestList/>
+		<EndDateTime>Mar 19 13:22 KST</EndDateTime>
+		<EndTestTime>1773894178</EndTestTime>
+		<ElapsedMinutes>0</ElapsedMinutes>
+	</Testing>
+</Site>

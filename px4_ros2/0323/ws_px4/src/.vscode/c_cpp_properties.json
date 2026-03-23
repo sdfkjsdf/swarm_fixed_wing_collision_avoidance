@@ -1,0 +1,39 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/leedonghyuck/ws_px4/install/px4_ros_com/include/**",
+        "/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/**",
+        "/home/leedonghyuck/ws_px4/install/px4_msgs/include/**",
+        "/opt/ros/humble/include/**",
+        "/home/leedonghyuck/ws_px4/src/collision_avoidance/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/executor_with_multiple_modes/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/fw_attitude/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/goto/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/goto_global/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/manual/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/mission/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/mode_with_executor/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/rover_velocity/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/rtl_replacement/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/vtol/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/navigation/global_navigation/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/navigation/local_navigation/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/px4_ros2_cpp/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/px4_ros2_py/include/**",
+        "/home/leedonghyuck/ws_px4/src/px4_ros_com/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

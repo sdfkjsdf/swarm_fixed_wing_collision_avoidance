@@ -1,0 +1,22 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/leedonghyuck/ws_px4/install/px4_ros_com/local/lib/python3.10/dist-packages",
+        "/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages",
+        "/home/leedonghyuck/ws_px4/install/example_mode_goto_py/lib/python3.10/site-packages",
+        "/home/leedonghyuck/ws_px4/install/px4_ros2_py/local/lib/python3.10/dist-packages",
+        "/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/leedonghyuck/ws_px4/install/px4_ros_com/local/lib/python3.10/dist-packages",
+        "/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages",
+        "/home/leedonghyuck/ws_px4/install/example_mode_goto_py/lib/python3.10/site-packages",
+        "/home/leedonghyuck/ws_px4/install/px4_ros2_py/local/lib/python3.10/dist-packages",
+        "/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "cmake.sourceDirectory": "/home/leedonghyuck/ws_px4/src/collision_avoidance",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json"
+}

@@ -1,0 +1,242 @@
+[0.010s] Invoking command in '/home/leedonghyuck/ws_px4/build/px4_ros2_cpp': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake /home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/px4_ros2_cpp -DCMAKE_INSTALL_PREFIX=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp
+[0.061s] -- The C compiler identification is GNU 11.4.0
+[0.108s] -- The CXX compiler identification is GNU 11.4.0
+[0.115s] -- Detecting C compiler ABI info
+[0.178s] -- Detecting C compiler ABI info - done
+[0.185s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.185s] -- Detecting C compile features
+[0.185s] -- Detecting C compile features - done
+[0.187s] -- Detecting CXX compiler ABI info
+[0.264s] -- Detecting CXX compiler ABI info - done
+[0.279s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.279s] -- Detecting CXX compile features
+[0.280s] -- Detecting CXX compile features - done
+[0.284s] -- Found ament_cmake: 1.3.13 (/opt/ros/humble/share/ament_cmake/cmake)
+[0.416s] -- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+[0.509s] -- Found ament_index_cpp: 1.4.1 (/opt/ros/humble/share/ament_index_cpp/cmake)
+[0.511s] -- Found rclcpp: 16.0.18 (/opt/ros/humble/share/rclcpp/cmake)
+[0.546s] -- Found rosidl_generator_c: 3.1.8 (/opt/ros/humble/share/rosidl_generator_c/cmake)
+[0.550s] -- Found rosidl_adapter: 3.1.8 (/opt/ros/humble/share/rosidl_adapter/cmake)
+[0.557s] -- Found rosidl_generator_cpp: 3.1.8 (/opt/ros/humble/share/rosidl_generator_cpp/cmake)
+[0.567s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.580s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.621s] -- Found rmw_implementation_cmake: 6.1.2 (/opt/ros/humble/share/rmw_implementation_cmake/cmake)
+[0.623s] -- Found rmw_fastrtps_cpp: 6.2.10 (/opt/ros/humble/share/rmw_fastrtps_cpp/cmake)
+[0.715s] -- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version "3.0.2")  
+[0.745s] -- Found FastRTPS: /opt/ros/humble/include  
+[0.789s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[0.797s] -- Looking for pthread.h
+[0.862s] -- Looking for pthread.h - found
+[0.862s] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+[0.929s] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+[0.929s] -- Found Threads: TRUE  
+[0.979s] -- Found px4_msgs: 2.0.1 (/home/leedonghyuck/ws_px4/install/px4_msgs/share/px4_msgs/cmake)
+[0.991s] -- Found eigen3_cmake_module: 0.1.1 (/opt/ros/humble/share/eigen3_cmake_module/cmake)
+[0.999s] -- Found Eigen3: TRUE (found version "3.4.0") 
+[1.050s] -- Found ament_lint_auto: 0.12.15 (/opt/ros/humble/share/ament_lint_auto/cmake)
+[1.051s] -- Found ament_cmake_gtest: 1.3.13 (/opt/ros/humble/share/ament_cmake_gtest/cmake)
+[1.122s] -- Found gtest sources under '/opt/ros/humble/src/gtest_vendor': C++ tests using 'Google Test' will be built
+[1.129s] -- Added test 'copyright' to check source files copyright and LICENSE
+[1.138s] -- Added test 'cppcheck' to perform static code analysis on C / C++ code
+[1.138s] -- Configured cppcheck include dirs: /home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/px4_ros2_cpp/include
+[1.139s] -- Configured cppcheck exclude dirs and/or files: 
+[1.148s] -- Added test 'cpplint' to check C / C++ code against the Google style
+[1.148s] -- Configured cpplint exclude dirs and/or files: 
+[1.151s] -- Added test 'lint_cmake' to check CMake code style
+[1.162s] -- Added test 'uncrustify' to check C / C++ code style
+[1.162s] -- Configured uncrustify additional arguments: 
+[1.163s] -- Added test 'xmllint' to check XML markup files
+[1.164s] -- Configuring done
+[1.192s] -- Generating done
+[1.200s] -- Build files have been written to: /home/leedonghyuck/ws_px4/build/px4_ros2_cpp
+[1.209s] Invoked command in '/home/leedonghyuck/ws_px4/build/px4_ros2_cpp' returned '0': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake /home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/px4_ros2_cpp -DCMAKE_INSTALL_PREFIX=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp
+[1.211s] Invoking command in '/home/leedonghyuck/ws_px4/build/px4_ros2_cpp': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --build /home/leedonghyuck/ws_px4/build/px4_ros2_cpp -- -j32 -l32
+[1.260s] [  1%] [32mBuilding CXX object CMakeFiles/unit_utils.dir/test/unit/utils/util.cpp.o[0m
+[1.260s] [  3%] [32mBuilding CXX object gtest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o[0m
+[1.260s] [  4%] [34m[1mGenerating px4_all_messages.hpp using empy[0m
+[1.261s] [  6%] [32mBuilding CXX object gtest/CMakeFiles/gtest.dir/src/gtest-all.cc.o[0m
+[1.264s] [  7%] [32mBuilding CXX object CMakeFiles/integration_utils.dir/test/integration/util.cpp.o[0m
+[1.306s] [  7%] Built target generate_px4_header
+[1.338s] [ 10%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/components/health_and_arming_checks.cpp.o[0m
+[1.338s] [ 10%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/components/registration.cpp.o[0m
+[1.339s] [ 19%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/components/mode.cpp.o[0m
+[1.339s] [ 21%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/experimental/rover/position.cpp.o[0m
+[1.339s] [ 22%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/experimental/rover/speed_attitude.cpp.o[0m
+[1.339s] [ 24%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/components/message_compatibility_check.cpp.o[0m
+[1.339s] [ 19%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/components/mode_executor.cpp.o[0m
+[1.339s] [ 25%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/experimental/attitude.cpp.o[0m
+[1.339s] [ 19%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/components/manual_control_input.cpp.o[0m
+[1.339s] [ 19%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/direct_actuators.cpp.o[0m
+[1.339s] [ 25%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/peripheral_actuators.cpp.o[0m
+[1.339s] [ 28%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/experimental/rover/speed_rate.cpp.o[0m
+[1.339s] [ 28%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/experimental/rover/speed_steering.cpp.o[0m
+[1.339s] [ 31%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/experimental/rates.cpp.o[0m
+[1.339s] [ 33%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/components/overrides.cpp.o[0m
+[1.339s] [ 25%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/components/wait_for_fmu.cpp.o[0m
+[1.339s] [ 34%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/experimental/rover/throttle_attitude.cpp.o[0m
+[1.339s] [ 34%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/experimental/rover/throttle_steering.cpp.o[0m
+[1.340s] [ 37%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/experimental/trajectory.cpp.o[0m
+[1.340s] [ 37%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/multicopter/goto.cpp.o[0m
+[1.340s] [ 39%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/fixedwing/lateral_longitudinal.cpp.o[0m
+[1.342s] [ 40%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/setpoint_types/experimental/rover/throttle_rate.cpp.o[0m
+[1.343s] [ 42%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/mission/actions/default_actions.cpp.o[0m
+[1.344s] [ 45%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/control/vtol.cpp.o[0m
+[1.344s] [ 45%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/mission/mission_executor.cpp.o[0m
+[1.347s] [ 46%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/mission/mission.cpp.o[0m
+[1.347s] [ 50%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/mission/trajectory/multicopter/waypoint_trajectory_executor.cpp.o[0m
+[1.347s] [ 50%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/navigation/experimental/global_position_measurement_interface.cpp.o[0m
+[2.732s] [ 51%] [32m[1mLinking CXX static library libgtest_main.a[0m
+[2.968s] [ 51%] Built target gtest_main
+[2.999s] [ 53%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/navigation/experimental/local_position_measurement_interface.cpp.o[0m
+[4.704s] [ 54%] [32m[1mLinking CXX shared library libunit_utils.so[0m
+[5.037s] [ 54%] Built target unit_utils
+[5.061s] [ 56%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/odometry/airspeed.cpp.o[0m
+[6.053s] [ 57%] [32m[1mLinking CXX static library libgtest.a[0m
+[6.323s] [ 57%] Built target gtest
+[6.355s] [ 59%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/odometry/odometry.cpp.o[0m
+[7.814s] [ 60%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/odometry/angular_velocity.cpp.o[0m
+[8.903s] [ 62%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/odometry/attitude.cpp.o[0m
+[9.490s] [ 63%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/odometry/global_position.cpp.o[0m
+[9.550s] [ 65%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/odometry/local_position.cpp.o[0m
+[9.651s] [ 66%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/utils/geodesic.cpp.o[0m
+[9.666s] [ 68%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp.dir/src/utils/map_projection_impl.cpp.o[0m
+[14.532s] [ 69%] [32m[1mLinking CXX shared library libintegration_utils.so[0m
+[14.892s] [ 69%] Built target integration_utils
+[19.290s] [ 71%] [32m[1mLinking CXX shared library libpx4_ros2_cpp.so[0m
+[24.871s] [ 71%] Built target px4_ros2_cpp
+[24.891s] [ 72%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp_unit_tests.dir/test/unit/global_navigation.cpp.o[0m
+[24.891s] [ 74%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp_unit_tests.dir/test/unit/main.cpp.o[0m
+[24.891s] [ 77%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp_unit_tests.dir/test/unit/mission_execution.cpp.o[0m
+[24.891s] [ 77%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp_unit_tests.dir/test/unit/local_navigation.cpp.o[0m
+[24.892s] [ 80%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp_unit_tests.dir/test/unit/modes.cpp.o[0m
+[24.892s] [ 80%] [32mBuilding CXX object CMakeFiles/integration_tests.dir/test/integration/arming_check.cpp.o[0m
+[24.892s] [ 81%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp_unit_tests.dir/test/unit/utils/map_projection_impl.cpp.o[0m
+[24.892s] [ 83%] [32mBuilding CXX object CMakeFiles/integration_tests.dir/test/integration/mission.cpp.o[0m
+[24.892s] [ 84%] [32mBuilding CXX object CMakeFiles/integration_tests.dir/test/integration/mode_executor.cpp.o[0m
+[24.893s] [ 90%] [32mBuilding CXX object CMakeFiles/integration_tests.dir/test/integration/overrides.cpp.o[0m
+[24.893s] [ 90%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp_unit_tests.dir/test/unit/shared_subscription.cpp.o[0m
+[24.893s] [ 90%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp_unit_tests.dir/test/unit/utils/geometry.cpp.o[0m
+[24.893s] [ 90%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp_unit_tests.dir/test/unit/utils/frame_conversion.cpp.o[0m
+[24.893s] [ 92%] [32mBuilding CXX object CMakeFiles/px4_ros2_cpp_unit_tests.dir/test/unit/utils/geodesic.cpp.o[0m
+[24.894s] [ 93%] [32mBuilding CXX object CMakeFiles/integration_tests.dir/test/integration/mode.cpp.o[0m
+[24.895s] [ 95%] [32mBuilding CXX object CMakeFiles/integration_tests.dir/test/integration/global_navigation.cpp.o[0m
+[24.895s] [ 96%] [32mBuilding CXX object CMakeFiles/integration_tests.dir/test/integration/local_navigation.cpp.o[0m
+[33.632s] [ 98%] [32m[1mLinking CXX executable integration_tests[0m
+[35.308s] [ 98%] Built target integration_tests
+[39.739s] [100%] [32m[1mLinking CXX executable px4_ros2_cpp_unit_tests[0m
+[41.897s] [100%] Built target px4_ros2_cpp_unit_tests
+[41.909s] Invoked command in '/home/leedonghyuck/ws_px4/build/px4_ros2_cpp' returned '0': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --build /home/leedonghyuck/ws_px4/build/px4_ros2_cpp -- -j32 -l32
+[41.911s] Invoking command in '/home/leedonghyuck/ws_px4/build/px4_ros2_cpp': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --install /home/leedonghyuck/ws_px4/build/px4_ros2_cpp
+[41.917s] -- Install configuration: ""
+[41.917s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/environment/library_path.sh
+[41.917s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/environment/library_path.dsv
+[41.917s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/utils
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/utils/geodesic.hpp
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/utils/message_version.hpp
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/utils/geometry.hpp
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/utils/frame_conversion.hpp
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/utils/subscription.hpp
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/utils/groups.dox
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/utils/visit.hpp
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/health_and_arming_checks.hpp
+[41.918s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/manual_control_input.hpp
+[41.919s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/message_compatibility_check.hpp
+[41.919s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/overrides.hpp
+[41.919s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/mode_executor.hpp
+[41.919s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/wait_for_fmu.hpp
+[41.919s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/groups.dox
+[41.919s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/shared_subscription.hpp
+[41.919s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/events.hpp
+[41.919s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/node_with_mode.hpp
+[41.919s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/components/mode.hpp
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/common
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/common/context.hpp
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/common/setpoint_base.hpp
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/common/exception.hpp
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/common/requirement_flags.hpp
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/common/frame.hpp
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/vtol.hpp
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental
+[41.920s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/attitude.hpp
+[41.921s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/trajectory.hpp
+[41.921s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/rover
+[41.921s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/rover/position.hpp
+[41.921s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/rover/speed_rate.hpp
+[41.921s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/rover/throttle_attitude.hpp
+[41.921s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/rover/speed_steering.hpp
+[41.921s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/rover/throttle_steering.hpp
+[41.921s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/rover/throttle_rate.hpp
+[41.921s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/rover/speed_attitude.hpp
+[41.922s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/experimental/rates.hpp
+[41.922s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/fixedwing
+[41.922s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/fixedwing/lateral_longitudinal.hpp
+[41.922s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/direct_actuators.hpp
+[41.922s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/groups.dox
+[41.922s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/multicopter
+[41.922s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/setpoint_types/multicopter/goto.hpp
+[41.922s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/groups.dox
+[41.922s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/control/peripheral_actuators.hpp
+[41.922s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/navigation
+[41.923s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/navigation/experimental
+[41.923s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/navigation/experimental/local_position_measurement_interface.hpp
+[41.923s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/navigation/experimental/global_position_measurement_interface.hpp
+[41.923s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/navigation/experimental/navigation_interface_base.hpp
+[41.923s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/navigation/groups.dox
+[41.923s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/vehicle_state
+[41.923s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/vehicle_state/land_detected.hpp
+[41.923s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/vehicle_state/vehicle_status.hpp
+[41.923s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/vehicle_state/battery.hpp
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/vehicle_state/groups.dox
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/vehicle_state/home_position.hpp
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/vehicle_state/vtol_status.hpp
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/mission.hpp
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/trajectory
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/trajectory/trajectory_executor.hpp
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/trajectory/multicopter
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/trajectory/multicopter/groups.dox
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/trajectory/multicopter/waypoint_trajectory_executor.hpp
+[41.924s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/groups.dox
+[41.925s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/mission_executor.hpp
+[41.925s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/actions
+[41.925s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/actions/default_actions.hpp
+[41.925s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/actions/action.hpp
+[41.925s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/mission/actions/groups.dox
+[41.925s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/third_party
+[41.925s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/third_party/nlohmann
+[41.925s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/third_party/nlohmann/json_fwd.hpp
+[41.925s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/third_party/nlohmann/json.hpp
+[41.926s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/odometry
+[41.926s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/odometry/odometry.hpp
+[41.927s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/odometry/attitude.hpp
+[41.927s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/odometry/angular_velocity.hpp
+[41.927s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/odometry/local_position.hpp
+[41.927s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/odometry/groups.dox
+[41.927s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/odometry/global_position.hpp
+[41.927s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/include/px4_ros2/odometry/airspeed.hpp
+[41.927s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib/libpx4_ros2_cpp.so
+[41.991s] -- Set runtime path of "/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib/libpx4_ros2_cpp.so" to ""
+[41.991s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/ament_index/resource_index/package_run_dependencies/px4_ros2_cpp
+[41.991s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/ament_index/resource_index/parent_prefix_path/px4_ros2_cpp
+[41.991s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/environment/ament_prefix_path.sh
+[41.991s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/environment/ament_prefix_path.dsv
+[41.992s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/environment/path.sh
+[41.992s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/environment/path.dsv
+[41.992s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/local_setup.bash
+[41.992s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/local_setup.sh
+[41.992s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/local_setup.zsh
+[41.992s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/local_setup.dsv
+[41.992s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/package.dsv
+[41.992s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/ament_index/resource_index/packages/px4_ros2_cpp
+[41.993s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/cmake/px4_ros2_cppExport.cmake
+[41.993s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/cmake/px4_ros2_cppExport-noconfig.cmake
+[41.993s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/cmake/ament_cmake_export_targets-extras.cmake
+[41.993s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/cmake/ament_cmake_export_dependencies-extras.cmake
+[41.993s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/cmake/px4_ros2_cppConfig.cmake
+[41.993s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/cmake/px4_ros2_cppConfig-version.cmake
+[41.993s] -- Installing: /home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/package.xml
+[41.996s] Invoked command in '/home/leedonghyuck/ws_px4/build/px4_ros2_cpp' returned '0': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --install /home/leedonghyuck/ws_px4/build/px4_ros2_cpp

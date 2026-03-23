@@ -1,0 +1,13 @@
+package.xml
+setup.cfg
+setup.py
+../../../../../../build/example_mode_goto_py/example_mode_goto_py.egg-info/PKG-INFO
+../../../../../../build/example_mode_goto_py/example_mode_goto_py.egg-info/SOURCES.txt
+../../../../../../build/example_mode_goto_py/example_mode_goto_py.egg-info/dependency_links.txt
+../../../../../../build/example_mode_goto_py/example_mode_goto_py.egg-info/entry_points.txt
+../../../../../../build/example_mode_goto_py/example_mode_goto_py.egg-info/requires.txt
+../../../../../../build/example_mode_goto_py/example_mode_goto_py.egg-info/top_level.txt
+../../../../../../build/example_mode_goto_py/example_mode_goto_py.egg-info/zip-safe
+example_mode_goto_py/__init__.py
+example_mode_goto_py/mode.py
+resource/example_mode_goto_py

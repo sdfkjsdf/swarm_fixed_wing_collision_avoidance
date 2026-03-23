@@ -1,0 +1,79 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-465f7f02970b80de3106.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.12"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "example_mode_fw_attitude_cpp",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "example_mode_fw_attitude::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-example_mode_fw_attitude-e36a666b5e460f4b05c3.json",
+					"name" : "example_mode_fw_attitude",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "example_mode_fw_attitude_cpp_uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-example_mode_fw_attitude_cpp_uninstall-da5261798fdb5bfef483.json",
+					"name" : "example_mode_fw_attitude_cpp_uninstall",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-uninstall-24a56c3f374ea1fc84d7.json",
+					"name" : "uninstall",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/leedonghyuck/ws_px4/build/example_mode_fw_attitude_cpp",
+		"source" : "/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/fw_attitude"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 3
+	}
+}

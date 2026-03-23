@@ -1,0 +1,10 @@
+OffboardControlMode에서 어떤 것을 true로 켜느냐에 따라 다른 setpoint 메시지를 보내야 합니다:
+
+OffboardControlMode 설정	보내야 할 Setpoint 메시지
+position = true	TrajectorySetpoint (x, y, z 위치)
+velocity = true	TrajectorySetpoint (vx, vy, vz 속도)
+acceleration = true	TrajectorySetpoint (acceleration)
+attitude = true	VehicleAttitudeSetpoint
+body_rate = true	VehicleRatesSetpoint
+thrust_and_torque = true	VehicleThrustSetpoint + VehicleTorqueSetpoint
+지금 코드에서 msg.position = true로 되어 있으니까 → **TrajectorySetpoint**을 보내면 됩니다.

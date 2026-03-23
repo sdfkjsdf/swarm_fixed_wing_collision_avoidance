@@ -1,0 +1,17 @@
+Metadata-Version: 2.1
+Name: example-mode-goto-py
+Version: 0.0.1
+Summary: Example
+Home-page: UNKNOWN
+Author: beat kueng
+Author-email: beat-kueng@gmx.net
+License: BSD-3-Clause
+Keywords: ROS
+Platform: UNKNOWN
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python
+Classifier: Topic :: Software Development
+Provides-Extra: test
+
+UNKNOWN
+

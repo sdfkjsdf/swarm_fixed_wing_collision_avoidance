@@ -1,0 +1,3 @@
+[console_scripts]
+test = example_mode_with_rclpy_py.test:main
+

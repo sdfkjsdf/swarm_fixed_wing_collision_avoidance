@@ -1,0 +1,37 @@
+[0.728s] Invoking command in '/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/python/modes/goto_with_rclpy': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages:/home/leedonghyuck/ws_px4/install/px4_ros2_py/local/lib/python3.10/dist-packages:/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../../../../../build/example_mode_with_rclpy_py build --build-base /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/build install --record /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/install.log --single-version-externally-managed install_data
+[0.915s] running egg_info
+[0.916s] creating ../../../../../../build/example_mode_with_rclpy_py/example_mode_with_rclpy_py.egg-info
+[0.916s] writing ../../../../../../build/example_mode_with_rclpy_py/example_mode_with_rclpy_py.egg-info/PKG-INFO
+[0.916s] writing dependency_links to ../../../../../../build/example_mode_with_rclpy_py/example_mode_with_rclpy_py.egg-info/dependency_links.txt
+[0.916s] writing entry points to ../../../../../../build/example_mode_with_rclpy_py/example_mode_with_rclpy_py.egg-info/entry_points.txt
+[0.916s] writing requirements to ../../../../../../build/example_mode_with_rclpy_py/example_mode_with_rclpy_py.egg-info/requires.txt
+[0.916s] writing top-level names to ../../../../../../build/example_mode_with_rclpy_py/example_mode_with_rclpy_py.egg-info/top_level.txt
+[0.916s] writing manifest file '../../../../../../build/example_mode_with_rclpy_py/example_mode_with_rclpy_py.egg-info/SOURCES.txt'
+[0.917s] reading manifest file '../../../../../../build/example_mode_with_rclpy_py/example_mode_with_rclpy_py.egg-info/SOURCES.txt'
+[0.918s] writing manifest file '../../../../../../build/example_mode_with_rclpy_py/example_mode_with_rclpy_py.egg-info/SOURCES.txt'
+[0.918s] running build
+[0.918s] running build_py
+[0.918s] creating /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/build
+[0.918s] creating /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/build/lib
+[0.919s] creating /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/build/lib/example_mode_with_rclpy_py
+[0.919s] copying example_mode_with_rclpy_py/__init__.py -> /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/build/lib/example_mode_with_rclpy_py
+[0.919s] copying example_mode_with_rclpy_py/test.py -> /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/build/lib/example_mode_with_rclpy_py
+[0.919s] running install
+[0.919s] running install_lib
+[0.919s] creating /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages/example_mode_with_rclpy_py
+[0.919s] copying /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/build/lib/example_mode_with_rclpy_py/__init__.py -> /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages/example_mode_with_rclpy_py
+[0.919s] copying /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/build/lib/example_mode_with_rclpy_py/test.py -> /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages/example_mode_with_rclpy_py
+[0.920s] byte-compiling /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages/example_mode_with_rclpy_py/__init__.py to __init__.cpython-310.pyc
+[0.920s] byte-compiling /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages/example_mode_with_rclpy_py/test.py to test.cpython-310.pyc
+[0.921s] running install_data
+[0.921s] creating /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/share/ament_index
+[0.921s] creating /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/share/ament_index/resource_index
+[0.921s] creating /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/share/ament_index/resource_index/packages
+[0.921s] copying resource/example_mode_with_rclpy_py -> /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/share/ament_index/resource_index/packages
+[0.921s] copying package.xml -> /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/share/example_mode_with_rclpy_py
+[0.921s] running install_egg_info
+[0.922s] Copying ../../../../../../build/example_mode_with_rclpy_py/example_mode_with_rclpy_py.egg-info to /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages/example_mode_with_rclpy_py-0.0.1-py3.10.egg-info
+[0.923s] running install_scripts
+[0.937s] Installing test script to /home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/example_mode_with_rclpy_py
+[0.937s] writing list of installed files to '/home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/install.log'
+[0.953s] Invoked command in '/home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/python/modes/goto_with_rclpy' returned '0': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages:/home/leedonghyuck/ws_px4/install/px4_ros2_py/local/lib/python3.10/dist-packages:/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../../../../../build/example_mode_with_rclpy_py build --build-base /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/build install --record /home/leedonghyuck/ws_px4/build/example_mode_with_rclpy_py/install.log --single-version-externally-managed install_data

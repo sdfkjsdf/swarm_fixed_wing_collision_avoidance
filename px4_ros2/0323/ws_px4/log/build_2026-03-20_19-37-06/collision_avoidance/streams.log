@@ -1,0 +1,111 @@
+[0.016s] Invoking command in '/home/leedonghyuck/ws_px4/build/collision_avoidance': CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/home/leedonghyuck/ws_px4/install/px4_ros_com:/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp:/home/leedonghyuck/ws_px4/install/example_mode_with_executor_cpp:/home/leedonghyuck/ws_px4/install/example_mode_vtol_cpp:/home/leedonghyuck/ws_px4/install/example_mode_rtl_replacement_cpp:/home/leedonghyuck/ws_px4/install/example_mode_mission_cpp:/home/leedonghyuck/ws_px4/install/example_mode_manual_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_global_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp:/home/leedonghyuck/ws_px4/install/example_mode_fw_attitude_cpp:/home/leedonghyuck/ws_px4/install/example_local_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_global_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_executor_with_multiple_modes_cpp:/home/leedonghyuck/ws_px4/install/collision_avoidance:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py:/home/leedonghyuck/ws_px4/install/example_mode_goto_py:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/home/leedonghyuck/ws_px4/install/px4_ros_com/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin /usr/bin/cmake --build /home/leedonghyuck/ws_px4/build/collision_avoidance -- -j32 -l32
+[0.059s] [35m[1mConsolidate compiler generated dependencies of target collision_avoidance_node[0m
+[0.076s] [ 33%] [32mBuilding CXX object CMakeFiles/collision_avoidance_node.dir/src/main.cpp.o[0m
+[0.077s] [ 66%] [32mBuilding CXX object CMakeFiles/collision_avoidance_node.dir/src/CollisionAvoidanceControl.cpp.o[0m
+[1.798s] In file included from [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/main.cpp:1[m[K:
+[1.798s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:25:42:[m[K [01;31m[Kerror: [m[K‘[01m[KTrajectorySetpoint[m[K’ is not a member of ‘[01m[Kpx4_msgs::msg[m[K’
+[1.798s]    25 |         rclcpp::Publisher<px4_msgs::msg::[01;31m[KTrajectorySetpoint[m[K>::SharedPtr  position_setpoint_pub_;
+[1.798s]       |                                          [01;31m[K^~~~~~~~~~~~~~~~~~[m[K
+[1.798s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:25:60:[m[K [01;31m[Kerror: [m[Ktemplate argument 1 is invalid
+[1.798s]    25 |         rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint[01;31m[K>[m[K::SharedPtr  position_setpoint_pub_;
+[1.798s]       |                                                            [01;31m[K^[m[K
+[1.799s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:25:63:[m[K [01;31m[Kerror: [m[Kexpected ‘[01m[K;[m[K’ at end of member declaration
+[1.799s]    25 |         rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::[01;31m[KSharedPtr[m[K  position_setpoint_pub_;
+[1.799s]       |                                                               [01;31m[K^~~~~~~~~[m[K
+[1.799s]       |                                                                        [32m[K;[m[K
+[1.801s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:25:74:[m[K [01;31m[Kerror: [m[K‘[01m[Kposition_setpoint_pub_[m[K’ does not name a type
+[1.801s]    25 |         rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::SharedPtr  [01;31m[Kposition_setpoint_pub_[m[K;
+[1.801s]       |                                                                          [01;31m[K^~~~~~~~~~~~~~~~~~~~~~[m[K
+[1.805s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:43:9:[m[K [01;31m[Kerror: [m[K‘[01m[KTrajectorySetpoint[m[K’ does not name a type
+[1.805s]    43 |         [01;31m[KTrajectorySetpoint[m[K desired_position{};
+[1.805s]       |         [01;31m[K^~~~~~~~~~~~~~~~~~[m[K
+[1.831s] In file included from [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:1[m[K:
+[1.831s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:25:42:[m[K [01;31m[Kerror: [m[K‘[01m[KTrajectorySetpoint[m[K’ is not a member of ‘[01m[Kpx4_msgs::msg[m[K’
+[1.831s]    25 |         rclcpp::Publisher<px4_msgs::msg::[01;31m[KTrajectorySetpoint[m[K>::SharedPtr  position_setpoint_pub_;
+[1.831s]       |                                          [01;31m[K^~~~~~~~~~~~~~~~~~[m[K
+[1.831s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:25:60:[m[K [01;31m[Kerror: [m[Ktemplate argument 1 is invalid
+[1.831s]    25 |         rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint[01;31m[K>[m[K::SharedPtr  position_setpoint_pub_;
+[1.831s]       |                                                            [01;31m[K^[m[K
+[1.832s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:25:63:[m[K [01;31m[Kerror: [m[Kexpected ‘[01m[K;[m[K’ at end of member declaration
+[1.832s]    25 |         rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::[01;31m[KSharedPtr[m[K  position_setpoint_pub_;
+[1.832s]       |                                                               [01;31m[K^~~~~~~~~[m[K
+[1.832s]       |                                                                        [32m[K;[m[K
+[1.834s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:25:74:[m[K [01;31m[Kerror: [m[K‘[01m[Kposition_setpoint_pub_[m[K’ does not name a type
+[1.834s]    25 |         rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::SharedPtr  [01;31m[Kposition_setpoint_pub_[m[K;
+[1.834s]       |                                                                          [01;31m[K^~~~~~~~~~~~~~~~~~~~~~[m[K
+[1.839s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:43:9:[m[K [01;31m[Kerror: [m[K‘[01m[KTrajectorySetpoint[m[K’ does not name a type
+[1.839s]    43 |         [01;31m[KTrajectorySetpoint[m[K desired_position{};
+[1.839s]       |         [01;31m[K^~~~~~~~~~~~~~~~~~[m[K
+[1.851s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:[m[K In constructor ‘[01m[Ksafetyfilter::CollisionAvoidanceControl::CollisionAvoidanceControl()[m[K’:
+[1.851s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:83:8:[m[K [01;31m[Kerror: [m[K‘[01m[Kposition_setpoint_pub_[m[K’ was not declared in this scope
+[1.852s]    83 |        [01;31m[Kposition_setpoint_pub_[m[K=
+[1.852s]       |        [01;31m[K^~~~~~~~~~~~~~~~~~~~~~[m[K
+[1.852s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:84:51:[m[K [01;31m[Kerror: [m[K‘[01m[KTrajectorySetpoint[m[K’ is not a member of ‘[01m[Kpx4_msgs::msg[m[K’
+[1.852s]    84 |             this->create_publisher<px4_msgs::msg::[01;31m[KTrajectorySetpoint[m[K>(
+[1.852s]       |                                                   [01;31m[K^~~~~~~~~~~~~~~~~~[m[K
+[1.852s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:84:70:[m[K [01;31m[Kerror: [m[Kno matching function for call to ‘[01m[Ksafetyfilter::CollisionAvoidanceControl::create_publisher<<expression error> >(std::__cxx11::basic_string<char>, int)[m[K’
+[1.852s]    84 |             [01;31m[Kthis->create_publisher<px4_msgs::msg::TrajectorySetpoint>([m[K
+[1.852s]       |             [01;31m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^[m[K
+[1.852s]    85 | [01;31m[K                "/px4_" + std::to_string(m_vehicle_ID) + "/fmu/in/vehicle_position_setpoint", 10)[m[K;
+[1.852s]       |                 [01;31m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+[1.852s] In file included from [01m[K/opt/ros/humble/include/rclcpp/rclcpp/node.hpp:1321[m[K,
+[1.852s]                  from [01m[K/opt/ros/humble/include/rclcpp/rclcpp/executors/single_threaded_executor.hpp:28[m[K,
+[1.852s]                  from [01m[K/opt/ros/humble/include/rclcpp/rclcpp/executors.hpp:22[m[K,
+[1.853s]                  from [01m[K/opt/ros/humble/include/rclcpp/rclcpp/rclcpp.hpp:155[m[K,
+[1.853s]                  from [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:3[m[K,
+[1.853s]                  from [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:1[m[K:
+[1.853s] [01m[K/opt/ros/humble/include/rclcpp/rclcpp/node_impl.hpp:73:1:[m[K [01;36m[Knote: [m[Kcandidate: ‘[01m[Ktemplate<class MessageT, class AllocatorT, class PublisherT> std::shared_ptr<PublisherT> rclcpp::Node::create_publisher(const string&, const rclcpp::QoS&, const rclcpp::PublisherOptionsWithAllocator<AllocatorT>&)[m[K’
+[1.853s]    73 | [01;36m[KNode[m[K::create_publisher(
+[1.853s]       | [01;36m[K^~~~[m[K
+[1.853s] [01m[K/opt/ros/humble/include/rclcpp/rclcpp/node_impl.hpp:73:1:[m[K [01;36m[Knote: [m[K  template argument deduction/substitution failed:
+[1.853s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:84:70:[m[K [01;31m[Kerror: [m[Ktemplate argument 1 is invalid
+[1.853s]    84 |             [01;31m[Kthis->create_publisher<px4_msgs::msg::TrajectorySetpoint>([m[K
+[1.853s]       |             [01;31m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^[m[K
+[1.853s]    85 | [01;31m[K                "/px4_" + std::to_string(m_vehicle_ID) + "/fmu/in/vehicle_position_setpoint", 10)[m[K;
+[1.853s]       |                 [01;31m[K~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+[1.853s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:[m[K In lambda function:
+[1.853s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:105:10:[m[K [01;31m[Kerror: [m[K‘[01m[Kposition_setpoint_pub_[m[K’ is not captured
+[1.853s]   105 |          [01;31m[Kposition_setpoint_pub_[m[K->publish(desired_position);
+[1.853s]       |          [01;31m[K^~~~~~~~~~~~~~~~~~~~~~[m[K
+[1.853s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:91:32:[m[K [01;36m[Knote: [m[Kthe lambda has no capture-default
+[1.853s]    91 |     auto timer_callback = [this[01;36m[K][m[K() -> void
+[1.853s]       |                                [01;36m[K^[m[K
+[1.853s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:83:8:[m[K [01;36m[Knote: [m[K‘[01m[K<typeprefixerror>position_setpoint_pub_[m[K’ declared here
+[1.853s]    83 |        [01;36m[Kposition_setpoint_pub_[m[K=
+[1.853s]       |        [01;36m[K^~~~~~~~~~~~~~~~~~~~~~[m[K
+[1.858s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:105:42:[m[K [01;31m[Kerror: [m[K‘[01m[Kdesired_position[m[K’ was not declared in this scope; did you mean ‘[01m[Kset_position[m[K’?
+[1.858s]   105 |          position_setpoint_pub_->publish([01;31m[Kdesired_position[m[K);
+[1.858s]       |                                          [01;31m[K^~~~~~~~~~~~~~~~[m[K
+[1.858s]       |                                          [32m[Kset_position[m[K
+[1.863s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:[m[K At global scope:
+[1.863s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:151:6:[m[K [01;31m[Kerror: [m[Kno declaration matches ‘[01m[Kvoid safetyfilter::CollisionAvoidanceControl::disarm() const[m[K’
+[1.863s]   151 | void [01;31m[KCollisionAvoidanceControl[m[K::disarm() const {
+[1.863s]       |      [01;31m[K^~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+[1.863s] In file included from [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:1[m[K:
+[1.863s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:48:14:[m[K [01;36m[Knote: [m[Kcandidate is: ‘[01m[Kvoid safetyfilter::CollisionAvoidanceControl::disarm()[m[K’
+[1.863s]    48 |         void [01;36m[Kdisarm[m[K();
+[1.864s]       |              [01;36m[K^~~~~~[m[K
+[1.864s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/include/collision_avoidance/CollisionAvoidanceControl.hpp:15:7:[m[K [01;36m[Knote: [m[K‘[01m[Kclass safetyfilter::CollisionAvoidanceControl[m[K’ defined here
+[1.864s]    15 | class [01;36m[KCollisionAvoidanceControl[m[K: public rclcpp::Node
+[1.864s]       |       [01;36m[K^~~~~~~~~~~~~~~~~~~~~~~~~[m[K
+[1.870s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:[m[K In member function ‘[01m[Kvoid safetyfilter::CollisionAvoidanceControl::publish_control()[m[K’:
+[1.871s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:194:9:[m[K [01;31m[Kerror: [m[K‘[01m[Kvehicle_status_[m[K’ was not declared in this scope
+[1.871s]   194 |     if ([01;31m[Kvehicle_status_[m[K.arming_state == px4_msgs::msg::VehicleStatus::ARMING_STATE_ARMED) {
+[1.871s]       |         [01;31m[K^~~~~~~~~~~~~~~[m[K
+[1.871s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:194:56:[m[K [01;31m[Kerror: [m[K‘[01m[Kpx4_msgs::msg::VehicleStatus[m[K’ has not been declared
+[1.871s]   194 |     if (vehicle_status_.arming_state == px4_msgs::msg::[01;31m[KVehicleStatus[m[K::ARMING_STATE_ARMED) {
+[1.871s]       |                                                        [01;31m[K^~~~~~~~~~~~~[m[K
+[1.871s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:195:58:[m[K [01;31m[Kerror: [m[K‘[01m[Kpx4_msgs::msg::VehicleStatus[m[K’ has not been declared
+[1.871s]   195 |         if ((vehicle_status_.nav_state != px4_msgs::msg::[01;31m[KVehicleStatus[m[K::NAVIGATION_STATE_OFFBOARD) &&
+[1.871s]       |                                                          [01;31m[K^~~~~~~~~~~~~[m[K
+[1.876s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:[m[K In member function ‘[01m[Kvoid safetyfilter::CollisionAvoidanceControl::set_position()[m[K’:
+[1.876s] [01m[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:215:5:[m[K [01;31m[Kerror: [m[K‘[01m[Kdesired_position[m[K’ was not declared in this scope; did you mean ‘[01m[Kset_position[m[K’?
+[1.876s]   215 |     [01;31m[Kdesired_position[m[K.position_ned_m_x=10.0;
+[1.876s]       |     [01;31m[K^~~~~~~~~~~~~~~~[m[K
+[1.876s]       |     [32m[Kset_position[m[K
+[2.126s] gmake[2]: *** [CMakeFiles/collision_avoidance_node.dir/build.make:76: CMakeFiles/collision_avoidance_node.dir/src/main.cpp.o] Error 1
+[2.126s] gmake[2]: *** Waiting for unfinished jobs....
+[2.520s] gmake[2]: *** [CMakeFiles/collision_avoidance_node.dir/build.make:90: CMakeFiles/collision_avoidance_node.dir/src/CollisionAvoidanceControl.cpp.o] Error 1
+[2.521s] gmake[1]: *** [CMakeFiles/Makefile2:137: CMakeFiles/collision_avoidance_node.dir/all] Error 2
+[2.521s] gmake: *** [Makefile:146: all] Error 2
+[2.524s] Invoked command in '/home/leedonghyuck/ws_px4/build/collision_avoidance' returned '2': CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/home/leedonghyuck/ws_px4/install/px4_ros_com:/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp:/home/leedonghyuck/ws_px4/install/example_mode_with_executor_cpp:/home/leedonghyuck/ws_px4/install/example_mode_vtol_cpp:/home/leedonghyuck/ws_px4/install/example_mode_rtl_replacement_cpp:/home/leedonghyuck/ws_px4/install/example_mode_mission_cpp:/home/leedonghyuck/ws_px4/install/example_mode_manual_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_global_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp:/home/leedonghyuck/ws_px4/install/example_mode_fw_attitude_cpp:/home/leedonghyuck/ws_px4/install/example_local_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_global_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_executor_with_multiple_modes_cpp:/home/leedonghyuck/ws_px4/install/collision_avoidance:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py:/home/leedonghyuck/ws_px4/install/example_mode_goto_py:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/home/leedonghyuck/ws_px4/install/px4_ros_com/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin /usr/bin/cmake --build /home/leedonghyuck/ws_px4/build/collision_avoidance -- -j32 -l32

@@ -1,0 +1,74 @@
+[0.047s] Invoking command in '/home/leedonghyuck/ws_px4/build/example_mode_goto_cpp': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake /home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/goto -DCMAKE_INSTALL_PREFIX=/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp
+[0.096s] -- The C compiler identification is GNU 11.4.0
+[0.147s] -- The CXX compiler identification is GNU 11.4.0
+[0.154s] -- Detecting C compiler ABI info
+[0.220s] -- Detecting C compiler ABI info - done
+[0.228s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.228s] -- Detecting C compile features
+[0.229s] -- Detecting C compile features - done
+[0.231s] -- Detecting CXX compiler ABI info
+[0.306s] -- Detecting CXX compiler ABI info - done
+[0.313s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.313s] -- Detecting CXX compile features
+[0.313s] -- Detecting CXX compile features - done
+[0.315s] -- Found eigen3_cmake_module: 0.1.1 (/opt/ros/humble/share/eigen3_cmake_module/cmake)
+[0.325s] -- Found Eigen3: TRUE (found version "3.4.0") 
+[0.327s] -- Found ament_cmake: 1.3.13 (/opt/ros/humble/share/ament_cmake/cmake)
+[0.458s] -- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+[0.536s] -- Found rclcpp: 16.0.18 (/opt/ros/humble/share/rclcpp/cmake)
+[0.578s] -- Found rosidl_generator_c: 3.1.8 (/opt/ros/humble/share/rosidl_generator_c/cmake)
+[0.582s] -- Found rosidl_adapter: 3.1.8 (/opt/ros/humble/share/rosidl_adapter/cmake)
+[0.589s] -- Found rosidl_generator_cpp: 3.1.8 (/opt/ros/humble/share/rosidl_generator_cpp/cmake)
+[0.599s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.612s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.648s] -- Found rmw_implementation_cmake: 6.1.2 (/opt/ros/humble/share/rmw_implementation_cmake/cmake)
+[0.650s] -- Found rmw_fastrtps_cpp: 6.2.10 (/opt/ros/humble/share/rmw_fastrtps_cpp/cmake)
+[0.742s] -- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version "3.0.2")  
+[0.778s] -- Found FastRTPS: /opt/ros/humble/include  
+[0.824s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[0.831s] -- Looking for pthread.h
+[0.903s] -- Looking for pthread.h - found
+[0.903s] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+[0.974s] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+[0.975s] -- Found Threads: TRUE  
+[1.016s] -- Found px4_ros2_cpp: 0.0.1 (/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/cmake)
+[1.029s] -- Found ament_lint_auto: 0.12.15 (/opt/ros/humble/share/ament_lint_auto/cmake)
+[1.100s] -- Added test 'copyright' to check source files copyright and LICENSE
+[1.101s] -- Added test 'cppcheck' to perform static code analysis on C / C++ code
+[1.101s] -- Configured cppcheck include dirs: /home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/goto/include
+[1.101s] -- Configured cppcheck exclude dirs and/or files: 
+[1.101s] -- Added test 'cpplint' to check C / C++ code against the Google style
+[1.102s] -- Configured cpplint exclude dirs and/or files: 
+[1.102s] -- Added test 'lint_cmake' to check CMake code style
+[1.103s] -- Added test 'uncrustify' to check C / C++ code style
+[1.103s] -- Configured uncrustify additional arguments: 
+[1.103s] -- Added test 'xmllint' to check XML markup files
+[1.104s] -- Configuring done
+[1.113s] -- Generating done
+[1.116s] -- Build files have been written to: /home/leedonghyuck/ws_px4/build/example_mode_goto_cpp
+[1.129s] Invoked command in '/home/leedonghyuck/ws_px4/build/example_mode_goto_cpp' returned '0': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake /home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/goto -DCMAKE_INSTALL_PREFIX=/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp
+[1.130s] Invoking command in '/home/leedonghyuck/ws_px4/build/example_mode_goto_cpp': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --build /home/leedonghyuck/ws_px4/build/example_mode_goto_cpp -- -j32 -l32
+[1.177s] [ 50%] [32mBuilding CXX object CMakeFiles/example_mode_goto.dir/src/main.cpp.o[0m
+[7.546s] [100%] [32m[1mLinking CXX executable example_mode_goto[0m
+[9.889s] [100%] Built target example_mode_goto
+[9.901s] Invoked command in '/home/leedonghyuck/ws_px4/build/example_mode_goto_cpp' returned '0': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --build /home/leedonghyuck/ws_px4/build/example_mode_goto_cpp -- -j32 -l32
+[9.903s] Invoking command in '/home/leedonghyuck/ws_px4/build/example_mode_goto_cpp': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --install /home/leedonghyuck/ws_px4/build/example_mode_goto_cpp
+[9.909s] -- Install configuration: ""
+[9.909s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/lib/example_mode_goto_cpp/example_mode_goto
+[9.910s] -- Set runtime path of "/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/lib/example_mode_goto_cpp/example_mode_goto" to ""
+[9.910s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/ament_index/resource_index/package_run_dependencies/example_mode_goto_cpp
+[9.910s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/ament_index/resource_index/parent_prefix_path/example_mode_goto_cpp
+[9.911s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/environment/ament_prefix_path.sh
+[9.911s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/environment/ament_prefix_path.dsv
+[9.911s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/environment/path.sh
+[9.911s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/environment/path.dsv
+[9.911s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/local_setup.bash
+[9.911s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/local_setup.sh
+[9.911s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/local_setup.zsh
+[9.912s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/local_setup.dsv
+[9.912s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/package.dsv
+[9.912s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/ament_index/resource_index/packages/example_mode_goto_cpp
+[9.912s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/cmake/example_mode_goto_cppConfig.cmake
+[9.912s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/cmake/example_mode_goto_cppConfig-version.cmake
+[9.912s] -- Installing: /home/leedonghyuck/ws_px4/install/example_mode_goto_cpp/share/example_mode_goto_cpp/package.xml
+[9.915s] Invoked command in '/home/leedonghyuck/ws_px4/build/example_mode_goto_cpp' returned '0': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --install /home/leedonghyuck/ws_px4/build/example_mode_goto_cpp

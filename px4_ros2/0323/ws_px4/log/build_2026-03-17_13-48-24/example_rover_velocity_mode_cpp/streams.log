@@ -1,0 +1,72 @@
+[0.036s] Invoking command in '/home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake /home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/rover_velocity -DCMAKE_INSTALL_PREFIX=/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp
+[0.088s] -- The C compiler identification is GNU 11.4.0
+[0.144s] -- The CXX compiler identification is GNU 11.4.0
+[0.151s] -- Detecting C compiler ABI info
+[0.223s] -- Detecting C compiler ABI info - done
+[0.230s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.230s] -- Detecting C compile features
+[0.230s] -- Detecting C compile features - done
+[0.233s] -- Detecting CXX compiler ABI info
+[0.308s] -- Detecting CXX compiler ABI info - done
+[0.314s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.315s] -- Detecting CXX compile features
+[0.315s] -- Detecting CXX compile features - done
+[0.317s] -- Found ament_cmake: 1.3.13 (/opt/ros/humble/share/ament_cmake/cmake)
+[0.447s] -- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+[0.531s] -- Found rclcpp: 16.0.18 (/opt/ros/humble/share/rclcpp/cmake)
+[0.571s] -- Found rosidl_generator_c: 3.1.8 (/opt/ros/humble/share/rosidl_generator_c/cmake)
+[0.575s] -- Found rosidl_adapter: 3.1.8 (/opt/ros/humble/share/rosidl_adapter/cmake)
+[0.582s] -- Found rosidl_generator_cpp: 3.1.8 (/opt/ros/humble/share/rosidl_generator_cpp/cmake)
+[0.594s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.608s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.646s] -- Found rmw_implementation_cmake: 6.1.2 (/opt/ros/humble/share/rmw_implementation_cmake/cmake)
+[0.648s] -- Found rmw_fastrtps_cpp: 6.2.10 (/opt/ros/humble/share/rmw_fastrtps_cpp/cmake)
+[0.738s] -- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version "3.0.2")  
+[0.771s] -- Found FastRTPS: /opt/ros/humble/include  
+[0.823s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[0.830s] -- Looking for pthread.h
+[0.901s] -- Looking for pthread.h - found
+[0.901s] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+[0.971s] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+[0.972s] -- Found Threads: TRUE  
+[1.013s] -- Found px4_ros2_cpp: 0.0.1 (/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/share/px4_ros2_cpp/cmake)
+[1.036s] -- Found ament_lint_auto: 0.12.15 (/opt/ros/humble/share/ament_lint_auto/cmake)
+[1.110s] -- Added test 'copyright' to check source files copyright and LICENSE
+[1.111s] -- Added test 'cppcheck' to perform static code analysis on C / C++ code
+[1.111s] -- Configured cppcheck include dirs: /home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/rover_velocity/include
+[1.111s] -- Configured cppcheck exclude dirs and/or files: 
+[1.112s] -- Added test 'cpplint' to check C / C++ code against the Google style
+[1.112s] -- Configured cpplint exclude dirs and/or files: 
+[1.112s] -- Added test 'lint_cmake' to check CMake code style
+[1.113s] -- Added test 'uncrustify' to check C / C++ code style
+[1.113s] -- Configured uncrustify additional arguments: 
+[1.113s] -- Added test 'xmllint' to check XML markup files
+[1.115s] -- Configuring done
+[1.126s] -- Generating done
+[1.128s] -- Build files have been written to: /home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp
+[1.143s] Invoked command in '/home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp' returned '0': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake /home/leedonghyuck/ws_px4/src/px4-ros2-interface-lib/examples/cpp/modes/rover_velocity -DCMAKE_INSTALL_PREFIX=/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp
+[1.145s] Invoking command in '/home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --build /home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp -- -j32 -l32
+[1.194s] [ 50%] [32mBuilding CXX object CMakeFiles/rover_velocity_mode.dir/src/main.cpp.o[0m
+[5.132s] [100%] [32m[1mLinking CXX executable rover_velocity_mode[0m
+[9.094s] [100%] Built target rover_velocity_mode
+[9.109s] Invoked command in '/home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp' returned '0': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --build /home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp -- -j32 -l32
+[9.111s] Invoking command in '/home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --install /home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp
+[9.118s] -- Install configuration: ""
+[9.118s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/lib/example_rover_velocity_mode_cpp/rover_velocity_mode
+[9.119s] -- Set runtime path of "/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/lib/example_rover_velocity_mode_cpp/rover_velocity_mode" to ""
+[9.119s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/ament_index/resource_index/package_run_dependencies/example_rover_velocity_mode_cpp
+[9.119s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/ament_index/resource_index/parent_prefix_path/example_rover_velocity_mode_cpp
+[9.119s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/environment/ament_prefix_path.sh
+[9.119s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/environment/ament_prefix_path.dsv
+[9.120s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/environment/path.sh
+[9.120s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/environment/path.dsv
+[9.120s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/local_setup.bash
+[9.120s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/local_setup.sh
+[9.120s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/local_setup.zsh
+[9.120s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/local_setup.dsv
+[9.120s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/package.dsv
+[9.120s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/ament_index/resource_index/packages/example_rover_velocity_mode_cpp
+[9.121s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/cmake/example_rover_velocity_mode_cppConfig.cmake
+[9.121s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/cmake/example_rover_velocity_mode_cppConfig-version.cmake
+[9.121s] -- Installing: /home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp/share/example_rover_velocity_mode_cpp/package.xml
+[9.124s] Invoked command in '/home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp' returned '0': AMENT_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble LD_LIBRARY_PATH=/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin PYTHONPATH=/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:${PYTHONPATH} /usr/bin/cmake --install /home/leedonghyuck/ws_px4/build/example_rover_velocity_mode_cpp

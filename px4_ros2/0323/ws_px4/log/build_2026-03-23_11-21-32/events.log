@@ -1,0 +1,75 @@
+[0.000000] (-) TimerEvent: {}
+[0.000546] (-) JobUnselected: {'identifier': 'example_executor_with_multiple_modes_cpp'}
+[0.000583] (-) JobUnselected: {'identifier': 'example_global_navigation_cpp'}
+[0.000609] (-) JobUnselected: {'identifier': 'example_local_navigation_cpp'}
+[0.000632] (-) JobUnselected: {'identifier': 'example_mode_fw_attitude_cpp'}
+[0.000656] (-) JobUnselected: {'identifier': 'example_mode_goto_cpp'}
+[0.000678] (-) JobUnselected: {'identifier': 'example_mode_goto_global_cpp'}
+[0.000699] (-) JobUnselected: {'identifier': 'example_mode_goto_py'}
+[0.000720] (-) JobUnselected: {'identifier': 'example_mode_manual_cpp'}
+[0.000741] (-) JobUnselected: {'identifier': 'example_mode_mission_cpp'}
+[0.000762] (-) JobUnselected: {'identifier': 'example_mode_rtl_replacement_cpp'}
+[0.000783] (-) JobUnselected: {'identifier': 'example_mode_vtol_cpp'}
+[0.000803] (-) JobUnselected: {'identifier': 'example_mode_with_executor_cpp'}
+[0.000824] (-) JobUnselected: {'identifier': 'example_mode_with_rclpy_py'}
+[0.000845] (-) JobUnselected: {'identifier': 'example_rover_velocity_mode_cpp'}
+[0.000866] (-) JobUnselected: {'identifier': 'px4_msgs'}
+[0.000887] (-) JobUnselected: {'identifier': 'px4_ros2_cpp'}
+[0.000926] (-) JobUnselected: {'identifier': 'px4_ros2_py'}
+[0.000956] (-) JobUnselected: {'identifier': 'px4_ros_com'}
+[0.000980] (collision_avoidance) JobQueued: {'identifier': 'collision_avoidance', 'dependencies': OrderedDict([('px4_msgs', '/home/leedonghyuck/ws_px4/install/px4_msgs'), ('px4_ros2_cpp', '/home/leedonghyuck/ws_px4/install/px4_ros2_cpp')])}
+[0.001000] (collision_avoidance) JobStarted: {'identifier': 'collision_avoidance'}
+[0.018445] (collision_avoidance) JobProgress: {'identifier': 'collision_avoidance', 'progress': 'cmake'}
+[0.019289] (collision_avoidance) JobProgress: {'identifier': 'collision_avoidance', 'progress': 'build'}
+[0.020073] (collision_avoidance) Command: {'cmd': ['/usr/bin/cmake', '--build', '/home/leedonghyuck/ws_px4/build/collision_avoidance', '--', '-j32', '-l32'], 'cwd': '/home/leedonghyuck/ws_px4/build/collision_avoidance', 'env': OrderedDict([('GJS_DEBUG_TOPICS', 'JS ERROR;JS LOG'), ('LESSOPEN', '| /usr/bin/lesspipe %s'), ('LANGUAGE', 'en_US:en'), ('USER', 'leedonghyuck'), ('LC_TIME', 'ko_KR.UTF-8'), ('XDG_SESSION_TYPE', 'x11'), ('SHLVL', '1'), ('LD_LIBRARY_PATH', '/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/home/leedonghyuck/ws_px4/install/px4_ros_com/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin'), ('HOME', '/home/leedonghyuck'), ('OLDPWD', '/home/leedonghyuck'), ('DESKTOP_SESSION', 'ubuntu'), ('GIO_LAUNCHED_DESKTOP_FILE', '/usr/share/applications/terminator.desktop'), ('ROS_PYTHON_VERSION', '3'), ('GNOME_SHELL_SESSION_MODE', 'ubuntu'), ('GTK_MODULES', 'gail:atk-bridge'), ('LC_MONETARY', 'ko_KR.UTF-8'), ('MANAGERPID', '2737'), ('SYSTEMD_EXEC_PID', '2989'), ('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/run/user/1000/bus'), ('COLORTERM', 'truecolor'), ('TERMINATOR_DBUS_NAME', 'net.tenshu.Terminator23558193cd9818af7fe4d2c2f5bd9d00f'), ('GIO_LAUNCHED_DESKTOP_FILE_PID', '5938'), ('IM_CONFIG_PHASE', '1'), ('COLCON_PREFIX_PATH', '/home/leedonghyuck/ws_px4/install'), ('ROS_DISTRO', 'humble'), ('GTK_IM_MODULE', 'ibus'), ('LOGNAME', 'leedonghyuck'), ('JOURNAL_STREAM', '8:23044'), ('_', '/usr/bin/colcon'), ('ROS_VERSION', '2'), ('XDG_SESSION_CLASS', 'user'), ('USERNAME', 'leedonghyuck'), ('TERM', 'xterm-256color'), ('GNOME_DESKTOP_SESSION_ID', 'this-is-deprecated'), ('ROS_LOCALHOST_ONLY', '0'), ('WINDOWPATH', '2'), ('PATH', '/opt/ros/humble/bin:/home/leedonghyuck/.local/bin:/home/leedonghyuck/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin:/opt/xtensa-esp-elf/bin/'), ('SESSION_MANAGER', 'local/leedonghyuck-System-Product-Name:@/tmp/.ICE-unix/2965,unix/leedonghyuck-System-Product-Name:/tmp/.ICE-unix/2965'), ('INVOCATION_ID', '0907fc2717cf483b9d2e9f54da102a14'), ('PAPERSIZE', 'a4'), ('XDG_MENU_PREFIX', 'gnome-'), ('LC_ADDRESS', 'ko_KR.UTF-8'), ('XDG_RUNTIME_DIR', '/run/user/1000'), ('MUJOCO_PY_MUJOCO_PATH', '/home/username/.mujoco/mujoco210'), ('DISPLAY', ':1'), ('TERMINATOR_DBUS_PATH', '/net/tenshu/Terminator2'), ('LANG', 'en_US.UTF-8'), ('XDG_CURRENT_DESKTOP', 'ubuntu:GNOME'), ('IBUS_DISABLE_SNOOPER', '1'), ('LC_TELEPHONE', 'ko_KR.UTF-8'), ('XMODIFIERS', '@im=ibus'), ('XDG_SESSION_DESKTOP', 'ubuntu'), ('XAUTHORITY', '/run/user/1000/gdm/Xauthority'), ('LS_COLORS', 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=30;41:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:'), ('SSH_AGENT_LAUNCHER', 'gnome-keyring'), ('SSH_AUTH_SOCK', '/run/user/1000/keyring/ssh'), ('AMENT_PREFIX_PATH', '/home/leedonghyuck/ws_px4/install/px4_ros_com:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py:/home/leedonghyuck/ws_px4/install/example_mode_goto_py:/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp:/home/leedonghyuck/ws_px4/install/example_mode_with_executor_cpp:/home/leedonghyuck/ws_px4/install/example_mode_vtol_cpp:/home/leedonghyuck/ws_px4/install/example_mode_rtl_replacement_cpp:/home/leedonghyuck/ws_px4/install/example_mode_mission_cpp:/home/leedonghyuck/ws_px4/install/example_mode_manual_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_global_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp:/home/leedonghyuck/ws_px4/install/example_mode_fw_attitude_cpp:/home/leedonghyuck/ws_px4/install/example_local_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_global_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_executor_with_multiple_modes_cpp:/home/leedonghyuck/ws_px4/install/collision_avoidance:/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble'), ('SHELL', '/bin/bash'), ('LC_NAME', 'ko_KR.UTF-8'), ('TERMINATOR_UUID', 'urn:uuid:95efa52a-3b1b-4f7a-ae64-e9100480bc18'), ('QT_ACCESSIBILITY', '1'), ('GDMSESSION', 'ubuntu'), ('LESSCLOSE', '/usr/bin/lesspipe %s %s'), ('LC_MEASUREMENT', 'ko_KR.UTF-8'), ('GPG_AGENT_INFO', '/run/user/1000/gnupg/S.gpg-agent:0:1'), ('GJS_DEBUG_OUTPUT', 'stderr'), ('LC_IDENTIFICATION', 'ko_KR.UTF-8'), ('QT_IM_MODULE', 'ibus'), ('PWD', '/home/leedonghyuck/ws_px4/build/collision_avoidance'), ('LC_ALL', 'en_US.UTF-8'), ('XDG_CONFIG_DIRS', '/etc/xdg/xdg-ubuntu:/etc/xdg'), ('XDG_DATA_DIRS', '/usr/share/ubuntu:/usr/share/gnome:/usr/local/share/:/usr/share/:/var/lib/snapd/desktop'), ('PYTHONPATH', '/home/leedonghyuck/ws_px4/install/px4_ros_com/local/lib/python3.10/dist-packages:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages:/home/leedonghyuck/ws_px4/install/example_mode_goto_py/lib/python3.10/site-packages:/home/leedonghyuck/ws_px4/install/px4_ros2_py/local/lib/python3.10/dist-packages:/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages'), ('LC_NUMERIC', 'ko_KR.UTF-8'), ('LC_PAPER', 'ko_KR.UTF-8'), ('COLCON', '1'), ('VTE_VERSION', '6800'), ('CMAKE_PREFIX_PATH', '/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/home/leedonghyuck/ws_px4/install/px4_ros_com:/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp:/home/leedonghyuck/ws_px4/install/example_mode_with_executor_cpp:/home/leedonghyuck/ws_px4/install/example_mode_vtol_cpp:/home/leedonghyuck/ws_px4/install/example_mode_rtl_replacement_cpp:/home/leedonghyuck/ws_px4/install/example_mode_mission_cpp:/home/leedonghyuck/ws_px4/install/example_mode_manual_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_global_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp:/home/leedonghyuck/ws_px4/install/example_mode_fw_attitude_cpp:/home/leedonghyuck/ws_px4/install/example_local_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_global_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_executor_with_multiple_modes_cpp:/home/leedonghyuck/ws_px4/install/collision_avoidance:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py:/home/leedonghyuck/ws_px4/install/example_mode_goto_py:/opt/ros/humble')]), 'shell': False}
+[0.061080] (collision_avoidance) StdoutLine: {'line': b'\x1b[35m\x1b[1mConsolidate compiler generated dependencies of target collision_avoidance_node\x1b[0m\n'}
+[0.079264] (collision_avoidance) StdoutLine: {'line': b'[ 33%] \x1b[32mBuilding CXX object CMakeFiles/collision_avoidance_node.dir/src/CollisionAvoidanceControl.cpp.o\x1b[0m\n'}
+[0.080033] (collision_avoidance) StdoutLine: {'line': b'[ 66%] \x1b[32mBuilding CXX object CMakeFiles/collision_avoidance_node.dir/src/main.cpp.o\x1b[0m\n'}
+[0.099729] (-) TimerEvent: {}
+[0.200617] (-) TimerEvent: {}
+[0.300823] (-) TimerEvent: {}
+[0.401039] (-) TimerEvent: {}
+[0.501249] (-) TimerEvent: {}
+[0.601639] (-) TimerEvent: {}
+[0.701839] (-) TimerEvent: {}
+[0.802056] (-) TimerEvent: {}
+[0.902256] (-) TimerEvent: {}
+[1.002442] (-) TimerEvent: {}
+[1.102602] (-) TimerEvent: {}
+[1.202805] (-) TimerEvent: {}
+[1.303025] (-) TimerEvent: {}
+[1.403228] (-) TimerEvent: {}
+[1.503431] (-) TimerEvent: {}
+[1.603639] (-) TimerEvent: {}
+[1.703844] (-) TimerEvent: {}
+[1.804068] (-) TimerEvent: {}
+[1.827182] (collision_avoidance) StderrLine: {'line': b'\x1b[01m\x1b[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:\x1b[m\x1b[K In constructor \xe2\x80\x98\x1b[01m\x1b[Ksafetyfilter::CollisionAvoidanceControl::CollisionAvoidanceControl()\x1b[m\x1b[K\xe2\x80\x99:\n'}
+[1.827368] (collision_avoidance) StderrLine: {'line': b'\x1b[01m\x1b[K/home/leedonghyuck/ws_px4/src/collision_avoidance/src/CollisionAvoidanceControl.cpp:99:6:\x1b[m\x1b[K \x1b[01;31m\x1b[Kerror: \x1b[m\x1b[K\xe2\x80\x98\x1b[01m\x1b[Km_vehicle_statussub_\x1b[m\x1b[K\xe2\x80\x99 was not declared in this scope; did you mean \xe2\x80\x98\x1b[01m\x1b[Kvehicle_status_sub_\x1b[m\x1b[K\xe2\x80\x99?\n'}
+[1.827461] (collision_avoidance) StderrLine: {'line': b'   99 |      \x1b[01;31m\x1b[Km_vehicle_statussub_\x1b[m\x1b[K=\n'}
+[1.827541] (collision_avoidance) StderrLine: {'line': b'      |      \x1b[01;31m\x1b[K^~~~~~~~~~~~~~~~~~~~\x1b[m\x1b[K\n'}
+[1.827615] (collision_avoidance) StderrLine: {'line': b'      |      \x1b[32m\x1b[Kvehicle_status_sub_\x1b[m\x1b[K\n'}
+[1.904160] (-) TimerEvent: {}
+[2.004364] (-) TimerEvent: {}
+[2.104559] (-) TimerEvent: {}
+[2.204756] (-) TimerEvent: {}
+[2.304958] (-) TimerEvent: {}
+[2.405159] (-) TimerEvent: {}
+[2.505364] (-) TimerEvent: {}
+[2.605575] (-) TimerEvent: {}
+[2.705777] (-) TimerEvent: {}
+[2.805978] (-) TimerEvent: {}
+[2.906176] (-) TimerEvent: {}
+[3.006374] (-) TimerEvent: {}
+[3.106585] (-) TimerEvent: {}
+[3.206784] (-) TimerEvent: {}
+[3.306981] (-) TimerEvent: {}
+[3.407180] (-) TimerEvent: {}
+[3.507382] (-) TimerEvent: {}
+[3.607589] (-) TimerEvent: {}
+[3.707788] (-) TimerEvent: {}
+[3.733929] (collision_avoidance) StderrLine: {'line': b'gmake[2]: *** [CMakeFiles/collision_avoidance_node.dir/build.make:90: CMakeFiles/collision_avoidance_node.dir/src/CollisionAvoidanceControl.cpp.o] Error 1\n'}
+[3.734333] (collision_avoidance) StderrLine: {'line': b'gmake[1]: *** [CMakeFiles/Makefile2:137: CMakeFiles/collision_avoidance_node.dir/all] Error 2\n'}
+[3.734747] (collision_avoidance) StderrLine: {'line': b'gmake: *** [Makefile:146: all] Error 2\n'}
+[3.737414] (collision_avoidance) CommandEnded: {'returncode': 2}
+[3.749076] (collision_avoidance) JobEnded: {'identifier': 'collision_avoidance', 'rc': 2}
+[3.759329] (-) EventReactorShutdown: {}

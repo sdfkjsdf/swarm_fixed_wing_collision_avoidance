@@ -1,0 +1,145 @@
+[0.000000] (-) TimerEvent: {}
+[0.000434] (-) JobUnselected: {'identifier': 'example_executor_with_multiple_modes_cpp'}
+[0.000456] (-) JobUnselected: {'identifier': 'example_global_navigation_cpp'}
+[0.000470] (-) JobUnselected: {'identifier': 'example_local_navigation_cpp'}
+[0.000482] (-) JobUnselected: {'identifier': 'example_mode_fw_attitude_cpp'}
+[0.000494] (-) JobUnselected: {'identifier': 'example_mode_goto_cpp'}
+[0.000506] (-) JobUnselected: {'identifier': 'example_mode_goto_global_cpp'}
+[0.000517] (-) JobUnselected: {'identifier': 'example_mode_goto_py'}
+[0.000528] (-) JobUnselected: {'identifier': 'example_mode_manual_cpp'}
+[0.000540] (-) JobUnselected: {'identifier': 'example_mode_mission_cpp'}
+[0.000551] (-) JobUnselected: {'identifier': 'example_mode_rtl_replacement_cpp'}
+[0.000562] (-) JobUnselected: {'identifier': 'example_mode_vtol_cpp'}
+[0.000572] (-) JobUnselected: {'identifier': 'example_mode_with_executor_cpp'}
+[0.000583] (-) JobUnselected: {'identifier': 'example_mode_with_rclpy_py'}
+[0.000594] (-) JobUnselected: {'identifier': 'example_rover_velocity_mode_cpp'}
+[0.000605] (-) JobUnselected: {'identifier': 'px4_msgs'}
+[0.000616] (-) JobUnselected: {'identifier': 'px4_ros2_cpp'}
+[0.000628] (-) JobUnselected: {'identifier': 'px4_ros2_py'}
+[0.000639] (-) JobUnselected: {'identifier': 'px4_ros_com'}
+[0.000653] (collision_avoidance) JobQueued: {'identifier': 'collision_avoidance', 'dependencies': OrderedDict([('px4_msgs', '/home/leedonghyuck/ws_px4/install/px4_msgs'), ('px4_ros2_cpp', '/home/leedonghyuck/ws_px4/install/px4_ros2_cpp')])}
+[0.000673] (collision_avoidance) JobStarted: {'identifier': 'collision_avoidance'}
+[0.015091] (collision_avoidance) JobProgress: {'identifier': 'collision_avoidance', 'progress': 'cmake'}
+[0.015504] (collision_avoidance) JobProgress: {'identifier': 'collision_avoidance', 'progress': 'build'}
+[0.016044] (collision_avoidance) Command: {'cmd': ['/usr/bin/cmake', '--build', '/home/leedonghyuck/ws_px4/build/collision_avoidance', '--', '-j32', '-l32'], 'cwd': '/home/leedonghyuck/ws_px4/build/collision_avoidance', 'env': OrderedDict([('GJS_DEBUG_TOPICS', 'JS ERROR;JS LOG'), ('LESSOPEN', '| /usr/bin/lesspipe %s'), ('LANGUAGE', 'en_US:en'), ('USER', 'leedonghyuck'), ('LC_TIME', 'ko_KR.UTF-8'), ('XDG_SESSION_TYPE', 'x11'), ('SHLVL', '1'), ('LD_LIBRARY_PATH', '/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/home/leedonghyuck/ws_px4/install/px4_ros_com/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin'), ('HOME', '/home/leedonghyuck'), ('OLDPWD', '/home/leedonghyuck/ws_px4'), ('DESKTOP_SESSION', 'ubuntu'), ('GIO_LAUNCHED_DESKTOP_FILE', '/usr/share/applications/terminator.desktop'), ('ROS_PYTHON_VERSION', '3'), ('GNOME_SHELL_SESSION_MODE', 'ubuntu'), ('GTK_MODULES', 'gail:atk-bridge'), ('LC_MONETARY', 'ko_KR.UTF-8'), ('MANAGERPID', '2737'), ('SYSTEMD_EXEC_PID', '2989'), ('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/run/user/1000/bus'), ('COLORTERM', 'truecolor'), ('TERMINATOR_DBUS_NAME', 'net.tenshu.Terminator23558193cd9818af7fe4d2c2f5bd9d00f'), ('GIO_LAUNCHED_DESKTOP_FILE_PID', '5938'), ('IM_CONFIG_PHASE', '1'), ('COLCON_PREFIX_PATH', '/home/leedonghyuck/ws_px4/install'), ('ROS_DISTRO', 'humble'), ('GTK_IM_MODULE', 'ibus'), ('LOGNAME', 'leedonghyuck'), ('JOURNAL_STREAM', '8:23044'), ('_', '/usr/bin/colcon'), ('ROS_VERSION', '2'), ('XDG_SESSION_CLASS', 'user'), ('USERNAME', 'leedonghyuck'), ('TERM', 'xterm-256color'), ('GNOME_DESKTOP_SESSION_ID', 'this-is-deprecated'), ('ROS_LOCALHOST_ONLY', '0'), ('WINDOWPATH', '2'), ('PATH', '/opt/ros/humble/bin:/home/leedonghyuck/.local/bin:/home/leedonghyuck/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin:/opt/xtensa-esp-elf/bin/'), ('SESSION_MANAGER', 'local/leedonghyuck-System-Product-Name:@/tmp/.ICE-unix/2965,unix/leedonghyuck-System-Product-Name:/tmp/.ICE-unix/2965'), ('INVOCATION_ID', '0907fc2717cf483b9d2e9f54da102a14'), ('PAPERSIZE', 'a4'), ('XDG_MENU_PREFIX', 'gnome-'), ('LC_ADDRESS', 'ko_KR.UTF-8'), ('XDG_RUNTIME_DIR', '/run/user/1000'), ('MUJOCO_PY_MUJOCO_PATH', '/home/username/.mujoco/mujoco210'), ('DISPLAY', ':1'), ('TERMINATOR_DBUS_PATH', '/net/tenshu/Terminator2'), ('LANG', 'en_US.UTF-8'), ('XDG_CURRENT_DESKTOP', 'ubuntu:GNOME'), ('IBUS_DISABLE_SNOOPER', '1'), ('LC_TELEPHONE', 'ko_KR.UTF-8'), ('XMODIFIERS', '@im=ibus'), ('XDG_SESSION_DESKTOP', 'ubuntu'), ('XAUTHORITY', '/run/user/1000/gdm/Xauthority'), ('LS_COLORS', 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=30;41:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:'), ('SSH_AGENT_LAUNCHER', 'gnome-keyring'), ('SSH_AUTH_SOCK', '/run/user/1000/keyring/ssh'), ('AMENT_PREFIX_PATH', '/home/leedonghyuck/ws_px4/install/px4_ros_com:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py:/home/leedonghyuck/ws_px4/install/example_mode_goto_py:/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp:/home/leedonghyuck/ws_px4/install/example_mode_with_executor_cpp:/home/leedonghyuck/ws_px4/install/example_mode_vtol_cpp:/home/leedonghyuck/ws_px4/install/example_mode_rtl_replacement_cpp:/home/leedonghyuck/ws_px4/install/example_mode_mission_cpp:/home/leedonghyuck/ws_px4/install/example_mode_manual_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_global_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp:/home/leedonghyuck/ws_px4/install/example_mode_fw_attitude_cpp:/home/leedonghyuck/ws_px4/install/example_local_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_global_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_executor_with_multiple_modes_cpp:/home/leedonghyuck/ws_px4/install/collision_avoidance:/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble'), ('SHELL', '/bin/bash'), ('LC_NAME', 'ko_KR.UTF-8'), ('TERMINATOR_UUID', 'urn:uuid:663387d7-2ef7-48d1-9dea-460fbfcb84d9'), ('QT_ACCESSIBILITY', '1'), ('GDMSESSION', 'ubuntu'), ('LESSCLOSE', '/usr/bin/lesspipe %s %s'), ('LC_MEASUREMENT', 'ko_KR.UTF-8'), ('GPG_AGENT_INFO', '/run/user/1000/gnupg/S.gpg-agent:0:1'), ('GJS_DEBUG_OUTPUT', 'stderr'), ('LC_IDENTIFICATION', 'ko_KR.UTF-8'), ('QT_IM_MODULE', 'ibus'), ('PWD', '/home/leedonghyuck/ws_px4/build/collision_avoidance'), ('LC_ALL', 'en_US.UTF-8'), ('XDG_CONFIG_DIRS', '/etc/xdg/xdg-ubuntu:/etc/xdg'), ('XDG_DATA_DIRS', '/usr/share/ubuntu:/usr/share/gnome:/usr/local/share/:/usr/share/:/var/lib/snapd/desktop'), ('PYTHONPATH', '/home/leedonghyuck/ws_px4/install/px4_ros_com/local/lib/python3.10/dist-packages:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages:/home/leedonghyuck/ws_px4/install/example_mode_goto_py/lib/python3.10/site-packages:/home/leedonghyuck/ws_px4/install/px4_ros2_py/local/lib/python3.10/dist-packages:/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages'), ('LC_NUMERIC', 'ko_KR.UTF-8'), ('LC_PAPER', 'ko_KR.UTF-8'), ('COLCON', '1'), ('VTE_VERSION', '6800'), ('CMAKE_PREFIX_PATH', '/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/home/leedonghyuck/ws_px4/install/px4_ros_com:/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp:/home/leedonghyuck/ws_px4/install/example_mode_with_executor_cpp:/home/leedonghyuck/ws_px4/install/example_mode_vtol_cpp:/home/leedonghyuck/ws_px4/install/example_mode_rtl_replacement_cpp:/home/leedonghyuck/ws_px4/install/example_mode_mission_cpp:/home/leedonghyuck/ws_px4/install/example_mode_manual_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_global_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp:/home/leedonghyuck/ws_px4/install/example_mode_fw_attitude_cpp:/home/leedonghyuck/ws_px4/install/example_local_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_global_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_executor_with_multiple_modes_cpp:/home/leedonghyuck/ws_px4/install/collision_avoidance:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py:/home/leedonghyuck/ws_px4/install/example_mode_goto_py:/opt/ros/humble')]), 'shell': False}
+[0.072304] (collision_avoidance) StdoutLine: {'line': b'[ 33%] \x1b[32mBuilding CXX object CMakeFiles/collision_avoidance_node.dir/src/CollisionAvoidanceControl.cpp.o\x1b[0m\n'}
+[0.072572] (collision_avoidance) StdoutLine: {'line': b'[ 66%] \x1b[32mBuilding CXX object CMakeFiles/collision_avoidance_node.dir/src/main.cpp.o\x1b[0m\n'}
+[0.099660] (-) TimerEvent: {}
+[0.199964] (-) TimerEvent: {}
+[0.300277] (-) TimerEvent: {}
+[0.400591] (-) TimerEvent: {}
+[0.500932] (-) TimerEvent: {}
+[0.601241] (-) TimerEvent: {}
+[0.701566] (-) TimerEvent: {}
+[0.801968] (-) TimerEvent: {}
+[0.902354] (-) TimerEvent: {}
+[1.002733] (-) TimerEvent: {}
+[1.103081] (-) TimerEvent: {}
+[1.203404] (-) TimerEvent: {}
+[1.303720] (-) TimerEvent: {}
+[1.404060] (-) TimerEvent: {}
+[1.504387] (-) TimerEvent: {}
+[1.604706] (-) TimerEvent: {}
+[1.705059] (-) TimerEvent: {}
+[1.805378] (-) TimerEvent: {}
+[1.905694] (-) TimerEvent: {}
+[2.006067] (-) TimerEvent: {}
+[2.106395] (-) TimerEvent: {}
+[2.206694] (-) TimerEvent: {}
+[2.307028] (-) TimerEvent: {}
+[2.407339] (-) TimerEvent: {}
+[2.507654] (-) TimerEvent: {}
+[2.607993] (-) TimerEvent: {}
+[2.708307] (-) TimerEvent: {}
+[2.808621] (-) TimerEvent: {}
+[2.908966] (-) TimerEvent: {}
+[3.009277] (-) TimerEvent: {}
+[3.109591] (-) TimerEvent: {}
+[3.209934] (-) TimerEvent: {}
+[3.310260] (-) TimerEvent: {}
+[3.410586] (-) TimerEvent: {}
+[3.510896] (-) TimerEvent: {}
+[3.611126] (-) TimerEvent: {}
+[3.711358] (-) TimerEvent: {}
+[3.811604] (-) TimerEvent: {}
+[3.911804] (-) TimerEvent: {}
+[4.012021] (-) TimerEvent: {}
+[4.112230] (-) TimerEvent: {}
+[4.212436] (-) TimerEvent: {}
+[4.312666] (-) TimerEvent: {}
+[4.412916] (-) TimerEvent: {}
+[4.513148] (-) TimerEvent: {}
+[4.613416] (-) TimerEvent: {}
+[4.713704] (-) TimerEvent: {}
+[4.814015] (-) TimerEvent: {}
+[4.914324] (-) TimerEvent: {}
+[5.014608] (-) TimerEvent: {}
+[5.114919] (-) TimerEvent: {}
+[5.215234] (-) TimerEvent: {}
+[5.315544] (-) TimerEvent: {}
+[5.415834] (-) TimerEvent: {}
+[5.516123] (-) TimerEvent: {}
+[5.616366] (-) TimerEvent: {}
+[5.716603] (-) TimerEvent: {}
+[5.816895] (-) TimerEvent: {}
+[5.917150] (-) TimerEvent: {}
+[6.017411] (-) TimerEvent: {}
+[6.117671] (-) TimerEvent: {}
+[6.217955] (-) TimerEvent: {}
+[6.318286] (-) TimerEvent: {}
+[6.418587] (-) TimerEvent: {}
+[6.518903] (-) TimerEvent: {}
+[6.619207] (-) TimerEvent: {}
+[6.719513] (-) TimerEvent: {}
+[6.819853] (-) TimerEvent: {}
+[6.920188] (-) TimerEvent: {}
+[7.020495] (-) TimerEvent: {}
+[7.120818] (-) TimerEvent: {}
+[7.221135] (-) TimerEvent: {}
+[7.321440] (-) TimerEvent: {}
+[7.421738] (-) TimerEvent: {}
+[7.522059] (-) TimerEvent: {}
+[7.622349] (-) TimerEvent: {}
+[7.722632] (-) TimerEvent: {}
+[7.822960] (-) TimerEvent: {}
+[7.923296] (-) TimerEvent: {}
+[8.023593] (-) TimerEvent: {}
+[8.123901] (-) TimerEvent: {}
+[8.224193] (-) TimerEvent: {}
+[8.324481] (-) TimerEvent: {}
+[8.424817] (-) TimerEvent: {}
+[8.525115] (-) TimerEvent: {}
+[8.625413] (-) TimerEvent: {}
+[8.725689] (-) TimerEvent: {}
+[8.825939] (-) TimerEvent: {}
+[8.849996] (collision_avoidance) StdoutLine: {'line': b'[100%] \x1b[32m\x1b[1mLinking CXX executable collision_avoidance_node\x1b[0m\n'}
+[8.926031] (-) TimerEvent: {}
+[9.026294] (-) TimerEvent: {}
+[9.126566] (-) TimerEvent: {}
+[9.226834] (-) TimerEvent: {}
+[9.327198] (-) TimerEvent: {}
+[9.336999] (collision_avoidance) StdoutLine: {'line': b'[100%] Built target collision_avoidance_node\n'}
+[9.348097] (collision_avoidance) CommandEnded: {'returncode': 0}
+[9.348574] (collision_avoidance) JobProgress: {'identifier': 'collision_avoidance', 'progress': 'install'}
+[9.357541] (collision_avoidance) Command: {'cmd': ['/usr/bin/cmake', '--install', '/home/leedonghyuck/ws_px4/build/collision_avoidance'], 'cwd': '/home/leedonghyuck/ws_px4/build/collision_avoidance', 'env': OrderedDict([('GJS_DEBUG_TOPICS', 'JS ERROR;JS LOG'), ('LESSOPEN', '| /usr/bin/lesspipe %s'), ('LANGUAGE', 'en_US:en'), ('USER', 'leedonghyuck'), ('LC_TIME', 'ko_KR.UTF-8'), ('XDG_SESSION_TYPE', 'x11'), ('SHLVL', '1'), ('LD_LIBRARY_PATH', '/home/leedonghyuck/ws_px4/install/px4_ros2_cpp/lib:/home/leedonghyuck/ws_px4/install/px4_msgs/lib:/home/leedonghyuck/ws_px4/install/px4_ros_com/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/home/username/.mujoco/mujoco210/bin'), ('HOME', '/home/leedonghyuck'), ('OLDPWD', '/home/leedonghyuck/ws_px4'), ('DESKTOP_SESSION', 'ubuntu'), ('GIO_LAUNCHED_DESKTOP_FILE', '/usr/share/applications/terminator.desktop'), ('ROS_PYTHON_VERSION', '3'), ('GNOME_SHELL_SESSION_MODE', 'ubuntu'), ('GTK_MODULES', 'gail:atk-bridge'), ('LC_MONETARY', 'ko_KR.UTF-8'), ('MANAGERPID', '2737'), ('SYSTEMD_EXEC_PID', '2989'), ('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/run/user/1000/bus'), ('COLORTERM', 'truecolor'), ('TERMINATOR_DBUS_NAME', 'net.tenshu.Terminator23558193cd9818af7fe4d2c2f5bd9d00f'), ('GIO_LAUNCHED_DESKTOP_FILE_PID', '5938'), ('IM_CONFIG_PHASE', '1'), ('COLCON_PREFIX_PATH', '/home/leedonghyuck/ws_px4/install'), ('ROS_DISTRO', 'humble'), ('GTK_IM_MODULE', 'ibus'), ('LOGNAME', 'leedonghyuck'), ('JOURNAL_STREAM', '8:23044'), ('_', '/usr/bin/colcon'), ('ROS_VERSION', '2'), ('XDG_SESSION_CLASS', 'user'), ('USERNAME', 'leedonghyuck'), ('TERM', 'xterm-256color'), ('GNOME_DESKTOP_SESSION_ID', 'this-is-deprecated'), ('ROS_LOCALHOST_ONLY', '0'), ('WINDOWPATH', '2'), ('PATH', '/opt/ros/humble/bin:/home/leedonghyuck/.local/bin:/home/leedonghyuck/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin:/opt/xtensa-esp-elf/bin/'), ('SESSION_MANAGER', 'local/leedonghyuck-System-Product-Name:@/tmp/.ICE-unix/2965,unix/leedonghyuck-System-Product-Name:/tmp/.ICE-unix/2965'), ('INVOCATION_ID', '0907fc2717cf483b9d2e9f54da102a14'), ('PAPERSIZE', 'a4'), ('XDG_MENU_PREFIX', 'gnome-'), ('LC_ADDRESS', 'ko_KR.UTF-8'), ('XDG_RUNTIME_DIR', '/run/user/1000'), ('MUJOCO_PY_MUJOCO_PATH', '/home/username/.mujoco/mujoco210'), ('DISPLAY', ':1'), ('TERMINATOR_DBUS_PATH', '/net/tenshu/Terminator2'), ('LANG', 'en_US.UTF-8'), ('XDG_CURRENT_DESKTOP', 'ubuntu:GNOME'), ('IBUS_DISABLE_SNOOPER', '1'), ('LC_TELEPHONE', 'ko_KR.UTF-8'), ('XMODIFIERS', '@im=ibus'), ('XDG_SESSION_DESKTOP', 'ubuntu'), ('XAUTHORITY', '/run/user/1000/gdm/Xauthority'), ('LS_COLORS', 'rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=30;41:tw=30;42:ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.arc=01;31:*.arj=01;31:*.taz=01;31:*.lha=01;31:*.lz4=01;31:*.lzh=01;31:*.lzma=01;31:*.tlz=01;31:*.txz=01;31:*.tzo=01;31:*.t7z=01;31:*.zip=01;31:*.z=01;31:*.dz=01;31:*.gz=01;31:*.lrz=01;31:*.lz=01;31:*.lzo=01;31:*.xz=01;31:*.zst=01;31:*.tzst=01;31:*.bz2=01;31:*.bz=01;31:*.tbz=01;31:*.tbz2=01;31:*.tz=01;31:*.deb=01;31:*.rpm=01;31:*.jar=01;31:*.war=01;31:*.ear=01;31:*.sar=01;31:*.rar=01;31:*.alz=01;31:*.ace=01;31:*.zoo=01;31:*.cpio=01;31:*.7z=01;31:*.rz=01;31:*.cab=01;31:*.wim=01;31:*.swm=01;31:*.dwm=01;31:*.esd=01;31:*.jpg=01;35:*.jpeg=01;35:*.mjpg=01;35:*.mjpeg=01;35:*.gif=01;35:*.bmp=01;35:*.pbm=01;35:*.pgm=01;35:*.ppm=01;35:*.tga=01;35:*.xbm=01;35:*.xpm=01;35:*.tif=01;35:*.tiff=01;35:*.png=01;35:*.svg=01;35:*.svgz=01;35:*.mng=01;35:*.pcx=01;35:*.mov=01;35:*.mpg=01;35:*.mpeg=01;35:*.m2v=01;35:*.mkv=01;35:*.webm=01;35:*.webp=01;35:*.ogm=01;35:*.mp4=01;35:*.m4v=01;35:*.mp4v=01;35:*.vob=01;35:*.qt=01;35:*.nuv=01;35:*.wmv=01;35:*.asf=01;35:*.rm=01;35:*.rmvb=01;35:*.flc=01;35:*.avi=01;35:*.fli=01;35:*.flv=01;35:*.gl=01;35:*.dl=01;35:*.xcf=01;35:*.xwd=01;35:*.yuv=01;35:*.cgm=01;35:*.emf=01;35:*.ogv=01;35:*.ogx=01;35:*.aac=00;36:*.au=00;36:*.flac=00;36:*.m4a=00;36:*.mid=00;36:*.midi=00;36:*.mka=00;36:*.mp3=00;36:*.mpc=00;36:*.ogg=00;36:*.ra=00;36:*.wav=00;36:*.oga=00;36:*.opus=00;36:*.spx=00;36:*.xspf=00;36:'), ('SSH_AGENT_LAUNCHER', 'gnome-keyring'), ('SSH_AUTH_SOCK', '/run/user/1000/keyring/ssh'), ('AMENT_PREFIX_PATH', '/home/leedonghyuck/ws_px4/install/px4_ros_com:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py:/home/leedonghyuck/ws_px4/install/example_mode_goto_py:/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp:/home/leedonghyuck/ws_px4/install/example_mode_with_executor_cpp:/home/leedonghyuck/ws_px4/install/example_mode_vtol_cpp:/home/leedonghyuck/ws_px4/install/example_mode_rtl_replacement_cpp:/home/leedonghyuck/ws_px4/install/example_mode_mission_cpp:/home/leedonghyuck/ws_px4/install/example_mode_manual_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_global_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp:/home/leedonghyuck/ws_px4/install/example_mode_fw_attitude_cpp:/home/leedonghyuck/ws_px4/install/example_local_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_global_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_executor_with_multiple_modes_cpp:/home/leedonghyuck/ws_px4/install/collision_avoidance:/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/opt/ros/humble'), ('SHELL', '/bin/bash'), ('LC_NAME', 'ko_KR.UTF-8'), ('TERMINATOR_UUID', 'urn:uuid:663387d7-2ef7-48d1-9dea-460fbfcb84d9'), ('QT_ACCESSIBILITY', '1'), ('GDMSESSION', 'ubuntu'), ('LESSCLOSE', '/usr/bin/lesspipe %s %s'), ('LC_MEASUREMENT', 'ko_KR.UTF-8'), ('GPG_AGENT_INFO', '/run/user/1000/gnupg/S.gpg-agent:0:1'), ('GJS_DEBUG_OUTPUT', 'stderr'), ('LC_IDENTIFICATION', 'ko_KR.UTF-8'), ('QT_IM_MODULE', 'ibus'), ('PWD', '/home/leedonghyuck/ws_px4/build/collision_avoidance'), ('LC_ALL', 'en_US.UTF-8'), ('XDG_CONFIG_DIRS', '/etc/xdg/xdg-ubuntu:/etc/xdg'), ('XDG_DATA_DIRS', '/usr/share/ubuntu:/usr/share/gnome:/usr/local/share/:/usr/share/:/var/lib/snapd/desktop'), ('PYTHONPATH', '/home/leedonghyuck/ws_px4/install/px4_ros_com/local/lib/python3.10/dist-packages:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py/lib/python3.10/site-packages:/home/leedonghyuck/ws_px4/install/example_mode_goto_py/lib/python3.10/site-packages:/home/leedonghyuck/ws_px4/install/px4_ros2_py/local/lib/python3.10/dist-packages:/home/leedonghyuck/ws_px4/install/px4_msgs/local/lib/python3.10/dist-packages:/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages'), ('LC_NUMERIC', 'ko_KR.UTF-8'), ('LC_PAPER', 'ko_KR.UTF-8'), ('COLCON', '1'), ('VTE_VERSION', '6800'), ('CMAKE_PREFIX_PATH', '/home/leedonghyuck/ws_px4/install/px4_ros2_cpp:/home/leedonghyuck/ws_px4/install/px4_msgs:/home/leedonghyuck/ws_px4/install/px4_ros_com:/home/leedonghyuck/ws_px4/install/px4_ros2_py:/home/leedonghyuck/ws_px4/install/example_rover_velocity_mode_cpp:/home/leedonghyuck/ws_px4/install/example_mode_with_executor_cpp:/home/leedonghyuck/ws_px4/install/example_mode_vtol_cpp:/home/leedonghyuck/ws_px4/install/example_mode_rtl_replacement_cpp:/home/leedonghyuck/ws_px4/install/example_mode_mission_cpp:/home/leedonghyuck/ws_px4/install/example_mode_manual_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_global_cpp:/home/leedonghyuck/ws_px4/install/example_mode_goto_cpp:/home/leedonghyuck/ws_px4/install/example_mode_fw_attitude_cpp:/home/leedonghyuck/ws_px4/install/example_local_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_global_navigation_cpp:/home/leedonghyuck/ws_px4/install/example_executor_with_multiple_modes_cpp:/home/leedonghyuck/ws_px4/install/collision_avoidance:/home/leedonghyuck/ws_px4/install/example_mode_with_rclpy_py:/home/leedonghyuck/ws_px4/install/example_mode_goto_py:/opt/ros/humble')]), 'shell': False}
+[9.364958] (collision_avoidance) StdoutLine: {'line': b'-- Install configuration: ""\n'}
+[9.365144] (collision_avoidance) StdoutLine: {'line': b'-- Installing: /home/leedonghyuck/ws_px4/install/collision_avoidance/lib/collision_avoidance/collision_avoidance_node\n'}
+[9.371635] (collision_avoidance) StdoutLine: {'line': b'-- Set runtime path of "/home/leedonghyuck/ws_px4/install/collision_avoidance/lib/collision_avoidance/collision_avoidance_node" to ""\n'}
+[9.371859] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/ament_index/resource_index/package_run_dependencies/collision_avoidance\n'}
+[9.371993] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/ament_index/resource_index/parent_prefix_path/collision_avoidance\n'}
+[9.372089] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/environment/ament_prefix_path.sh\n'}
+[9.372183] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/environment/ament_prefix_path.dsv\n'}
+[9.372324] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/environment/path.sh\n'}
+[9.372492] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/environment/path.dsv\n'}
+[9.372579] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/local_setup.bash\n'}
+[9.372664] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/local_setup.sh\n'}
+[9.372748] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/local_setup.zsh\n'}
+[9.372853] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/local_setup.dsv\n'}
+[9.372941] (collision_avoidance) StdoutLine: {'line': b'-- Installing: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/package.dsv\n'}
+[9.373025] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/ament_index/resource_index/packages/collision_avoidance\n'}
+[9.373110] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/cmake/collision_avoidanceConfig.cmake\n'}
+[9.373195] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/cmake/collision_avoidanceConfig-version.cmake\n'}
+[9.373280] (collision_avoidance) StdoutLine: {'line': b'-- Up-to-date: /home/leedonghyuck/ws_px4/install/collision_avoidance/share/collision_avoidance/package.xml\n'}
+[9.374515] (collision_avoidance) CommandEnded: {'returncode': 0}
+[9.396779] (collision_avoidance) JobEnded: {'identifier': 'collision_avoidance', 'rc': 0}
+[9.397541] (-) EventReactorShutdown: {}
