@@ -1,0 +1,14 @@
+
+source ~/ros2_ws/install/setup.bash
+
+ros2 run collision_avoidance vtol_guidance_node --ros-args --params-file ~/ros2_ws/src/collision_avoidance/config/flocking_params.yaml -p vehicle_ID:=0 -p total_agent_num:=5 -r __node:=vtol_guidance_0 
+
+ros2 run collision_avoidance vtol_guidance_node --ros-args --params-file ~/ros2_ws/src/collision_avoidance/config/flocking_params.yaml -p vehicle_ID:=1 -p total_agent_num:=5 -r __node:=vtol_guidance_1 
+
+ros2 run collision_avoidance vtol_guidance_node --ros-args --params-file ~/ros2_ws/src/collision_avoidance/config/flocking_params.yaml -p vehicle_ID:=2 -p total_agent_num:=5 -r __node:=vtol_guidance_2 
+
+ros2 run collision_avoidance vtol_guidance_node --ros-args --params-file ~/ros2_ws/src/collision_avoidance/config/flocking_params.yaml -p vehicle_ID:=3 -p total_agent_num:=5 -r __node:=vtol_guidance_3 
+
+ros2 run collision_avoidance vtol_guidance_node --ros-args --params-file ~/ros2_ws/src/collision_avoidance/config/flocking_params.yaml -p vehicle_ID:=4 -p total_agent_num:=5 -r __node:=vtol_guidance_4 
+
+
