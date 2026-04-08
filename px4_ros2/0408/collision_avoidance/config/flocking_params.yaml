@@ -1,0 +1,22 @@
+# Flocking guidance parameters
+# 모든 vtol_guidance_node 인스턴스에 공통 적용 (/** 와일드카드 사용)
+#
+# 사용법:
+#   ros2 run collision_avoidance vtol_guidance_node \
+#     --ros-args \
+#     -p vehicle_ID:=1 \
+#     -p total_agent_num:=5 \
+#     -r __node:=vtol_guidance_1 \
+#     --params-file <path>/flocking_params.yaml
+
+"/**":
+  ros__parameters:
+    flocking_lambda: 1.0           # alignment 게인
+    flocking_beta: 0.25             # alignment 거리 감쇠 지수
+    flocking_k1: 0.32              # cohesion (속도-위치 내적) 게인
+    flocking_k2: 0.0256               # separation/거리유지 게인
+    flocking_desired_distance: 30.0 # 이웃과 유지할 거리 [m]
+
+    # 적분 sample period (ZOH) — updateSetpoint 호출 rate 와 일치시킬 것
+    # 측정값: 30Hz → 0.0333. 만약 setpoint rate 가 바뀌면 같이 바꿔야 함.
+    integration_dt: 0.0333          # [s]
