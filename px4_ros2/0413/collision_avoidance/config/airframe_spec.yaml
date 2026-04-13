@@ -1,0 +1,43 @@
+# Airframe spec — Gazebo Classic Standard VTOL
+#
+# 사용 방법:
+#   1. SITL 기동 후 QGC 접속
+#   2. QGC → Vehicle Setup → Parameters → Tools → Save to file
+#      → 예: ~/Downloads/qgc_export.params
+#   3. 변환 스크립트 실행:
+#        cd ~/ros2_ws/src/collision_avoidance/scripts
+#        python3 convert_px4_params.py ~/Downloads/qgc_export.params
+#      → 이 파일이 덮어써짐
+#
+# Spherical (v, ψ, γ) 기반 가이던스 파이프라인용 spec.
+
+"/**":
+  ros__parameters:
+
+    # ═══════════════════════════════════════════════════════════
+    # PX4 airframe 파라미터 (QGC 와 동기화)
+    # ═══════════════════════════════════════════════════════════
+    airspeed_min: 12.0              # PX4 FW_AIRSPD_MIN (stall 여유 포함)
+    airspeed_cruise: 15.0           # PX4 FW_AIRSPD_TRIM (참조용)
+    airspeed_max: 25.0              # PX4 FW_AIRSPD_MAX
+
+    height_rate_max_climb: 8.0      # PX4 FW_T_CLMB_MAX
+    height_rate_max_sink: 2.7       # PX4 FW_T_SINK_MAX
+
+    max_roll_deg: 50.0              # PX4 FW_R_LIM (coordinated turn 계산용)
+
+    # ═══════════════════════════════════════════════════════════
+    # PX4 직접 대응 없음 — 우리가 정한 값
+    # ═══════════════════════════════════════════════════════════
+
+    # 비행 경로각 γ 한계 — Spherical state 의 pitch 자유도
+    max_pitch_deg: 30.0             # |γ| ≤ 30°  (cos(γ) ≥ 0.866 보장)
+
+    # γ 변화율 (pitch angular rate) 한계
+    max_pitch_rate_deg_per_sec: 60.0  # ~0.52 rad/s
+
+    # ═══════════════════════════════════════════════════════════
+    # 고도 P-제어 (Formation 모드에서 height_rate 피드백용)
+    # ═══════════════════════════════════════════════════════════
+    alt_hold_p_gain: 0.1              # P 게인 [1/s] — 1m 오차 → 0.5 m/s height_rate
+    alt_hold_hr_max: 3.0              # height_rate 클램프 [m/s]

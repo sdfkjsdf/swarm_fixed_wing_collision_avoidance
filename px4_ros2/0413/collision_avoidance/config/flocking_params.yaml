@@ -1,0 +1,51 @@
+# Flocking guidance + Airframe spec — vtol_guidance_node 용 통합 파라미터
+#
+# 사용법:
+#   ros2 run collision_avoidance vtol_guidance_node \
+#     --ros-args \
+#     --params-file <path>/flocking_params.yaml \
+#     -p vehicle_ID:=0 -p total_agent_num:=5 \
+#     -r __node:=vtol_guidance_0
+
+"/**":
+  ros__parameters:
+
+    # ═══════════════════════════════════════════════════════════
+    # Flocking 알고리즘 파라미터
+    # ═══════════════════════════════════════════════════════════
+    flocking_lambda: 1.0           # alignment 게인
+    flocking_beta: 0.25            # alignment 거리 감쇠 지수
+    flocking_k1: 0.2            # cohesion (속도-위치 내적) 게인
+    flocking_k2: 0.256           # separation/거리유지 게인
+    flocking_desired_distance: 30.0 # 이웃과 유지할 거리 [m]
+
+    # 적분 sample period (ZOH) — updateSetpoint 호출 rate 와 일치시킬 것
+    integration_dt: 0.0333         # [s]
+
+    # ═══════════════════════════════════════════════════════════
+    # PX4 airframe 파라미터 (QGC 와 동기화)
+    # ═══════════════════════════════════════════════════════════
+    airspeed_min: 12.0              # PX4 FW_AIRSPD_MIN (stall 여유 포함)
+    airspeed_cruise: 15.0           # PX4 FW_AIRSPD_TRIM (참조용)
+    airspeed_max: 25.0              # PX4 FW_AIRSPD_MAX
+
+    height_rate_max_climb: 8.0      # PX4 FW_T_CLMB_MAX
+    height_rate_max_sink: 2.7       # PX4 FW_T_SINK_MAX
+
+    max_roll_deg: 50.0              # PX4 FW_R_LIM (coordinated turn 계산용)
+
+    # ═══════════════════════════════════════════════════════════
+    # PX4 직접 대응 없음 — 우리가 정한 값
+    # ═══════════════════════════════════════════════════════════
+
+    # 비행 경로각 γ 한계 — Spherical state 의 pitch 자유도
+    max_pitch_deg: 30.0             # |γ| ≤ 30°  (cos(γ) ≥ 0.866 보장)
+
+    # γ 변화율 (pitch angular rate) 한계
+    max_pitch_rate_deg_per_sec: 60.0  # ~0.52 rad/s
+
+    # ═══════════════════════════════════════════════════════════
+    # 고도 P-제어 (Formation 모드에서 height_rate 피드백용)
+    # ═══════════════════════════════════════════════════════════
+    alt_hold_p_gain: 0.1              # P 게인 [1/s] — 1m 오차 → 0.1 m/s height_rate
+    alt_hold_hr_max: 3.0              # height_rate 클램프 [m/s]
