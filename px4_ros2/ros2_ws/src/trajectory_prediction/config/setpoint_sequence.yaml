@@ -1,0 +1,41 @@
+# ═══════════════════════════════════════════════════════════════
+# Trajectory Replay — 사전 정의 setpoint 시퀀스
+# t=0 기준점: TrajectoryReplayMode::onActivate() 호출 시점 (Preflight 인계 직후)
+#
+# 각 segment 는 ZOH (스텝). 단위:
+#   t_start, t_end           [s]
+#   airspeed                 [m/s]  (equivalent airspeed)
+#   height_rate              [m/s]  (ENU, +위)
+#   lateral_acceleration     [m/s^2] (+우)
+#
+# end_policy: hold_last | cruise | stop
+#   hold_last: 시퀀스 종료 후 마지막 segment 값 유지 (기본, 안전)
+#   cruise:    Preflight 가 캡처한 cruise altitude 로 복귀
+#   stop:      Cruise 와 동일 (RTL 진입은 Executor 가 별도 결정)
+#
+# ★ 본 시퀀스: 같은 고도 (h_dot=0 모든 segment) + V/a_lat 만 변화 ★
+#   순수 수평 선회 동역학 검증용. 종/횡 채널 결합 영향 없음.
+# ═══════════════════════════════════════════════════════════════
+
+end_policy: hold_last
+
+# ★ 본 작업 (2026-05-12 의도 X): Formation 식 고정 target + lateral 위주 시나리오.
+#   모델 디자인: h_cmd = baseline_alt (Replay 진입 시점 alt) 고정.
+#   유효 영역: baseline ± alt_envelope (~30m). 회피 transient + cruise hold.
+#   본 시퀀스: alt 변화 없음 (h_dot=0). lateral_acceleration step 으로 회피 유사 transient 자극.
+
+sequence:
+  # 0~10s: 직진 cruise 안정화 (baseline)
+  - { t_start:  0.0, t_end: 10.0, airspeed: 16.0, height_rate: 0.0, lateral_acceleration:  0.0 }
+
+  # 10~15s: 우선회 (수평) — 회피 유사 lateral transient
+  - { t_start: 10.0, t_end: 15.0, airspeed: 16.0, height_rate: 0.0, lateral_acceleration:  4.0 }
+
+  # 15~20s: 직진 + airspeed step
+  - { t_start: 15.0, t_end: 20.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration:  0.0 }
+
+  # 20~25s: 좌선회 (수평)
+  - { t_start: 20.0, t_end: 25.0, airspeed: 18.0, height_rate: 0.0, lateral_acceleration: -4.0 }
+
+  # 25~35s: cruise 복귀 (시퀀스 끝, completed → RTL)
+  - { t_start: 25.0, t_end: 35.0, airspeed: 16.0, height_rate: 0.0, lateral_acceleration:  0.0 }

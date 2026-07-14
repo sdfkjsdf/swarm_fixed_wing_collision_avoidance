@@ -1,0 +1,71 @@
+# ═══════════════════════════════════════════════════════════════
+# Case 매트릭스 — Stage A-2 (claude_code_task_spec.md §A-2)
+# ───────────────────────────────────────────────────────────────
+# 25 case × 4 Phase 로 분류:
+#   Phase 1 (12): 단일 채널 step input → τ fitting
+#   Phase 2 ( 6): 단일 채널 sustained  → steady bias
+#   Phase 3 ( 4): 결합 채널            → coupling 검증
+#   Phase 4 ( 3): 회피 시나리오        → ε_TPA 측정
+#
+# 각 case 의 t_step (step 발생 시각) 과 baseline/step_value 는 analyze_cases.py
+# 가 step response fitting 영역 추출에 사용.
+# ═══════════════════════════════════════════════════════════════
+
+phase_1_step_input:
+  - { id: V01, file: cases/V01.yaml, channel: V,    amplitude:  +2, baseline: 18.0, step_value: 20.0, t_step: 5.0, expected_tau: tau_V    }
+  - { id: V02, file: cases/V02.yaml, channel: V,    amplitude:  +4, baseline: 18.0, step_value: 22.0, t_step: 5.0, expected_tau: tau_V    }
+  # ★ V03/V04 (감속) 사용자 요청으로 비활성. yaml 자체는 cases/ 안에 보존 — 향후 가/감속 비대칭 검증 시 복원.
+  # - { id: V03, file: cases/V03.yaml, channel: V,    amplitude:  -2, baseline: 20.0, step_value: 18.0, t_step: 5.0, expected_tau: tau_V    }
+  # - { id: V04, file: cases/V04.yaml, channel: V,    amplitude:  -4, baseline: 20.0, step_value: 16.0, t_step: 5.0, expected_tau: tau_V    }
+  - { id: H01, file: cases/H01.yaml, channel: hdot, amplitude:  +2, baseline:  0.0, step_value:  2.0, t_step: 5.0, expected_tau: tau_hdot }
+  - { id: H02, file: cases/H02.yaml, channel: hdot, amplitude:  +4, baseline:  0.0, step_value:  4.0, t_step: 5.0, expected_tau: tau_hdot }
+  - { id: H03, file: cases/H03.yaml, channel: hdot, amplitude:  -2, baseline:  0.0, step_value: -2.0, t_step: 5.0, expected_tau: tau_hdot }
+  - { id: H04, file: cases/H04.yaml, channel: hdot, amplitude:  -4, baseline:  0.0, step_value: -4.0, t_step: 5.0, expected_tau: tau_hdot }
+  - { id: P01, file: cases/P01.yaml, channel: phi,  amplitude:  +1, baseline:  0.0, step_value:  1.0, t_step: 5.0, expected_tau: tau_phi  }
+  - { id: P02, file: cases/P02.yaml, channel: phi,  amplitude:  +3, baseline:  0.0, step_value:  3.0, t_step: 5.0, expected_tau: tau_phi  }
+  - { id: P03, file: cases/P03.yaml, channel: phi,  amplitude:  +6, baseline:  0.0, step_value:  6.0, t_step: 5.0, expected_tau: tau_phi  }
+  - { id: P04, file: cases/P04.yaml, channel: phi,  amplitude:  +9, baseline:  0.0, step_value:  9.0, t_step: 5.0, expected_tau: tau_phi  }
+
+phase_2_sustained:
+  - { id: S01, file: cases/S01.yaml, scenario: baseline_cruise,    duration_steady: 20.0 }
+  - { id: S02, file: cases/S02.yaml, scenario: right_turn_15deg,   duration_steady: 15.0 }
+  - { id: S03, file: cases/S03.yaml, scenario: left_turn_15deg,    duration_steady: 15.0 }
+  - { id: S04, file: cases/S04.yaml, scenario: right_turn_30deg,   duration_steady: 15.0 }
+  - { id: S05, file: cases/S05.yaml, scenario: climb_3mps,         duration_steady: 15.0 }
+  - { id: S06, file: cases/S06.yaml, scenario: descent_3mps,       duration_steady: 15.0 }
+
+phase_3_coupling:
+  - { id: C01, file: cases/C01.yaml, channels: [V, hdot],          combo: "V+2_hdot+2"            }
+  - { id: C02, file: cases/C02.yaml, channels: [V, phi],           combo: "V+2_alat+3"            }
+  - { id: C03, file: cases/C03.yaml, channels: [hdot, phi],        combo: "hdot+2_alat+3"         }
+  - { id: C04, file: cases/C04.yaml, channels: [V, hdot, phi],     combo: "V+2_hdot+2_alat+3"     }
+
+phase_4_avoidance:
+  - { id: A01, file: cases/A01.yaml, scenario: large_phi_step,     pulse_duration: 10.0 }
+  - { id: A02, file: cases/A02.yaml, scenario: short_phi_pulse,    pulse_duration:  2.0 }
+  - { id: A03, file: cases/A03.yaml, scenario: vertical_avoidance, pulse_duration: 10.0 }
+
+# ───────────────────────────────────────────────────────────────
+# LH (Lateral at constant Height) — 사용자 시나리오: 고정익 전환 시점
+# 고도 유지 + lateral 위주. 감속 / 고도 변화 제외.
+# 모든 case: airspeed cruise (18 m/s) 또는 가속만, height_rate = 0.
+# ───────────────────────────────────────────────────────────────
+phase_LH_alt_hold_lateral:
+  - { id: LH01, file: cases/LH01.yaml, channel: phi,       a_lat: +3, phi_target_deg: +17, baseline_V: 18.0, t_step: 5.0, scenario: cruise_right_turn_small  }
+  - { id: LH02, file: cases/LH02.yaml, channel: phi,       a_lat: +6, phi_target_deg: +31, baseline_V: 18.0, t_step: 5.0, scenario: cruise_right_turn_medium }
+  - { id: LH03, file: cases/LH03.yaml, channel: phi,       a_lat: -3, phi_target_deg: -17, baseline_V: 18.0, t_step: 5.0, scenario: cruise_left_turn_symmetry }
+  - { id: LH04, file: cases/LH04.yaml, channels: [V, phi], a_lat: +3, V_step: 20.0,        baseline_V: 18.0, t_step: 5.0, scenario: cruise_accel_plus_turn    }
+
+# ───────────────────────────────────────────────────────────────
+# R (Roll setpoint sweep) — 사용자 요청: phi_cmd ±5°/±15°/±25° 6 case.
+# 변환식 Beard-McLain: a_lat = g·tan(phi_cmd), g = 9.80665 m/s^2.
+# 모든 case: cruise altitude hold (height_rate=0), V=18 m/s.
+# 목적: roll setpoint sweep 으로 모델의 *부호 대칭성 + saturation + 풍속 systematic offset* 진단.
+# ───────────────────────────────────────────────────────────────
+phase_R_roll_setpoint_sweep:
+  - { id: R05P, file: cases/R05P.yaml, channel: phi, phi_cmd_deg:  +5, a_lat:  +0.858, baseline_V: 18.0, t_step: 5.0, scenario: small_right_turn  }
+  - { id: R05M, file: cases/R05M.yaml, channel: phi, phi_cmd_deg:  -5, a_lat:  -0.858, baseline_V: 18.0, t_step: 5.0, scenario: small_left_turn   }
+  - { id: R15P, file: cases/R15P.yaml, channel: phi, phi_cmd_deg: +15, a_lat:  +2.628, baseline_V: 18.0, t_step: 5.0, scenario: medium_right_turn }
+  - { id: R15M, file: cases/R15M.yaml, channel: phi, phi_cmd_deg: -15, a_lat:  -2.628, baseline_V: 18.0, t_step: 5.0, scenario: medium_left_turn  }
+  - { id: R25P, file: cases/R25P.yaml, channel: phi, phi_cmd_deg: +25, a_lat:  +4.572, baseline_V: 18.0, t_step: 5.0, scenario: large_right_turn  }
+  - { id: R25M, file: cases/R25M.yaml, channel: phi, phi_cmd_deg: -25, a_lat:  -4.572, baseline_V: 18.0, t_step: 5.0, scenario: large_left_turn   }

@@ -1,0 +1,7 @@
+# Phase 1-V: tau_V step -2 m/s (20 → 18)
+case_id: V03
+description: "tau_V step -2 m/s (cruise 20 → cmd 18, decel)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end:  5.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 0.0 }
+  - { t_start:  5.0, t_end: 20.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 0.0 }

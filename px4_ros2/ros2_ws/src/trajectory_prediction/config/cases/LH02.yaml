@@ -1,0 +1,8 @@
+# LH02 — medium right turn at cruise altitude hold (avoidance scale)
+# 시나리오: cruise alt hold + 회피 강한 선회.
+# 자극: a_lat +6 m/s^2 → phi_cmd ≈ +31° (atan2(6, 9.80665)).
+case_id: LH02
+description: "right turn medium (a_lat +6, phi ~31°, alt hold)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end: 10.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 6.0 }

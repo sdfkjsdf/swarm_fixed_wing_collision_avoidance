@@ -1,0 +1,7 @@
+# Phase 2-S: sustained descent h_dot=-3 m/s (within sink limit 2.7? clamp expected)
+case_id: S06
+description: "sustained descent h_dot=-3 m/s"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end:  5.0, airspeed: 20.0, height_rate:  0.0, lateral_acceleration: 0.0 }
+  - { t_start:  5.0, t_end: 20.0, airspeed: 20.0, height_rate: -3.0, lateral_acceleration: 0.0 }

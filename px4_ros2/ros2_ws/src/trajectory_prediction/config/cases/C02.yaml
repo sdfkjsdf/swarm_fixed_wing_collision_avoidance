@@ -1,0 +1,7 @@
+# Phase 3-C: coupling V+2 + a_lat+3 (longitudinal × lateral coupling)
+case_id: C02
+description: "coupling V+2 + a_lat+3 (long×lat dual step, phi~17°)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end:  5.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 0.0 }
+  - { t_start:  5.0, t_end: 20.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 3.0 }

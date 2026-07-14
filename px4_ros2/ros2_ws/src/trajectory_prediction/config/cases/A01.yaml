@@ -1,0 +1,8 @@
+# Phase 4-A: avoidance — large a_lat step → back to 0 (sudden hard turn)
+case_id: A01
+description: "avoidance: large phi step a_lat 0→+6→0 (sudden hard turn)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end:  5.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 0.0 }
+  - { t_start:  5.0, t_end: 15.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 6.0 }
+  - { t_start: 15.0, t_end: 25.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 0.0 }

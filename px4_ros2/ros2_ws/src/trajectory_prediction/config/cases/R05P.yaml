@@ -1,0 +1,9 @@
+# ★ R05P — Roll setpoint sweep (2-segment: V=20 baseline + roll 자극)
+# 시나리오: 고정익 cruise V=20 m/s 도달 baseline 10초 → roll 자극 10초 sustained
+# compare_single_input.py 가 *sp_a 변화 첫 row* 자동 검출 → 자극 시작 시점부터 4.5s window
+case_id: R05P
+description: "roll turn (a_lat 0.858, V=20 baseline + 자극, alt hold)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end: 10.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration:  0.0 }
+  - { t_start: 10.0, t_end: 20.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration:  0.858 }

@@ -1,0 +1,6 @@
+# Phase 1-H: tau_hdot step -4 m/s (level → fast sink, near sink limit)
+case_id: H04
+description: "tau_hdot step -4 m/s (level → fast sink)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end: 10.0, airspeed: 20.0, height_rate: -4.0, lateral_acceleration: 0.0 }

@@ -1,0 +1,13 @@
+repositories:
+  src/px4_msgs:
+    type: git
+    url: https://github.com/PX4/px4_msgs.git
+    version: 3a7c790eaee5284f4e48091dd77f697e4fd828d3
+  src/px4_ros_com:
+    type: git
+    url: https://github.com/PX4/px4_ros_com.git
+    version: 86e9aeb20e55a4673fa8a9f1c29ea06a6c5ad1af
+  src/px4-ros2-interface-lib:
+    type: git
+    url: https://github.com/Auterion/px4-ros2-interface-lib.git
+    version: 365dd8807869fd81813de0415ec99e85ea021d59

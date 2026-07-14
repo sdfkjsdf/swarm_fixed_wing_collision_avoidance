@@ -1,0 +1,9 @@
+# LH04 — combined V acceleration + lateral turn (avoidance-similar)
+# 시나리오: cruise alt hold + 가속 + 우선회 *동시* — 회피 기동 유사.
+# 자극: V 18→20 (가속 +2) + a_lat +3 (phi ~17°) 동시.
+# Phase 3 (cross-coupling) 자리에 해당 — V↔ψ 결합 효과 검증.
+case_id: LH04
+description: "combined (V 18->20 + a_lat +3, avoidance-similar, alt hold)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end: 10.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 3.0 }

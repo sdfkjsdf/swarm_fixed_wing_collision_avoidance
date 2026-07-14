@@ -1,0 +1,7 @@
+# Phase 2-S: sustained right turn phi=30° (a_lat = g·tan(30°) = 5.66)
+case_id: S04
+description: "sustained right turn phi=30° (a_lat=5.66, large)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end:  5.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 0.0  }
+  - { t_start:  5.0, t_end: 20.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 5.66 }

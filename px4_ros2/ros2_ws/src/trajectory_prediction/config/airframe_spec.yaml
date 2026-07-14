@@ -1,0 +1,84 @@
+# Airframe spec — Gazebo Classic Standard VTOL (collision_avoidance 와 동일 값)
+#
+# trajectory_replay_node 사용처:
+#   - SetpointSequencer SafetyLimits: airspeed_min, airspeed_max, max_roll_deg, gravity
+#   - TrajectoryPredict PredictParams: airspeed_min/max, height_rate_*,
+#                                       max_roll_deg, gravity, tc_tas/tc_alt/tc_roll
+
+"/**":
+  ros__parameters:
+
+    # ═══════════════════════════════════════════════════════════
+    # PX4 airframe 파라미터 (QGC 와 동기화)
+    # ═══════════════════════════════════════════════════════════
+    airspeed_min: 10.0      # FW_AIRSPD_MIN (SITL live: 10.0)
+    airspeed_cruise: 15.0
+    airspeed_max: 25.0      # FW_AIRSPD_MAX (SITL live: 25.0)
+
+    height_rate_max_climb: 8.0
+    height_rate_min_sink: 2.7
+    height_rate_max_sink: 2.7
+
+    gravity: 9.80665
+    max_roll_deg: 50.0
+
+    # ── 호환 차원 (SetpointSequencer 가 직접 사용 안 함) ──
+    max_pitch_deg: 30.0
+    max_pitch_rate_deg_per_sec: 60.0
+    energy_fraction: 0.5
+
+    # ═══════════════════════════════════════════════════════════
+    # PX4 시정수 — TrajectoryPredict 1차 지연 식별값
+    # 2026-05-11: SITL 1040_gazebo-classic_standard_vtol live readout 으로 동기화.
+    #   pxh> param show FW_T_TAS_TC / FW_T_ALT_TC / FW_R_TC
+    # 1040 기체 설정이 이 3개 파라미터를 재정의하지 않아 PX4 default 그대로 적용됨.
+    # 실기체 식별값과 다르면 외부 yaml 로 override 권장.
+    # ═══════════════════════════════════════════════════════════
+    tc_tas:  5.0      # FW_T_TAS_TC : airspeed error TC [s] (PX4 default 5.0)
+    tc_alt:  5.0      # FW_T_ALT_TC : altitude error TC [s] (PX4 default 5.0)
+    tc_roll: 0.5      # ★ 0.4 → 0.5 시험 (2026-05-13). PX4 default = 0.4 (1040 SITL live).
+                      #   가설: effective τ_φ = FW_R_TC + inner rate PID lag (~0.05~0.1s) →
+                      #   *실효 τ ≈ 0.45~0.5s*. 본 시험으로 R 시리즈 phi/psi 정확도 변화 확인.
+
+    # ═══════════════════════════════════════════════════════════
+    # ★ 본 작업 (2026-05-12): 종 채널 PD 형태 확장 (Beard-McLain 9.19)
+    #   ḣ_dot = (h_dot_cmd − h_dot)/tc_alt   ← rate term (기존 1차 지연)
+    #         + b_h · (h_cmd − h)            ← ★ altitude P term
+    #
+    #   ★ 본 작업 (2026-05-12 의도 X): h_cmd = baseline_alt (고정).
+    #     main.cpp 의 predict 람다가 sequencer 적분 *폐기*, baseline_alt 고정 사용.
+    #     모델 유효 동작 영역: baseline ± alt_envelope. 회피 transient + cruise hold.
+    #     큰 alt 변화 시퀀스는 *별도 작업의 ramp-following 모드* 사용 권장.
+    # ═══════════════════════════════════════════════════════════
+    b_h: 0.02    # ★ 0.1 → 0.02 (2026-05-13): FlockingGuidance.cpp 의 alt_hold_p_gain=0.1 과
+                 #   *정상상태 matching* (★ 주의: 과도 등가 아님).
+                 #
+                 #   FlockingGuidance:  ḣ^c = K_p × (h^c − h)  → 비례 제어기 *즉시 출력*,
+                 #                                              ḣ 가 *명령값* (PX4 TECS 가 추종)
+                 #   TrajectoryPredict: ḧ = (ḣ^c−ḣ)/τ_hdot + b_h(h^c−h)  → ODE 적분,
+                 #                                                          ḣ 가 *상태 변수*
+                 #
+                 #   ★ 등가 조건 — 정상상태 (ḧ=0, ḣ=0):
+                 #     b_h × (h^c − h) = K_p × (h^c − h) / τ_hdot
+                 #     → b_h = K_p / τ_hdot = 0.1/5 = 0.02
+                 #   ⚠ 과도 응답 (transient) 은 *구조 차이* — 4.5초 horizon 안 수치 동일 아님.
+                 #
+                 #   감쇠비 ζ = (1/τ)/(2√b_h) = 0.2/0.283 = 0.707 — *critically damped 부근*.
+                 #   이전 0.1 은 *K_p=0.5 등가* 라 under-damped (ζ=0.316) 진동.
+                 #   h^c = baseline_alt 가 *제어입력 시작 시점* 에 재캡처.
+
+    # ★ beta_phi (roll-altitude coupling) 항 *완전 제거* (2026-05-13 최종).
+    #   시험 결과 timing fix 적용 *후* β_φ 효과 ≈ 0 → 식 추가 *불필요*.
+    #   *진짜 결정적 자리* = compare_single_input.py 의 stimulus_row + 5 (timing 동기화).
+
+    # ★ alt_offset: h_cmd = baseline_alt + alt_offset [m].
+    #   0  = Formation 식 (baseline 그대로, b_h 효과 거의 없음 — h≈h_cmd 라 P-term≈0).
+    #   +N = baseline 보다 N m 위 target → P-term `b_h*N` 지속 자극 → 모델 climb 응답 격리 시험.
+    #   ⚠️ PX4 는 height_rate mode (sequencer 의 h_dot_cmd 만 받음). alt_offset 은
+    #      *예측 모델 내부* 의 h_cmd 만 변경 → 실측은 cruise hold, 예측만 climb → 의도된 mismatch.
+    alt_offset: 0.0   # ★ R 시리즈 고도 유지 시나리오: baseline 그대로. 디버그용 P-term 자극 비활성.
+
+    # ★ alt_envelope: 모델 유효 동작 영역 [m]. baseline ± 이 값 안에서 PD 식 유효.
+    # 범위 밖 시 모델 정확도 보장 안 함 (현재 코드에서 검증 안 함, 향후 graceful degradation 트리거용).
+    alt_envelope: 30.0
+

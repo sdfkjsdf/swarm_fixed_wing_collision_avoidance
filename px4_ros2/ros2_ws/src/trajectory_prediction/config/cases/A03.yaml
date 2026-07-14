@@ -1,0 +1,8 @@
+# Phase 4-A: avoidance — h_dot step 0 → +4 → 0 (vertical avoidance)
+case_id: A03
+description: "avoidance: vertical h_dot 0→+4→0 (climb then level)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end:  5.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 0.0 }
+  - { t_start:  5.0, t_end: 15.0, airspeed: 20.0, height_rate: 4.0, lateral_acceleration: 0.0 }
+  - { t_start: 15.0, t_end: 25.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 0.0 }

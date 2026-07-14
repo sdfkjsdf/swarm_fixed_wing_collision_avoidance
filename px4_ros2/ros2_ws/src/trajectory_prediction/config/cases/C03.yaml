@@ -1,0 +1,7 @@
+# Phase 3-C: coupling h_dot+2 + a_lat+3 (climb + turn)
+case_id: C03
+description: "coupling h_dot+2 + a_lat+3 (climb+turn, phi~17°)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end:  5.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 0.0 }
+  - { t_start:  5.0, t_end: 20.0, airspeed: 20.0, height_rate: 2.0, lateral_acceleration: 3.0 }
