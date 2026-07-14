@@ -1,3 +1,0 @@
-1. 여기서 꺠닭은 내용
--> 지금 px4-ros2 라이브러리로 고정익 제어를 하는 경우에 corse각의 setpoint 가 실시간으로 변화하는 경우 corse각의 setpoint을 실시간으로 주면 안되고 
-later_acceleration을 건드려야 지금 빠르게 반응해서 flocking 이 이루어짐
