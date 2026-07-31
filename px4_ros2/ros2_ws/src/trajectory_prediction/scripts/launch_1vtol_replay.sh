@@ -39,6 +39,7 @@
 PX4_DIR=${PX4_DIR:-/home/leedonghyuck/PX4-Autopilot}
 ROS2_WS=${ROS2_WS:-/home/leedonghyuck/ros2_ws}
 BUILD=${PX4_DIR}/build/px4_sitl_default
+PX4_PYTHON_BIN=${PX4_PYTHON:-python3}
 INSTANCE=0
 SDF_OUT=/tmp/standard_vtol_${INSTANCE}.sdf
 
@@ -114,14 +115,21 @@ sleep 8
 
 # ─── 5. SDF spawn ──────────────────────────────────────────────────
 echo "[launch 5/7] standard_vtol_${INSTANCE} SDF spawn..."
-python3 "${PX4_DIR}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/scripts/jinja_gen.py" \
+if ! "${PX4_PYTHON_BIN}" \
+    "${PX4_DIR}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/scripts/jinja_gen.py" \
     "${PX4_DIR}/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/standard_vtol/standard_vtol.sdf.jinja" \
     "${PX4_DIR}/Tools/simulation/gazebo-classic/sitl_gazebo-classic" \
     --mavlink_tcp_port 4560 --mavlink_udp_port 14560 --mavlink_id 1 \
     --gst_udp_port 5600 --video_uri 5600 --mavlink_cam_udp_port 14530 \
-    --output-file "${SDF_OUT}" >/dev/null 2>&1
-gz model --spawn-file="${SDF_OUT}" --model-name="standard_vtol_${INSTANCE}" \
-    -x 0 -y 0 -z 0.83 >/dev/null 2>&1
+    --output-file "${SDF_OUT}"; then
+    echo "[launch] ERROR: standard_vtol SDF 생성 실패 (Python: ${PX4_PYTHON_BIN})"
+    exit 1
+fi
+if ! gz model --spawn-file="${SDF_OUT}" --model-name="standard_vtol_${INSTANCE}" \
+    -x 0 -y 0 -z 0.83; then
+    echo "[launch] ERROR: standard_vtol 모델 spawn 실패."
+    exit 1
+fi
 
 # ─── 6. ready check (poll 토픽) ─────────────────────────────────────
 echo "[launch 6/7] uXRCE-DDS 토픽 준비 대기 (max 30s)..."
