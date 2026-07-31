@@ -1,0 +1,6 @@
+# Phase 1-P: tau_phi step a_lat +9 m/s^2 (phi ≈ 42°, max amplitude near FW_R_LIM=50°)
+case_id: P04
+description: "tau_phi step a_lat +9 m/s^2 (phi ~42°, near FW_R_LIM)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end: 10.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 9.0 }

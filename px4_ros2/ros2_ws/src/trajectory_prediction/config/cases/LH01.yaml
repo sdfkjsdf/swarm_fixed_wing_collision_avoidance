@@ -1,0 +1,9 @@
+# LH (Lateral at constant Height) 01 — small right turn at cruise altitude hold
+# 시나리오: 고정익 전환 시점 고도 유지 + 정상 cruise 우선회 (flocking 시나리오).
+# 자극: a_lat +3 m/s^2 → phi_cmd ≈ +17° (atan2(3, 9.80665)).
+# t_step = 5.0s, sustained 15s.
+case_id: LH01
+description: "right turn small (a_lat +3, phi ~17°, alt hold)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end: 10.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 3.0 }

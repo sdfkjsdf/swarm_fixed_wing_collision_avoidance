@@ -1,0 +1,6 @@
+# Phase 1-P: tau_phi step a_lat +3 m/s^2 (phi ≈ 17°, moderate turn)
+case_id: P02
+description: "tau_phi step a_lat +3 m/s^2 (phi ~17°)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end: 10.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 3.0 }

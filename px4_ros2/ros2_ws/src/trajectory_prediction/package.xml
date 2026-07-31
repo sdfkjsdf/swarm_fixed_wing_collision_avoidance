@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>trajectory_prediction</name>
+  <version>0.0.1</version>
+  <description>Single fixed-wing replay of pre-defined setpoint sequence + CSV logging for trajectory prediction comparison</description>
+  <maintainer email="id0154199@gmail.com">leedonghyuck</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>px4_msgs</depend>
+  <depend>px4_ros2_cpp</depend>
+  <depend>yaml-cpp</depend>
+  <depend>std_msgs</depend>           <!-- ★ key_samples publisher (Float64MultiArray) -->
+
+  <!-- ★ 2026-05-13 마이그레이션: trajectory_prediction 패키지가 *test harness* 가
+       되면서 collision_avoidance 의 collision_estimation library 를 link.
+       알고리즘 (TrajectoryPredict + PredictTypes) source of truth 는 그쪽. -->
+  <depend>collision_avoidance</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

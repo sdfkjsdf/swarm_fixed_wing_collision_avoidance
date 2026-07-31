@@ -1,0 +1,8 @@
+# LH03 — left turn at cruise altitude hold (symmetry check vs LH01)
+# 시나리오: cruise alt hold + 좌선회 — 모델의 부호 대칭성 검증.
+# 자극: a_lat -3 m/s^2 → phi_cmd ≈ -17° (LH01 의 부호 반대).
+case_id: LH03
+description: "left turn small (a_lat -3, phi ~-17°, symmetry vs LH01)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end: 10.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: -3.0 }

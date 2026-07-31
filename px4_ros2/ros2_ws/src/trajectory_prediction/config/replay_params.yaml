@@ -1,0 +1,24 @@
+# Replay 노드 파라미터 (path/rate + predict 메타)
+#
+# ★ 시정수 (tau_V/tau_hdot/tau_a) 는 airframe_spec.yaml 의 tc_tas/tc_alt/tc_roll
+#    로 통합 sourcing. 본 파일에는 horizon/rate 만 둠.
+
+"/**":
+  ros__parameters:
+    csv_path_prefix: "/tmp/trajectory"     # CSV 파일 prefix (timestamp suffix 자동 추가)
+    log_rate_hz: 50.0                       # CSV 쓰기 주기 [Hz]
+    # NOTE: sequence_file 은 main.cpp:54 의 declare default 가 동일하게 setpoint_sequence.yaml 을 가리킴.
+    # 여기서 정의하면 --params-file 이 CLI -p override 를 덮음 (ros2 humble 인자 순서 동작).
+    # run_all_cases.sh 의 case yaml 동적 전환을 위해 본 파일에서 제거. case override 는
+    # launch_1vtol_replay.sh 의 -p sequence_file:=${SEQUENCE_FILE} 로 전달됨.
+
+    # ── 예측 (TrajectoryPredict) ──
+    # ★ 2026-05-13 endpoint-inclusive 컨벤션:
+    #   kPredictHorizon = round(predict_horizon_endpoint_s × predict_rate_hz) + 1
+    #   "endpoint_s 는 *마지막 점의 시각*" (양 끝점 포함).
+    #   기본: endpoint=4.5s × 10Hz + 1 = 46 점 (t=0.0, 0.1, ..., 4.5s).
+    #   *이전 컨벤션 (predict_horizon_s, +1 안 함) 의 45 점 = 0~4.4s* 에서 변경.
+    #   어긋나면 노드 시작 시 throw.
+    predict_horizon_endpoint_s: 4.5         # 예측 *마지막 점* 의 시각 [s]
+    predict_rate_hz:   10.0                 # 예측 점 간격 = 1/rate [s] → dt=0.1s
+    predict_call_hz:   10.0                 # predict() 자체 호출 주기 [Hz]

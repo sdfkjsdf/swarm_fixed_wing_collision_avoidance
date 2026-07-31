@@ -1,0 +1,7 @@
+# Phase 3-C: coupling V+2 + h_dot+2 (longitudinal coupling)
+case_id: C01
+description: "coupling V+2 + h_dot+2 (long. dual step)"
+end_policy: hold_last
+sequence:
+  - { t_start:  0.0, t_end:  5.0, airspeed: 20.0, height_rate: 0.0, lateral_acceleration: 0.0 }
+  - { t_start:  5.0, t_end: 20.0, airspeed: 20.0, height_rate: 2.0, lateral_acceleration: 0.0 }

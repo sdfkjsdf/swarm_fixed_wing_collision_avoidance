@@ -1,0 +1,26 @@
+# ROS 2 / colcon generated artifacts
+/build/
+/install/
+/log/
+**/build/
+**/install/
+**/log/
+
+# Python caches
+**/__pycache__/
+*.py[cod]
+
+# Local editor/agent configuration
+.vscode/
+.claude/
+.codex/
+.agents/
+
+# Local test output and temporary captures
+/results/
+*.csv
+*.png
+
+# Archived backups and OS files
+*.zip
+.DS_Store
