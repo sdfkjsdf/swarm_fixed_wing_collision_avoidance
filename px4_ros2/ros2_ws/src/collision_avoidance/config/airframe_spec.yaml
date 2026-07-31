@@ -5,7 +5,7 @@
 #   2. QGC → Vehicle Setup → Parameters → Tools → Save to file
 #      → 예: ~/Downloads/qgc_export.params
 #   3. 변환 스크립트 실행:
-#        cd ~/ros2_ws/src/collision_avoidance/scripts
+#        cd <workspace-source>/src/collision_avoidance/tools
 #        python3 convert_px4_params.py ~/Downloads/qgc_export.params
 #      → 이 파일이 덮어써짐
 #

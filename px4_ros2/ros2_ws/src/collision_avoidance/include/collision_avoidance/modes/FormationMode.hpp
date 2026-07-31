@@ -49,7 +49,7 @@
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/wind.hpp>
 
-#include <collision_avoidance/StateType.hpp>
+#include <collision_avoidance/common/StateType.hpp>
 #include <collision_avoidance/guidance/FlockingGuidance.hpp>
 
 

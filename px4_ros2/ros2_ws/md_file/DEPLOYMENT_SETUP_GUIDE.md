@@ -1,7 +1,7 @@
 # 배포 대상 PC 설정 및 실행 가이드
 
 > 대상: ROS 2 Humble 기반 Ubuntu PC 또는 Raspberry Pi 5(aarch64).  
-> 범위: `collision_avoidance`(다기체 편대 비행), `trajectory_prediction`(단일 VTOL 궤적 재생·예측 검증), PX4 SITL.  
+> 범위: `collision_avoidance`(다기체 편대 비행), `trajectory_prediction_hils`(단일 VTOL 궤적 재생·예측 검증), PX4 SITL.
 > 기준 경로는 `/home/<사용자>/ros2_ws`이며, 문서 안의 `<WS>`는 그 경로를 뜻한다.
 
 ## 1. 배포 전에 함께 전달할 항목
@@ -57,17 +57,17 @@ cd <WS>/src/px4-ros2-interface-lib
 
 ## 3. 경로 의존성 정리 (필수 확인)
 
-현재 일부 스크립트는 기존 개발자의 절대 경로를 기본값으로 사용한다. 대상 PC에서 실행 전에 아래 값을 맞춘다.
+실행 환경이 다르면 아래 환경변수와 경로를 지정한다.
 
 | 위치 | 기본 경로/값 | 대상 PC에서 할 일 |
 |---|---|---|
-| `launch_5vtol.sh` | `~/PX4-Autopilot` | PX4 경로가 다르면 스크립트 수정 또는 해당 경로에 배치 |
-| `launch_1vtol_replay.sh` | `PX4_DIR=/home/leedonghyuck/PX4-Autopilot`, `ROS2_WS=/home/leedonghyuck/ros2_ws` | 실행 시 환경변수로 지정: `PX4_DIR=... ROS2_WS=...` |
-| `run_all_cases.sh` | `/home/leedonghyuck/ros2_ws` | 다른 경로면 `ROS2_WS=...`로 실행 |
-| `compare_b_h_grid.sh` | `/home/leedonghyuck/anaconda3/bin/python3` | `PY`와 `SCRIPT`를 대상 환경에 맞게 수정 |
+| `launch_5vtol.sh` | `PX4_DIR`, `ROS2_WS`, `PX4_PYTHON` | 로컬 배치나 Python 환경이 다르면 환경변수로 지정 |
+| `launch_1vtol_replay.sh` | `PX4_DIR`, `ROS2_WS`, `PX4_PYTHON`, `ANALYSIS_PYTHON` | 로컬 배치나 Python 환경이 다르면 환경변수로 지정 |
+| `run_all_cases.sh` | `ROS2_WS`, `HILS_SRC`, `ANALYSIS_DIR` | 별도 소스/빌드 워크스페이스 구성이면 환경변수로 지정 |
+| `compare_b_h_grid.sh` | 시스템 `python3` | 다른 환경은 `ANALYSIS_PYTHON`으로 지정 |
 | Dockerfile | `src/px4-ros2-interface-lib` 포함을 전제 | 전달본에 해당 폴더가 있는지 확인 |
 
-`collision_avoidance/config/spawn_config.yaml`의 기체 수·초기 위치와 `ros_params.yaml`의 `total_agent_num`, `spawn_offset_*`는 반드시 동일해야 한다. `launch_5vtol.sh`가 시작 전에 이 일치 여부를 검사한다.
+`testing_module/formation_hils/config/spawn_config.yaml`의 기체 수·초기 위치와 `collision_avoidance/config/ros_params.yaml`의 `total_agent_num`, `spawn_offset_*`는 반드시 동일해야 한다. `launch_5vtol.sh`가 시작 전에 이 일치 여부를 검사한다.
 
 ## 4. 최초 빌드
 
@@ -82,7 +82,7 @@ source install/setup.bash
 colcon build --packages-select px4_ros2_cpp --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 
-colcon build --packages-select collision_avoidance trajectory_prediction \
+colcon build --packages-select collision_avoidance trajectory_prediction_hils \
   --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
@@ -90,8 +90,8 @@ source install/setup.bash
 빌드 확인:
 
 ```bash
-ros2 pkg list | rg '^(collision_avoidance|trajectory_prediction|px4_msgs|px4_ros2_cpp)$'
-colcon test --packages-select trajectory_prediction
+ros2 pkg list | rg '^(collision_avoidance|trajectory_prediction_hils|px4_msgs|px4_ros2_cpp)$'
+colcon test --packages-select collision_avoidance
 colcon test-result --verbose
 ```
 
@@ -119,7 +119,7 @@ MicroXRCEAgent udp4 -p 8892 &
 터미널 2에서 SITL 기체를 올린다.
 
 ```bash
-cd <WS>/src/collision_avoidance/scripts
+cd <WS>/src/testing_module/formation_hils/scripts
 ./launch_5vtol.sh noshow      # headless
 # 또는 ./launch_5vtol.sh show # Gazebo GUI
 ```
@@ -145,7 +145,7 @@ ros2 run collision_avoidance vtol_guidance_node --ros-args \
 상태 확인:
 
 ```bash
-cd <WS>/src/collision_avoidance/scripts
+cd <WS>/src/testing_module/formation_hils/scripts
 ./monitor_swarm.sh
 ros2 topic list | rg 'px4_|common|swarm_status'
 ```
@@ -157,34 +157,34 @@ ros2 topic list | rg 'px4_|common|swarm_status'
 ```bash
 cd <WS>
 PX4_DIR=~/PX4-Autopilot ROS2_WS=<WS> \
-  src/trajectory_prediction/scripts/launch_1vtol_replay.sh
+  src/testing_module/trajectory_prediction_hils/scripts/launch_1vtol_replay.sh
 ```
 
 SITL만 먼저 올리고 노드는 별도 터미널에서 실행하려면 `--no-node`를 사용한다.
 
 ```bash
 PX4_DIR=~/PX4-Autopilot ROS2_WS=<WS> \
-  <WS>/src/trajectory_prediction/scripts/launch_1vtol_replay.sh --no-node
+  <WS>/src/testing_module/trajectory_prediction_hils/scripts/launch_1vtol_replay.sh --no-node
 ```
 
-기본 시퀀스는 `trajectory_prediction/config/setpoint_sequence.yaml`이다. 특정 시험 시퀀스로 바꾸려면:
+기본 시퀀스는 `testing_module/trajectory_prediction_hils/config/setpoint_sequence.yaml`이다. 특정 시험 시퀀스로 바꾸려면:
 
 ```bash
-SEQUENCE_FILE=<WS>/src/trajectory_prediction/config/cases/R15P.yaml \
+SEQUENCE_FILE=<WS>/src/testing_module/trajectory_prediction_hils/config/cases/R15P.yaml \
   PX4_DIR=~/PX4-Autopilot ROS2_WS=<WS> \
-  <WS>/src/trajectory_prediction/scripts/launch_1vtol_replay.sh
+  <WS>/src/testing_module/trajectory_prediction_hils/scripts/launch_1vtol_replay.sh
 ```
 
 결과 CSV는 기본적으로 `/tmp/trajectory_<timestamp>.csv` 및 spline CSV로 생성된다. `results/cases/`로 수집하여 활성 R-series를 일괄 실행하려면:
 
 ```bash
-cd <WS>/src/trajectory_prediction/scripts
+cd <WS>/src/testing_module/trajectory_prediction_hils/scripts
 ROS2_WS=<WS> ./run_all_cases.sh --phase R
 ```
 
 ## 6. Docker 운용 (선택)
 
-Dockerfile은 ROS 2 Humble 기반 aarch64/Raspberry Pi 5 컨테이너를 의도한다. 이미지에는 `px4_msgs`, `px4_ros2_cpp`, `collision_avoidance`가 빌드되며 `trajectory_prediction`은 포함하지 않는다.
+Dockerfile은 ROS 2 Humble 기반 aarch64/Raspberry Pi 5 컨테이너를 의도한다. 이미지에는 `px4_msgs`, `px4_ros2_cpp`, `collision_avoidance`가 빌드되며 `trajectory_prediction_hils`은 포함하지 않는다.
 
 ```bash
 cd <WS>
@@ -209,7 +209,7 @@ Gazebo GUI를 컨테이너에서 띄우는 경우에만 호스트에서 `xhost +
 
 - [ ] `px4_msgs`, PX4 펌웨어, `px4_ros2_cpp`의 버전/메시지 호환성을 확인했다.
 - [ ] `<WS>`와 `PX4_DIR` 경로를 대상 PC에 맞게 설정했다.
-- [ ] `spawn_config.yaml`과 `ros_params.yaml`의 기체 수·오프셋을 맞췄다.
+- [ ] `formation_hils/config/spawn_config.yaml`과 `collision_avoidance/config/ros_params.yaml`의 기체 수·오프셋을 맞췄다.
 - [ ] `airframe_spec.yaml`/`flocking_params.yaml`의 속도, climb/sink, roll 제한을 실제 기체 PX4 파라미터와 맞췄다.
 - [ ] 실기체 운용 전에는 SITL에서 토픽, mode 등록, 좌표계(NED/ENU)와 failsafe를 확인했다.
 - [ ] 각 기체의 `vehicle_ID`, node name, PX4 DDS namespace, Agent UDP port가 중복되지 않는다.

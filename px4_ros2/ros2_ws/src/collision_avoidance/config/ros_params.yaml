@@ -1,5 +1,5 @@
 # ROS2 노드용 파라미터 (공통 좌표계 변환)
-# spawn_config.yaml과 동일한 값을 유지할 것
+# testing_module/formation_hils/config/spawn_config.yaml과 동일한 값을 유지할 것
 #
 # Flocking 가이던스 파라미터는 별도 파일: flocking_params.yaml
 
@@ -10,4 +10,3 @@ coordinate_transformer_node:
     spawn_offset_y: [0.0, 0.0, 0.0, 0.0, 0.0]
     spawn_offset_z: [0.83, 0.83, 0.83, 0.83, 0.83]
     propagation_time : 0.01
-

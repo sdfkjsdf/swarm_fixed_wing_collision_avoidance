@@ -34,7 +34,7 @@
 #include <px4_msgs/msg/wind.hpp>
 #include <px4_msgs/msg/vtol_vehicle_status.hpp>
 
-#include <collision_avoidance/StateType.hpp>   /* kMaxAgents */
+#include <collision_avoidance/common/StateType.hpp>   /* kMaxAgents */
 
 
 class VtolPreflightMode : public px4_ros2::ModeBase

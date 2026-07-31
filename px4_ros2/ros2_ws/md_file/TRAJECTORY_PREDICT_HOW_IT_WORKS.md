@@ -4,8 +4,8 @@
 >
 > **수신**: 외부 Claude (또는 새 세션)
 > **발신**: 현재 작업 세션
-> **첨부 코드 위치**: `/home/leedonghyuck/ros2_ws/src/trajectory_prediction/`
-> **명세 ground truth**: `/home/leedonghyuck/ros2_ws/md_file/TASK_trajectory_predictor.md`
+> **production 코드 위치**: `src/collision_avoidance/include/collision_avoidance/estimation/trajectory_prediction/` 및 `src/collision_avoidance/src/estimation/trajectory_prediction/`
+> **명세 기록**: `md_file/TASK_trajectory_predictor.md`
 
 ---
 
@@ -357,10 +357,10 @@ auto predict_timer = node->create_wall_timer(100ms,
 ## 7. 추가 정보
 
 ### 코드 위치
-- 라이브러리: `src/trajectory_prediction/include/trajectory_prediction/{StateType,TrajectoryPredict}.hpp`
-- 라이브러리 구현: `src/trajectory_prediction/src/TrajectoryPredict.cpp`
-- 호출자 (검증): `src/trajectory_prediction/src/main.cpp`, `TrajectoryLogger.cpp`
-- 사후분석: `src/trajectory_prediction/scripts/chunk_analysis.py`
+- 라이브러리: `src/collision_avoidance/include/collision_avoidance/estimation/trajectory_prediction/{PredictTypes,TrajectoryPredict}.hpp`
+- 라이브러리 구현: `src/collision_avoidance/src/estimation/trajectory_prediction/TrajectoryPredict.cpp`
+- 호출자(검증): `src/testing_module/trajectory_prediction_hils/src/nodes/trajectory_replay_main.cpp`, `src/logging/TrajectoryLogger.cpp`
+- 사후분석: `src/testing_module/analysis_tools/chunk_analysis.py`
 
 ### 검증 산출물
 - CSV: `/tmp/trajectory_20260511_132823.csv` (24.9 MB, 53초 비행)

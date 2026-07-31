@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>trajectory_prediction_hils</name>
+  <version>0.0.1</version>
+  <description>HILS/SITL harness for fixed-wing trajectory prediction and CSV-based validation</description>
+  <maintainer email="id0154199@gmail.com">leedonghyuck</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>px4_msgs</depend>
+  <depend>px4_ros2_cpp</depend>
+  <depend>yaml-cpp</depend>
+  <depend>std_msgs</depend>           <!-- ★ key_samples publisher (Float64MultiArray) -->
+
+  <depend>collision_avoidance</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

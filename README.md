@@ -17,8 +17,10 @@ PX4 SITL을 기준으로 한다.
 
 | 경로 | 설명 |
 | --- | --- |
-| `px4_ros2/ros2_ws/src/collision_avoidance` | 다기체 좌표 변환, 편대·flocking guidance 및 충돌 회피 |
-| `px4_ros2/ros2_ws/src/trajectory_prediction` | 단일 VTOL 궤적 재생, 예측 검증 및 결과 분석 |
+| `px4_ros2/ros2_ws/src/collision_avoidance` | 실기체 탑재 대상: 편대 guidance, 궤적 예측·재구성, PX4 mode |
+| `px4_ros2/ros2_ws/src/testing_module/trajectory_prediction_hils` | 단일 VTOL SITL/HILS replay 및 CSV 검증 harness |
+| `px4_ros2/ros2_ws/src/testing_module/formation_hils` | 다기체 formation SITL/HILS 실행·모니터링 |
+| `px4_ros2/ros2_ws/src/testing_module/analysis_tools` | 시험 CSV 분석과 비교 도구 |
 | `px4_ros2/ros2_ws/px4_dependencies.repos` | 검증된 ROS 2 외부 의존성 버전 |
 | `px4_ros2/ros2_ws/md_file` | 배포, 구조, 데이터 흐름 및 알고리즘 문서 |
 | `px4_ros2/RPI_5_docker_images` | Raspberry Pi 5 배포용 Docker 관련 파일 |
@@ -83,8 +85,8 @@ ln -s \
   ~/workspace/swarm-fixed-wing/source/swarm_fixed_wing_collision_avoidance/px4_ros2/ros2_ws/src/collision_avoidance \
   ~/workspace/swarm-fixed-wing/ros2_ws/src/collision_avoidance
 ln -s \
-  ~/workspace/swarm-fixed-wing/source/swarm_fixed_wing_collision_avoidance/px4_ros2/ros2_ws/src/trajectory_prediction \
-  ~/workspace/swarm-fixed-wing/ros2_ws/src/trajectory_prediction
+  ~/workspace/swarm-fixed-wing/source/swarm_fixed_wing_collision_avoidance/px4_ros2/ros2_ws/src/testing_module \
+  ~/workspace/swarm-fixed-wing/ros2_ws/src/testing_module
 
 cd ~/workspace/swarm-fixed-wing/ros2_ws
 vcs import src < \
@@ -107,7 +109,7 @@ colcon build --packages-select px4_ros2_cpp \
   --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 
-colcon build --packages-select collision_avoidance trajectory_prediction \
+colcon build --packages-select collision_avoidance trajectory_prediction_hils \
   --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
@@ -115,7 +117,7 @@ source install/setup.bash
 테스트:
 
 ```bash
-colcon test --packages-select trajectory_prediction
+colcon test --packages-select collision_avoidance
 colcon test-result --verbose
 ```
 
@@ -155,7 +157,7 @@ export PX4_PYTHON=~/workspace/swarm-fixed-wing/.envs/px4/bin/python
 source /opt/ros/humble/setup.bash
 source "${ROS2_WS}/install/setup.bash"
 
-"${ROS2_WS}/src/trajectory_prediction/scripts/launch_1vtol_replay.sh" --no-node
+"${ROS2_WS}/src/testing_module/trajectory_prediction_hils/scripts/launch_1vtol_replay.sh" --no-node
 ```
 
 이 실행 경로는 `standard_vtol` 모델 스폰, PX4–Gazebo 연결 및 `/px4_0` DDS

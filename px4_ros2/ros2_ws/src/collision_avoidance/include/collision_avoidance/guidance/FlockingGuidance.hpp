@@ -37,8 +37,8 @@
 
 #include <Eigen/Core>
 
-#include <collision_avoidance/StateType.hpp>
-#include <collision_avoidance/AirframeLimits.hpp>
+#include <collision_avoidance/common/StateType.hpp>
+#include <collision_avoidance/guidance/AirframeLimits.hpp>
 
 
 class FlockingGuidance
