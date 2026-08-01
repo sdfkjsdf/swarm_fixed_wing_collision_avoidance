@@ -49,7 +49,7 @@
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/wind.hpp>
 
-#include <collision_avoidance/common/StateType.hpp>
+#include <collision_avoidance/common/GlobalTypes.hpp>
 #include <collision_avoidance/guidance/FlockingGuidance.hpp>
 
 
@@ -94,11 +94,12 @@ private:
     std::atomic<float> m_wind_e_mt2rt{0.f};
 
     /* ── mt: 콜백이 채우는 누적 상태 ── */
-    std::array<StateType::State_for_Control_mt, kMaxAgents> m_state_for_control_mt{};
-    StateType::Check_update_mt                              m_agent_updated_mt{};
+    std::array<collision_avoidance::types::ControlState,
+               collision_avoidance::types::kMaxAgents> m_state_for_control_mt{};
+    collision_avoidance::types::AgentUpdateFlags m_agent_updated_mt{};
 
     /* ── mt → rt: swarm snapshot 채널 ── */
-    StateType::InputQueue_mt2rt m_input_queue_mt2rt{};
+    collision_avoidance::types::ControlInputQueue m_input_queue_mt2rt{};
 
     /* ── immutable: Flocking 모듈 (포인터 자체는 생성 후 불변,
                     dereference 는 rt_loop 만) ── */
@@ -111,14 +112,14 @@ private:
     std::atomic<bool> m_rt_running_mt2rt{false};
 
     /* ── rt → mt: 최종 setpoint 채널 ── */
-    StateType::OutputQueue_rt2mt m_output_queue_rt2mt{};
+    collision_avoidance::types::FwSetpointQueue m_output_queue_rt2mt{};
 
     /* ── mt: updateSetpoint 의 hold-last 버퍼 ── */
-    StateType::FwSetpointOutput_rt2mt m_last_output_mt{};
+    collision_avoidance::types::FwSetpoint m_last_output_mt{};
     bool m_has_last_output_mt{false};
 
     /* ── rt: rt_loop 전용 정적 이웃 버퍼 (heap 할당 없음) ── */
-    StateType::AgentStateArray_rt m_others_buf_rt{};
+    collision_avoidance::types::AgentStateArray m_others_buf_rt{};
 
     /* ── mt → rt: 활성화 시 V_desired 재초기화 신호 (atomic) ── */
     std::atomic<bool> m_reinit_vdesired_mt2rt{false};

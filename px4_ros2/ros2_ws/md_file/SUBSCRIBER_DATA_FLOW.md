@@ -90,22 +90,23 @@ const float wind_e = m_wind_e_mt2rt.load(std::memory_order_relaxed);
 
 ### 헤더에서 멤버 선언
 
-`FormationMode.hpp:96-98`
+`FormationMode.hpp`
 ```cpp
 /* ── mt: 콜백이 채우는 누적 상태 ── */
-std::array<StateType::State_for_Control_mt, kMaxAgents> m_state_for_control_mt{};
-StateType::Check_update_mt                              m_agent_updated_mt{};
+std::array<collision_avoidance::types::ControlState,
+           collision_avoidance::types::kMaxAgents> m_state_for_control_mt{};
+collision_avoidance::types::AgentUpdateFlags m_agent_updated_mt{};
 ```
 
-- `std::array<State_for_Control_mt, 8>` → 8 칸 짜리 정적 배열 (heap 0)
-- `Check_update_mt` = `std::array<bool, 8>` (StateType.hpp:65) → "각 칸 채워졌나?" 플래그
+- `std::array<ControlState, 8>` → 8 칸 짜리 정적 배열 (heap 0)
+- `AgentUpdateFlags` = `std::array<bool, 8>` → "각 칸 채워졌나?" 플래그
 - 둘 다 **`_mt` 접미사** → main thread 전용. atomic 아님!
 
-### `State_for_Control_mt` 구조
+### `ControlState` 구조
 
-`StateType.hpp:39-48`
+`GlobalTypes.hpp`
 ```cpp
-struct State_for_Control_mt
+struct ControlState
 {
     std::array<float, 3> position          = {0.0f, 0.0f, 0.0f};
     std::array<float, 3> velocity          = {0.0f, 0.0f, 0.0f};
@@ -145,7 +146,7 @@ _trans_odom_subs[n] = _node.create_subscription<VehicleOdometry>(
 
         /* ── ④ all-arrived → snapshot 만들고 큐에 push ── */
         if (all_updated) {
-            StateType::Total_state_for_Control_mt2rt snapshot{};
+            collision_avoidance::types::ControlSnapshot snapshot{};
             snapshot.num_agents = m_total_agent_num;
             snapshot.agents     = m_state_for_control_mt;       // ★ 통째로 복사 ★
             m_input_queue_mt2rt.try_push(snapshot);
@@ -176,22 +177,23 @@ _trans_odom_subs[n] = _node.create_subscription<VehicleOdometry>(
 
 ### snapshot 자료형
 
-`StateType.hpp:54-58`
+`GlobalTypes.hpp`
 ```cpp
-struct Total_state_for_Control_mt2rt {
-    std::array<State_for_Control_mt, kMaxAgents> agents{};
+struct ControlSnapshot {
+    std::array<ControlState, kMaxAgents> agents{};
     double timestamp  = 0.0;
     int    num_agents = 0;
 };
 ```
 
-→ N 대 전부의 odometry 를 **한 시점에** 묶은 것. `_mt2rt` 접미사 = 채널용 자료형.
+→ N 대 전부의 odometry 를 **한 시점에** 묶은 thread-agnostic 자료형.
 
 ### 큐 자료형
 
-`StateType.hpp:62`
+`GlobalTypes.hpp`
 ```cpp
-using InputQueue_mt2rt = SpscQueue<Total_state_for_Control_mt2rt, kMaxAgents>;
+using ControlInputQueue =
+    collision_avoidance::common::SpscQueue<ControlSnapshot, kMaxAgents>;
 ```
 
 → snapshot 8 개 까지 담을 수 있는 ring buffer.
@@ -199,7 +201,7 @@ using InputQueue_mt2rt = SpscQueue<Total_state_for_Control_mt2rt, kMaxAgents>;
 ### push 시점에 일어나는 일
 
 ```cpp
-StateType::Total_state_for_Control_mt2rt snapshot{};   // [a] stack 위 임시 객체
+collision_avoidance::types::ControlSnapshot snapshot{};   // [a] stack 위 임시 객체
 snapshot.num_agents = m_total_agent_num;
 snapshot.agents     = m_state_for_control_mt;           // [b] 멤버 array 통째 복사
 m_input_queue_mt2rt.try_push(snapshot);                 // [c] 큐 내부 버퍼로 한 번 더 복사
@@ -208,8 +210,8 @@ m_input_queue_mt2rt.try_push(snapshot);                 // [c] 큐 내부 버퍼
 | 단계 | 어디로 | 비용 |
 |---|---|---|
 | [a] stack 위에 빈 snapshot 생성 | stack | 0 (정적 할당) |
-| [b] 멤버 array → snapshot.agents 통째 복사 | stack | sizeof(State_for_Control_mt) × 8 ≈ 1KB 복사 |
-| [c] snapshot → 큐 내부 ring buffer 복사 | heap (큐 내부) | 같은 1KB 한 번 더 |
+| [b] 멤버 array → snapshot.agents 통째 복사 | stack | sizeof(ControlState) × 8 ≈ 1KB 복사 |
+| [c] snapshot → 큐 내부 ring buffer 복사 | queue 객체의 고정 배열 | 같은 1KB 한 번 더 |
 
 → 총 **2 회 복사**. 1KB 정도면 nanosecond 단위, 무시 가능.
 
@@ -238,15 +240,15 @@ bool try_push(const T& item) noexcept {
 
 ---
 
-## 4️⃣ rt_thread 가 받아서 또 다시 변환 — **변환 3단계: snapshot → AgentState_rt**
+## 4️⃣ rt_thread 가 받아서 또 다시 변환 — **변환 3단계: snapshot → AgentState**
 
 큐에서 꺼낸 snapshot 은 ROS 메시지 그대로의 형태인데, 가이던스 알고리즘이 원하는 형태 (코스각·비행경로각 포함) 로 또 변환됨.
 
 ### 사용할 자료형
 
-`StateType.hpp:73-83`
+`GlobalTypes.hpp`
 ```cpp
-struct AgentState_rt {
+struct AgentState {
     float pos_n{0.f};
     float pos_e{0.f};
     float pos_d{0.f};
@@ -259,7 +261,7 @@ struct AgentState_rt {
 };
 ```
 
-- `_rt` 접미사 = rt_thread 전용
+- 타입 자체는 thread-agnostic이며 `m_others_buf_rt` 같은 멤버 이름이 소유 스레드를 표시
 - 메시지 원본에 없던 `speed`, `psi`, `gamma` 추가 (계산해서 채움)
 
 ### rt_loop 안의 변환
@@ -267,7 +269,7 @@ struct AgentState_rt {
 `FormationMode.cpp:294-326`
 ```cpp
 /* ── ① 큐에서 snapshot pop ── */
-std::optional<StateType::Total_state_for_Control_mt2rt> input_state =
+std::optional<collision_avoidance::types::ControlSnapshot> input_state =
     m_input_queue_mt2rt.try_pop();
 if (!input_state.has_value()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -277,7 +279,7 @@ const auto & snapshot = input_state.value();
 const int self_idx    = m_vehicle_id;
 
 /* ── ② self 추출 + derived field 계산 ── */
-StateType::AgentState_rt self;
+collision_avoidance::types::AgentState self;
 self.pos_n = snapshot.agents[self_idx].position[0];        // 단순 복사
 self.pos_e = snapshot.agents[self_idx].position[1];
 self.pos_d = snapshot.agents[self_idx].position[2];
@@ -295,8 +297,8 @@ self.gamma = std::atan2(-self.vel_d, v_horizontal);        // ★ 비행경로�
 int num_others = 0;
 for (int i = 0; i < snapshot.num_agents; i++) {
     if (i == self_idx) continue;
-    if (num_others >= kMaxAgents) break;
-    StateType::AgentState_rt & s = m_others_buf_rt[num_others];
+    if (num_others >= collision_avoidance::types::kMaxAgents) break;
+    collision_avoidance::types::AgentState & s = m_others_buf_rt[num_others];
     s.pos_n = snapshot.agents[i].position[0];
     /* ... 동일하게 9개 필드 채움 ... */
     num_others++;
@@ -322,7 +324,7 @@ ROS2 메시지 한 발이 어떻게 가이던스 알고리즘 입력까지 도�
      ▼
 [main thread: _trans_odom_subs[n] callback]
      │
-     │  변환 1: ROS msg → State_for_Control_mt
+     │  변환 1: ROS msg → ControlState
      │  m_state_for_control_mt[n].position = msg->position;  // 누적 저장
      │  m_state_for_control_mt[n].velocity = msg->velocity;
      │  m_agent_updated_mt[n] = true;
@@ -330,7 +332,7 @@ ROS2 메시지 한 발이 어떻게 가이던스 알고리즘 입력까지 도�
      │  ★ all-arrived 체크 ★
      │  (N대 다 모이면 ↓ 진행, 아니면 위에서 끝)
      │
-     │  변환 2: 누적 array → snapshot (Total_state_for_Control_mt2rt)
+     │  변환 2: 누적 array → snapshot (ControlSnapshot)
      │  snapshot.agents = m_state_for_control_mt;  // 통째 복사
      │  snapshot.num_agents = m_total_agent_num;
      │
@@ -350,7 +352,7 @@ ROS2 메시지 한 발이 어떻게 가이던스 알고리즘 입력까지 도�
      ▼
 [rt_thread: rt_loop]
      │
-     │  변환 3: snapshot → AgentState_rt
+     │  변환 3: snapshot → AgentState
      │  self.pos_n = snapshot.agents[self_idx].position[0];
      │  self.psi   = atan2(self.vel_e, self.vel_n);   ← derived
      │  self.gamma = atan2(-self.vel_d, v_horizontal); ← derived
@@ -372,7 +374,7 @@ ROS2 메시지 한 발이 어떻게 가이던스 알고리즘 입력까지 도�
 | 변환 1 (msg → mt struct) | ROS msg 형식과 우리 형식이 다름. 우리 형식으로 통일 |
 | 누적 (N 대 모일 때까지 대기) | rt_thread 는 "한 시점의 swarm 전체" 를 받아야 가이던스 가능 |
 | 변환 2 (struct → snapshot, 큐로 push) | rt_thread 로 thread-safe 하게 넘기는 유일한 방법 |
-| 변환 3 (snapshot → AgentState_rt) | 가이던스 알고리즘이 원하는 derived field (psi, gamma, speed) 추가 |
+| 변환 3 (snapshot → AgentState) | 가이던스 알고리즘이 원하는 derived field (psi, gamma, speed) 추가 |
 
 **왜 한 번에 안 하고 단계적인가?**
 
@@ -383,7 +385,7 @@ ROS2 메시지 한 발이 어떻게 가이던스 알고리즘 입력까지 도�
 2. **각 단계가 다른 데이터 lifetime**
    - 누적 array: 다음 사이클까지 살아있음 (callback 사이)
    - snapshot: 큐에 push 되면 producer 쪽 사라짐
-   - AgentState_rt: 가이던스 함수 호출 한 번 동안만
+   - AgentState: 가이던스 함수 호출 한 번 동안만
 
 3. **race condition 회피**
    - 변환 1은 같은 thread 안에서 → 동기화 0
@@ -405,31 +407,32 @@ ROS2 메시지 한 발이 어떻게 가이던스 알고리즘 입력까지 도�
 
 | 단계 | 어디서 | 무엇을 |
 |---|---|---|
-| **변환 4** (rt_thread) | `FlockingGuidance::computeFwSetpoint()` 내부 | 가이던스 계산 결과 → `FwSetpointOutput_rt2mt` 구조체 |
+| **변환 4** (rt_thread) | `FlockingGuidance::computeFwSetpoint()` 내부 | 가이던스 계산 결과 → `FwSetpoint` 구조체 |
 | **변환 5** (rt → mt) | `m_output_queue_rt2mt.try_push()` → `try_pop()` | SPSC 큐로 thread-safe 전달 + ZOH 버퍼 적재 |
-| **변환 6** (main thread) | `updateSetpoint()` 안 | `FwSetpointOutput_rt2mt` → `px4_ros2::FwLateralLongitudinalSetpoint` (builder pattern) |
+| **변환 6** (main thread) | `updateSetpoint()` 안 | `FwSetpoint` → `px4_ros2::FwLateralLongitudinalSetpoint` (builder pattern) |
 | **변환 7** (px4_ros2 lib) | `_fw_setpoint->update(sp)` | C++ struct → PX4 ROS2 메시지 → DDS publish |
 
 ---
 
-## 5️⃣ 가이던스 결과 만들기 — `FwSetpointOutput_rt2mt`
+## 5️⃣ 가이던스 결과 만들기 — `FwSetpoint`
 
 가이던스 알고리즘 내부에서 **출력 전용 자료형**으로 결과 묶기.
 
 ### 출력 자료형
 
-`StateType.hpp:93-99`
+`GlobalTypes.hpp`
 ```cpp
-struct FwSetpointOutput_rt2mt {
+struct FwSetpoint {
     float course               = 0.f;  /* [rad] atan2(v_e, v_n) */
     float airspeed             = 0.f;  /* [m/s] clamp 적용 후 */
     float height_rate          = 0.f;  /* [m/s] ENU (NED 의 -v_d) */
+    float height_setpoint{std::numeric_limits<float>::quiet_NaN()};
     float lateral_acceleration = 0.f;  /* [m/s^2] 횡방향 가속도 */
     bool  is_fallback          = true; /* true = cruise fallback 으로 처리 */
 };
 ```
 
-- `_rt2mt` 접미사 = rt → main 채널용
+- `FwSetpoint` 자체는 thread-agnostic이며 `FwSetpointQueue`가 rt → main 전달에 사용됨
 - 가이던스가 결정해야 할 **모든 setpoint 필드** 가 한 구조체에 묶임
 - `is_fallback` 플래그 = "정상 계산 실패. main thread 가 cruise 로 fallback 해야 함" 신호
 
@@ -437,7 +440,7 @@ struct FwSetpointOutput_rt2mt {
 
 `FlockingGuidance.cpp:160-165`
 ```cpp
-StateType::FwSetpointOutput_rt2mt out;
+collision_avoidance::types::FwSetpoint out;
 out.airspeed             = m_speed_setpoint_rt;          // 클램프 후
 out.height_rate          = m_height_rate_setpoint_rt;    // alt_hold P 제어
 out.lateral_acceleration = m_lateral_acceleration_rt;    // coordinated turn 클램프
@@ -456,27 +459,28 @@ return out;
 
 ### 큐 자료형
 
-`StateType.hpp:102`
+`GlobalTypes.hpp`
 ```cpp
-using OutputQueue_rt2mt = SpscQueue<FwSetpointOutput_rt2mt, 8>;
+using FwSetpointQueue = collision_avoidance::common::SpscQueue<
+    FwSetpoint, kSetpointQueueCapacity>;
 ```
 
 - capacity 8 (입력 큐와 같음)
-- element 타입은 `FwSetpointOutput_rt2mt`
+- element 타입은 `FwSetpoint`
 
 ### 헤더에서 멤버 선언
 
 `FormationMode.hpp:113-114`
 ```cpp
 /* ── rt → mt: 최종 setpoint 채널 ── */
-StateType::OutputQueue_rt2mt m_output_queue_rt2mt{};
+collision_avoidance::types::FwSetpointQueue m_output_queue_rt2mt{};
 ```
 
 ### rt_thread 가 push
 
 `FormationMode.cpp:338-348`
 ```cpp
-const StateType::FwSetpointOutput_rt2mt out =
+const collision_avoidance::types::FwSetpoint out =
     m_flocking->computeFwSetpoint(self, m_others_buf_rt, num_others,
                                   wind_n, wind_e,
                                   height_setpoint);
@@ -485,7 +489,7 @@ const StateType::FwSetpointOutput_rt2mt out =
 m_output_queue_rt2mt.try_push(out);
 ```
 
-- `out` 이 큐 내부 ring buffer 로 복사 (sizeof = 17 byte 정도, 무시 가능)
+- `out` 이 큐 객체의 고정 ring buffer 로 복사되는 작은 POD 전달
 - atomic store-release 로 head 전진 → main thread 가 곧 pop 가능
 
 ### main thread 가 pop — `updateSetpoint(dt)` 안
@@ -493,7 +497,7 @@ m_output_queue_rt2mt.try_push(out);
 `FormationMode.cpp:220-240`
 ```cpp
 /* (1) rt_thread 가 push 한 최신 setpoint pop */
-std::optional<StateType::FwSetpointOutput_rt2mt> maybe_out =
+std::optional<collision_avoidance::types::FwSetpoint> maybe_out =
     m_output_queue_rt2mt.try_pop();
 
 if (maybe_out.has_value()) {
@@ -515,7 +519,7 @@ if (maybe_out.has_value()) {
 `FormationMode.hpp:117-118`
 ```cpp
 /* ── mt: updateSetpoint 의 hold-last 버퍼 ── */
-StateType::FwSetpointOutput_rt2mt m_last_output_mt{};
+collision_avoidance::types::FwSetpoint m_last_output_mt{};
 bool m_has_last_output_mt{false};
 ```
 
@@ -537,7 +541,7 @@ bool m_has_last_output_mt{false};
 
 ## 7️⃣ `_fw_setpoint->update(sp)` — Builder 패턴 + DDS publish
 
-### 변환 6: `FwSetpointOutput_rt2mt` → `px4_ros2::FwLateralLongitudinalSetpoint`
+### 변환 6: `FwSetpoint` → `px4_ros2::FwLateralLongitudinalSetpoint`
 
 `FormationMode.cpp:255-258`
 ```cpp
@@ -632,7 +636,7 @@ pub->publish(msg);
      │
      │  변환 4: 알고리즘 내부 상태 → 출력 자료형
      │
-     │  StateType::FwSetpointOutput_rt2mt out;
+     │  collision_avoidance::types::FwSetpoint out;
      │  out.airspeed             = m_speed_setpoint_rt;
      │  out.height_rate          = m_height_rate_setpoint_rt;
      │  out.lateral_acceleration = m_lateral_acceleration_rt;
@@ -708,10 +712,10 @@ pub->publish(msg);
 | 항목 | Subscriber 쪽 (📥) | Publisher 쪽 (📤) |
 |---|---|---|
 | **데이터 시작점** | PX4 / Gazebo / 다른 노드의 publish | FlockingGuidance::computeFwSetpoint |
-| **데이터 끝점** | 가이던스 알고리즘 입력 (AgentState_rt) | PX4 fixed-wing controller |
-| **변환 횟수** | 3 단계 (msg → mt struct → snapshot → AgentState_rt) | 4 단계 (out → queue → ZOH → builder → publish) |
+| **데이터 끝점** | 가이던스 알고리즘 입력 (AgentState) | PX4 fixed-wing controller |
+| **변환 횟수** | 3 단계 (msg → mt struct → snapshot → AgentState) | 4 단계 (out → queue → ZOH → builder → publish) |
 | **큐 방향** | mt → rt | rt → mt |
-| **큐 element 자료형** | `Total_state_for_Control_mt2rt` (~1KB) | `FwSetpointOutput_rt2mt` (~17 byte) |
+| **큐 element 자료형** | `ControlSnapshot` (~1KB) | `FwSetpoint` (~17 byte) |
 | **N 대 동기화** | all-arrived 패턴 (5 대 모일 때까지 대기) | 단일 출력 (자기 setpoint 만) |
 | **Atomic 사용** | wind_n/e (mt2rt scalar) | 종료 플래그 / reinit 신호만 |
 | **ZOH 버퍼** | 없음 (callback 마다 갱신) | 있음 (`m_last_output_mt`) |

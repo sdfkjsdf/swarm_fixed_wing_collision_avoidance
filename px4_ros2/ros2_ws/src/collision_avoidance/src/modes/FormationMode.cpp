@@ -60,7 +60,7 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
                 }
 
                 if (all_updated) {
-                    StateType::Total_state_for_Control_mt2rt snapshot{};
+                    collision_avoidance::types::ControlSnapshot snapshot{};
                     snapshot.num_agents = m_total_agent_num;
                     snapshot.agents     = m_state_for_control_mt;
                     m_input_queue_mt2rt.try_push(snapshot);
@@ -176,7 +176,7 @@ void FormationMode::onActivate()
 
     /* main thread 의 hold-last 상태 초기화 — 새 활성화 사이클에서는 처음부터 다시 */
     m_has_last_output_mt = false;
-    m_last_output_mt = StateType::FwSetpointOutput_rt2mt{};
+    m_last_output_mt = collision_avoidance::types::FwSetpoint{};
 
     /* 고도 P-제어 기준점 초기화 — 첫 유효 odometry 수신 시 캡처 */
     m_ref_pos_d_valid_mt = false;
@@ -218,7 +218,7 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
         m_cruise_altitude_amsl);
 
     /* (1) rt_thread 가 push 한 최신 setpoint pop */
-    std::optional<StateType::FwSetpointOutput_rt2mt> maybe_out =
+    std::optional<collision_avoidance::types::FwSetpoint> maybe_out =
         m_output_queue_rt2mt.try_pop();
 
     if (maybe_out.has_value()) {
@@ -273,7 +273,7 @@ void FormationMode::rt_loop()
             first_push_done = false;
         }
 
-        std::optional<StateType::Total_state_for_Control_mt2rt> input_state =
+        std::optional<collision_avoidance::types::ControlSnapshot> input_state =
             m_input_queue_mt2rt.try_pop();
 
         if (!input_state.has_value() || !m_flocking) {
@@ -292,7 +292,7 @@ void FormationMode::rt_loop()
         }
 
         /* (1) self 상태 추출 */
-        StateType::AgentState_rt self;
+        collision_avoidance::types::AgentState self;
             self.pos_n = snapshot.agents[self_idx].position[0];
             self.pos_e = snapshot.agents[self_idx].position[1];
             self.pos_d = snapshot.agents[self_idx].position[2];
@@ -309,8 +309,9 @@ void FormationMode::rt_loop()
         int num_others = 0;
         for (int i = 0; i < snapshot.num_agents; i++) {
             if (i == self_idx) continue;
-            if (num_others >= static_cast<int>(kMaxAgents)) break;  /* 안전 가드 */
-            StateType::AgentState_rt & s = m_others_buf_rt[num_others];
+            if (num_others >= static_cast<int>(
+                    collision_avoidance::types::kMaxAgents)) break;  /* 안전 가드 */
+            collision_avoidance::types::AgentState & s = m_others_buf_rt[num_others];
                 s.pos_n = snapshot.agents[i].position[0];   
                 s.pos_e = snapshot.agents[i].position[1];
                 s.pos_d = snapshot.agents[i].position[2];
@@ -335,7 +336,7 @@ void FormationMode::rt_loop()
                                           ? m_ref_pos_d_mt
                                           : std::nanf("");
 
-        const StateType::FwSetpointOutput_rt2mt out =
+        const collision_avoidance::types::FwSetpoint out =
             m_flocking->computeFwSetpoint(self, m_others_buf_rt, num_others,
                                           wind_n, wind_e,
                                           height_setpoint);

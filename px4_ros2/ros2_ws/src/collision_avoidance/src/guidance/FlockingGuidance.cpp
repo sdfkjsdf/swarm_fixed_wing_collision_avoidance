@@ -23,8 +23,8 @@ FlockingGuidance::FlockingGuidance(const Parameters& params,
 
 
 Eigen::Vector2f FlockingGuidance::computeAcceleration(
-    const StateType::AgentState_rt      & self,
-    const StateType::AgentStateArray_rt & others,
+    const collision_avoidance::types::AgentState      & self,
+    const collision_avoidance::types::AgentStateArray & others,
     int                                   num_others) const
 {
     Eigen::Vector2f a_ne = Eigen::Vector2f::Zero();
@@ -92,9 +92,9 @@ Eigen::Vector2f FlockingGuidance::computeAcceleration(
 
 
    ═══════════════ */
-StateType::FwSetpointOutput_rt2mt FlockingGuidance::computeFwSetpoint(
-    const StateType::AgentState_rt      & self,
-    const StateType::AgentStateArray_rt & others,
+collision_avoidance::types::FwSetpoint FlockingGuidance::computeFwSetpoint(
+    const collision_avoidance::types::AgentState      & self,
+    const collision_avoidance::types::AgentStateArray & others,
     int                                   num_others,
     float wind_n, float wind_e,
     float height_setpoint)
@@ -157,7 +157,7 @@ StateType::FwSetpointOutput_rt2mt FlockingGuidance::computeFwSetpoint(
     m_lateral_acceleration_rt = std::clamp(lat_accel_raw, -lat_accel_max, lat_accel_max);
 
     /* (9) Output */
-    StateType::FwSetpointOutput_rt2mt out;
+    collision_avoidance::types::FwSetpoint out;
     out.airspeed             = m_speed_setpoint_rt;
     out.height_rate          = m_height_rate_setpoint_rt;
     out.height_setpoint      = height_setpoint;          /* ★ 신규 — 입력 그대로 전파.

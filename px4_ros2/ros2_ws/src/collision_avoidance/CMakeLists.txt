@@ -105,6 +105,11 @@ if(BUILD_TESTING)
         trajectory_prediction_core
     )
     target_include_directories(test_trajectory_predict PRIVATE include)
+
+    ament_add_gtest(test_global_types
+        test/test_global_types.cpp
+    )
+    target_include_directories(test_global_types PRIVATE include)
 endif()
 
 ament_package()

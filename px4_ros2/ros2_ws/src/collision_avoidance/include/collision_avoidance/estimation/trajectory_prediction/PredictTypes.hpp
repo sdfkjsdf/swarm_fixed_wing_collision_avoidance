@@ -3,10 +3,9 @@
 /* ═══════════════════════════════════════════════════════════════
    PredictTypes.hpp — trajectory prediction 알고리즘 입출력 POD 정의
 
-   2026-05-13 마이그레이션: 기존 trajectory_prediction/StateType.hpp:59-128 의
+   2026-05-13 마이그레이션: 기존 trajectory_prediction StateType 헤더의
    *알고리즘 관련 타입* (PredictState, PredictInput, PredictParams) 만 추출.
-   trajectory_prediction 의 *튜닝 인프라 타입* (FwSetpointOutput_rt2mt, OutputQueue_rt2mt
-   등) 은 *trajectory_prediction 패키지에 그대로 잔류*.
+   공통 runtime/HILS 전달 타입은 common/GlobalTypes.hpp 가 단일 source of truth.
 
    기준 문서: md_file/TASK_trajectory_predictor.md §2.1, §2.2, §4.3
    ───────────────────────────────────────────────────────────────

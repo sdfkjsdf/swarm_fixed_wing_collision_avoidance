@@ -31,13 +31,13 @@
    - cos(γ)≥cos(γ_max)>0, v≥vmin 보장 → 분모 가드 불필요
 
    인터페이스:
-   - 상태 포맷: StateType::AgentState_rt (rt_thread 전용)
+   - 상태 포맷: collision_avoidance::types::AgentState (rt_thread 전용)
    - 이웃 목록: std::array + count (정적 할당, heap 접근 0)
 */
 
 #include <Eigen/Core>
 
-#include <collision_avoidance/common/StateType.hpp>
+#include <collision_avoidance/common/GlobalTypes.hpp>
 #include <collision_avoidance/guidance/AirframeLimits.hpp>
 
 
@@ -75,9 +75,9 @@ public:
        height_setpoint: formation 시작 시점에 캡처된 reference NED z (m).
                         FormationMode 의 trans_odom 콜백이 첫 유효 odometry 시 캡처.
                         아직 캡처 전이면 NaN 으로 전달됨 → 함수 안에서 isfinite 체크. */
-    StateType::FwSetpointOutput_rt2mt computeFwSetpoint(
-        const StateType::AgentState_rt      & self,
-        const StateType::AgentStateArray_rt & others,
+    collision_avoidance::types::FwSetpoint computeFwSetpoint(
+        const collision_avoidance::types::AgentState      & self,
+        const collision_avoidance::types::AgentStateArray & others,
         int                                num_others,
         float wind_n, float wind_e,
         float height_setpoint);
@@ -91,8 +91,8 @@ public:
 
     /* (선택) NE 평면 raw 가속도 — 디버깅/단위 테스트용. */
     Eigen::Vector2f computeAcceleration(
-        const StateType::AgentState_rt      & self,
-        const StateType::AgentStateArray_rt & others,
+        const collision_avoidance::types::AgentState      & self,
+        const collision_avoidance::types::AgentStateArray & others,
         int                                num_others) const;
 
 private:

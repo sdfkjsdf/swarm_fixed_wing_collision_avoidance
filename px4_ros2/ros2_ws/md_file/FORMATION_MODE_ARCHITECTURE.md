@@ -3,10 +3,10 @@
 > **컨텍스트**: 기존 코드의 실시간 스레드 + lock-free 큐 + Formation 모듈 구조를 유지하면서, ModeBase 로 옮긴 형태. 핵심은: 서브스크라이버·스레드·큐는 그대로 두고 setpoint 발행만 `updateSetpoint()` 에서 `_fw_setpoint->update(sp)` 로 대체.
 
 코드 위치:
-- 헤더: `/home/leedonghyuck/ros2_ws/src/collision_avoidance/include/collision_avoidance/FormationMode.hpp`
-- 구현: `/home/leedonghyuck/ros2_ws/src/collision_avoidance/src/FormationMode.cpp`
-- 가이던스: `/home/leedonghyuck/ros2_ws/src/collision_avoidance/src/FlockingGuidance.cpp`
-- 자료형: `/home/leedonghyuck/ros2_ws/src/collision_avoidance/include/collision_avoidance/StateType.hpp`
+- 헤더: `collision_avoidance/include/collision_avoidance/modes/FormationMode.hpp`
+- 구현: `collision_avoidance/src/modes/FormationMode.cpp`
+- 가이던스: `collision_avoidance/src/guidance/FlockingGuidance.cpp`
+- 자료형: `collision_avoidance/include/collision_avoidance/common/GlobalTypes.hpp`
 
 ---
 
@@ -30,15 +30,15 @@
 │                                      │                                                          │
 │                                      ▼                                                          │
 │             ┌─────────────────────────────────────────────┐                                    │
-│             │   m_input_queue_mt2rt   (SPSC Lock-Free)    │   ← StateType.hpp:62               │
-│             │   element = Total_state_for_Control_mt2rt    │                                    │
+│             │   m_input_queue_mt2rt   (SPSC Lock-Free)    │   ← GlobalTypes.hpp                  │
+│             │   element = ControlSnapshot    │                                    │
 │             └────────────────────┬───────────────────────┘                                     │
 │                                  │  try_pop()                                                   │
 │                                  ▼                                                              │
 │ ┌─────────────────────────── rt_thread (별도 std::thread) ──────────────────────────┐          │
 │ │  FormationMode::rt_loop (cpp:266)        주기: ~1ms (sleep_for(1ms))               │          │
 │ │     1. m_input_queue_mt2rt.try_pop()      ← swarm snapshot                         │          │
-│ │     2. self / others 추출 → AgentState_rt                                          │          │
+│ │     2. self / others 추출 → AgentState                                          │          │
 │ │     3. m_wind_n_mt2rt.load(), wind_e.load()  ← atomic                              │          │
 │ │     4. m_flocking->computeFwSetpoint(...)    ← 모든 무거운 계산                     │          │
 │ │        (Flocking 가속도 + 적분 + saturation + 변환)                                  │          │
@@ -47,8 +47,8 @@
 │                                      │                                                          │
 │                                      ▼                                                          │
 │             ┌─────────────────────────────────────────────┐                                    │
-│             │   m_output_queue_rt2mt  (SPSC Lock-Free)    │   ← StateType.hpp:102              │
-│             │   element = FwSetpointOutput_rt2mt           │                                    │
+│             │   m_output_queue_rt2mt  (SPSC Lock-Free)    │   ← GlobalTypes.hpp                  │
+│             │   element = FwSetpoint           │                                    │
 │             └────────────────────┬───────────────────────┘                                     │
 │                                  │  try_pop()                                                   │
 │                                  ▼                                                              │
@@ -68,7 +68,7 @@
 
 ---
 
-## 통신 채널 4 종류 — 모두 `StateType.hpp` 의 네이밍 컨벤션
+## 통신 채널 4 종류 — 멤버 변수 네이밍 컨벤션
 
 코드에서 어떤 변수가 어떤 통신을 하는지 접미사로 알 수 있게 설계됨:
 
@@ -306,7 +306,7 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
                     if (!m_agent_updated_mt[i]) { all_updated = false; break; }
                 }
                 if (all_updated) {
-                    StateType::Total_state_for_Control_mt2rt snapshot{};
+                    collision_avoidance::types::ControlSnapshot snapshot{};
                     snapshot.num_agents = m_total_agent_num;
                     snapshot.agents     = m_state_for_control_mt;
                     m_input_queue_mt2rt.try_push(snapshot);   // ★ rt thread 로 넘김 ★
@@ -382,7 +382,7 @@ void FormationMode::rt_loop()
         }
 
         /* (1) 입력 큐에서 swarm snapshot 받기 */
-        std::optional<StateType::Total_state_for_Control_mt2rt> input_state =
+        std::optional<collision_avoidance::types::ControlSnapshot> input_state =
             m_input_queue_mt2rt.try_pop();
 
         if (!input_state.has_value() || !m_flocking) {
@@ -394,7 +394,7 @@ void FormationMode::rt_loop()
         const auto & snapshot = input_state.value();
         const int self_idx = m_vehicle_id;
 
-        StateType::AgentState_rt self;
+        collision_avoidance::types::AgentState self;
         self.pos_n = snapshot.agents[self_idx].position[0];
         /* ... pos_e, pos_d, vel_n, vel_e, vel_d ... */
         self.speed = std::sqrt(self.vel_n*self.vel_n + ...);
@@ -404,8 +404,8 @@ void FormationMode::rt_loop()
         int num_others = 0;
         for (int i = 0; i < snapshot.num_agents; i++) {
             if (i == self_idx) continue;
-            if (num_others >= kMaxAgents) break;
-            StateType::AgentState_rt & s = m_others_buf_rt[num_others];   // ← 정적 버퍼 재사용 (heap 0)
+            if (num_others >= collision_avoidance::types::kMaxAgents) break;
+            collision_avoidance::types::AgentState & s = m_others_buf_rt[num_others];   // ← 정적 버퍼 재사용 (heap 0)
             s.pos_n = snapshot.agents[i].position[0];
             /* ... 동일하게 채움 ... */
             num_others++;
@@ -421,7 +421,7 @@ void FormationMode::rt_loop()
                                           : std::nanf("");
 
         /* (4) ★ 무거운 계산 — Flocking 가이던스 한 방에 ★ */
-        const StateType::FwSetpointOutput_rt2mt out =
+        const collision_avoidance::types::FwSetpoint out =
             m_flocking->computeFwSetpoint(self, m_others_buf_rt, num_others,
                                           wind_n, wind_e,
                                           height_setpoint);
@@ -461,7 +461,7 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
     }
 
     /* (1) 출력 큐에서 pop */
-    std::optional<StateType::FwSetpointOutput_rt2mt> maybe_out =
+    std::optional<collision_avoidance::types::FwSetpoint> maybe_out =
         m_output_queue_rt2mt.try_pop();
 
     if (maybe_out.has_value()) {
@@ -713,4 +713,3 @@ void MyOnboardMode::updateSetpoint(float)
 - [ ] rt_thread 는 생성자에서 시작, 소멸자에서 stop+join
 - [ ] `updateSetpoint(dt)` 는 큐 pop + ZOH/fallback + `_fw_setpoint->update(sp)` 만
 - [ ] main.cpp 에서 `make_shared` 로 인스턴스 + `doRegister()` 호출
-

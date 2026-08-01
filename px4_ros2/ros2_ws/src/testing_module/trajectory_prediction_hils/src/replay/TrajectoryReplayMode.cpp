@@ -35,7 +35,7 @@
        (1) 비활성 (m_active_mt2rt=false) 이면 idle sleep
        (2) t = steady_clock::now() - m_t0_rt
        (3) m_sequencer->lookup(t)
-       (4) FwSetpointOutput_rt2mt 채워서 m_output_queue_rt2mt.try_push()
+       (4) shared FwSetpoint 를 채워 m_output_queue_rt2mt.try_push()
        (5) 1ms sleep
 
    t=0 기준점: onActivate() 호출 시점 (Preflight 인계 직후).
@@ -81,7 +81,7 @@ void TrajectoryReplayMode::onActivate()
 
     /* main thread hold-last 초기화 */
     m_has_last_output_mt = false;
-    m_last_output_mt = StateType::FwSetpointOutput_rt2mt{};
+    m_last_output_mt = collision_avoidance::types::FwSetpoint{};
 
     /* ★ baseline 재캡처 플래그 리셋 — 매 case 마다 자극 시작 시점에 다시 캡처 */
     m_baseline_re_captured_mt = false;
@@ -141,7 +141,7 @@ void TrajectoryReplayMode::updateSetpoint(float /*dt_s*/)
     }
 
     /* (1) rt_thread 가 push 한 최신 setpoint pop */
-    std::optional<StateType::FwSetpointOutput_rt2mt> maybe_out =
+    std::optional<collision_avoidance::types::FwSetpoint> maybe_out =
         m_output_queue_rt2mt.try_pop();
 
     if (maybe_out.has_value()) {
@@ -283,7 +283,7 @@ void TrajectoryReplayMode::rt_loop()
         }
 
         /* (3) output queue 로 push */
-        StateType::FwSetpointOutput_rt2mt out;
+        collision_avoidance::types::FwSetpoint out;
         out.airspeed             = sp.V;
         out.height_rate          = sp.h_dot;
         out.lateral_acceleration = sp.a_lat;

@@ -6,7 +6,8 @@
 
    Producer-Consumer 패턴 (FormationMode 와 동일):
      rt_thread (1ms 루프, producer):
-       lookup(t) → FwSetpointOutput_rt2mt → m_output_queue_rt2mt.try_push()
+       lookup(t) → collision_avoidance::types::FwSetpoint
+                 → m_output_queue_rt2mt.try_push()
      main thread updateSetpoint (consumer, 30Hz):
        try_pop() → ZOH (m_last_output_mt) → _fw_setpoint->update(sp)
                  → m_logger->pushAppliedSetpoint(...)
@@ -29,7 +30,7 @@
 #include <px4_ros2/control/setpoint_types/fixedwing/lateral_longitudinal.hpp>
 #include <px4_ros2/vehicle_state/vtol_status.hpp>
 
-#include <trajectory_prediction_hils/common/StateType.hpp>
+#include <collision_avoidance/common/GlobalTypes.hpp>
 #include <trajectory_prediction_hils/replay/SetpointSequencer.hpp>
 #include <trajectory_prediction_hils/logging/TrajectoryLogger.hpp>
 
@@ -86,10 +87,10 @@ private:
     std::atomic<bool> m_sequence_done_rt2mt{false};
 
     /* ── rt → mt: 최종 setpoint 채널 ── */
-    StateType::OutputQueue_rt2mt m_output_queue_rt2mt{};
+    collision_avoidance::types::FwSetpointQueue m_output_queue_rt2mt{};
 
     /* ── mt: updateSetpoint 의 hold-last 버퍼 ── */
-    StateType::FwSetpointOutput_rt2mt m_last_output_mt{};
+    collision_avoidance::types::FwSetpoint m_last_output_mt{};
     bool m_has_last_output_mt{false};
 
     /* ── mt: ★ 자극 시작 시점 baseline 재캡처 플래그 (2026-05-13).

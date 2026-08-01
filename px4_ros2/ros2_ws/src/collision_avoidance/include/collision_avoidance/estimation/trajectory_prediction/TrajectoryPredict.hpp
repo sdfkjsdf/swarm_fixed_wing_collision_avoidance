@@ -21,7 +21,7 @@
 
    Implementation note (interface vs internal model split):
      - External input (PredictInput) accepts a_lat_cmd [m/s²]
-       → matches FwSetpointOutput_rt2mt::lateral_acceleration.
+       → matches types::FwSetpoint::lateral_acceleration.
      - Internal state and ODE use phi (roll angle) as state variable
        and phi_cmd as control, following Beard-McLain (9.19) exactly.
      - Conversion phi_cmd = atan2(a_lat_cmd, g) is applied once per

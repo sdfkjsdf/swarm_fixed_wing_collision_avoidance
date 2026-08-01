@@ -7,7 +7,7 @@
 ros2_ws/src/
 ├── collision_avoidance/                    # production ROS 2 package
 │   ├── include/collision_avoidance/         # 외부에 공개되는 C++ API
-│   │   ├── common/
+│   │   ├── common/                        # GlobalTypes.hpp, SpscQueue.hpp
 │   │   ├── coordinate/
 │   │   ├── estimation/
 │   │   │   ├── trajectory_prediction/
@@ -28,7 +28,6 @@ ros2_ws/src/
 ├── testing_module/                         # grouping directory; package.xml 없음
 │   ├── trajectory_prediction_hils/         # SITL/HILS ROS 2 package
 │   │   ├── include/trajectory_prediction_hils/
-│   │   │   ├── common/
 │   │   │   ├── logging/
 │   │   │   ├── modes/
 │   │   │   └── replay/

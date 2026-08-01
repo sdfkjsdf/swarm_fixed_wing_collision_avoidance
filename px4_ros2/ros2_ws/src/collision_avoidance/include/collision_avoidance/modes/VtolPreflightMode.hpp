@@ -34,7 +34,7 @@
 #include <px4_msgs/msg/wind.hpp>
 #include <px4_msgs/msg/vtol_vehicle_status.hpp>
 
-#include <collision_avoidance/common/StateType.hpp>   /* kMaxAgents */
+#include <collision_avoidance/common/GlobalTypes.hpp>
 
 
 class VtolPreflightMode : public px4_ros2::ModeBase
@@ -77,7 +77,8 @@ private:
     /* ── 우리 데이터 (m_ prefix) ── */
     float m_wind_n{0.f};
     float m_wind_e{0.f};
-    std::array<std::atomic<bool>, kMaxAgents> m_agent_in_fw{};
+    std::array<std::atomic<bool>, collision_avoidance::types::kMaxAgents>
+        m_agent_in_fw{};
     Phase m_phase{Phase::TransitionToFw};
 
     /* 캡처값 — 천이 완료 시점에 채워짐 */

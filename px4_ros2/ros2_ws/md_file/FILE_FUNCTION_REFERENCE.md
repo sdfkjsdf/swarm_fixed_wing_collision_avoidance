@@ -27,8 +27,9 @@
 | --- | --- |
 | `include/.../guidance/FlockingGuidance.hpp`, `src/guidance/FlockingGuidance.cpp` | alignment, cohesion, separation과 fixed-wing setpoint 계산 |
 | `include/.../guidance/AirframeLimits.hpp` | airspeed, climb/sink, roll 등 기체 제한 |
-| `include/.../common/StateType.hpp` | 다기체 상태와 main↔RT 전달 자료형 |
+| `include/.../common/GlobalTypes.hpp` | production/HILS 공통 상태와 main↔RT 전달 자료형 |
 | `include/.../common/SpscQueue.hpp` | lock-free SPSC queue |
+| `test/test_global_types.cpp` | 공통 POD 기본값·trivially-copyable·queue 전달 검증 |
 | `include/.../modes/VtolPreflightMode.hpp`, `src/modes/VtolPreflightMode.cpp` | 이륙·VTOL 전환·cruise 안정화 |
 | `include/.../modes/FormationMode.hpp`, `src/modes/FormationMode.cpp` | 편대 mode와 RT guidance loop |
 | `include/.../modes/VtolGuidanceExecutor.hpp`, `src/modes/VtolGuidanceExecutor.cpp` | preflight→formation state machine |

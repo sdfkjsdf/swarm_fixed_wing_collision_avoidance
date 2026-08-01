@@ -39,7 +39,7 @@
 #include <px4_msgs/msg/vehicle_attitude.hpp>
 #include <px4_msgs/msg/airspeed_validated.hpp>
 
-#include <trajectory_prediction_hils/common/StateType.hpp>
+#include <collision_avoidance/estimation/trajectory_prediction/PredictTypes.hpp>
 
 /* ★ 2026-05-20 — reconstruct (clamped cubic spline) 통합.
    publishPredictBundle 안에서 *4 시점 sample 추출 + spline 계수 산출 + 46점 평가*
