@@ -70,6 +70,7 @@ SDF_OUT=/tmp/standard_vtol_${INSTANCE}.sdf
 LOG_AGENT=/tmp/micro_xrce_agent.log
 LOG_GZ=/tmp/gzserver.log
 LOG_PX4=/tmp/px4_inst${INSTANCE}.log
+LOG_COORD=/tmp/coordinate_transformer.log
 
 LAUNCH_NODE=1
 RECORD_BAG=${RECORD_ROSBAG:-0}
@@ -103,6 +104,7 @@ cleanup() {
     echo "[launch] cleanup — 백그라운드 프로세스 정리 중..."
     stop_rosbag
     pkill -KILL -f "trajectory_replay_node" 2>/dev/null
+    pkill -KILL -f "coordinate_transformer_node" 2>/dev/null
     pkill -KILL -f "px4 -i ${INSTANCE}" 2>/dev/null
     pkill -KILL -f "gzserver Tools/simulation" 2>/dev/null
     pkill -KILL -f "MicroXRCEAgent udp4 -p 8888" 2>/dev/null
@@ -114,11 +116,13 @@ trap cleanup EXIT INT TERM
 # ─── 1. 정리 ────────────────────────────────────────────────────────
 echo "[launch 1/7] 기존 프로세스 정리..."
 pkill -KILL -f "trajectory_replay_node" 2>/dev/null || true
+pkill -KILL -f "coordinate_transformer_node" 2>/dev/null || true
 pkill -KILL -f "px4 -i ${INSTANCE}" 2>/dev/null || true
 pkill -KILL -f "gzserver Tools/simulation" 2>/dev/null || true
 pkill -KILL -f "MicroXRCEAgent udp4 -p 8888" 2>/dev/null || true
 sleep 2
-rm -f /tmp/px4_lock-* /tmp/px4-sock-* "${LOG_AGENT}" "${LOG_GZ}" "${LOG_PX4}" 2>/dev/null
+rm -f /tmp/px4_lock-* /tmp/px4-sock-* \
+    "${LOG_AGENT}" "${LOG_GZ}" "${LOG_PX4}" "${LOG_COORD}" 2>/dev/null
 
 # ─── 2. MicroXRCEAgent ─────────────────────────────────────────────
 echo "[launch 2/7] MicroXRCEAgent 시작 (udp4 -p 8888)..."
@@ -214,6 +218,24 @@ if [[ "${LAUNCH_NODE}" == "1" ]]; then
     # shellcheck disable=SC1091
     source install/setup.bash
     HILS_SHARE=$(ros2 pkg prefix --share trajectory_prediction_hils)
+    echo "[launch] common NED 좌표 변환 노드 시작..."
+    ros2 run collision_avoidance coordinate_transformer_node --ros-args \
+        -p total_agent_num:=1 \
+        -p 'spawn_offset_x:=[0.0]' \
+        -p 'spawn_offset_y:=[0.0]' \
+        -p 'spawn_offset_z:=[0.83]' \
+        -p transform_mode:=geodetic_reference \
+        -p common_origin_lat:=47.397742 \
+        -p common_origin_lon:=8.545594 \
+        -p common_origin_alt:=488.0 \
+        > "${LOG_COORD}" 2>&1 &
+    COORD_PID=$!
+    PIDS+=("${COORD_PID}")
+    sleep 2
+    if ! kill -0 "${COORD_PID}" 2>/dev/null; then
+        echo "[launch] ERROR: coordinate_transformer_node 시작 실패. 로그: ${LOG_COORD}"
+        exit 1
+    fi
     # foreground 실행 — Ctrl+C 가 트랩으로 전체 정리
     # ─── case yaml override (A-3 run_all_cases.sh 가 SEQUENCE_FILE 환경변수로 전달) ──
     # ★ 중요: -p 가 --params-file 뒤에 와야 ros2 humble 의 ordering 으로 override 됨.

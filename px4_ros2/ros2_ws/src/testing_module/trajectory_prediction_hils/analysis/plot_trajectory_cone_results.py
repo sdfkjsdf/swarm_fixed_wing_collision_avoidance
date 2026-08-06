@@ -107,10 +107,28 @@ def save_example(arrays_path: Path, output: Path):
     covariance = arrays["predicted_position_covariance"]
     ground_truth = arrays["ground_truth"]
     if predicted.shape[0] == 0:
-        return False
-    index = predicted.shape[0] // 2
-    mean = predicted[index]
-    truth = ground_truth[index]
+        return None
+    point_counts = arrays["causal_point_count"] \
+        if "causal_point_count" in arrays else np.full(predicted.shape[0], predicted.shape[1])
+    candidates = arrays["candidate_inputs"] \
+        if "candidate_inputs" in arrays else np.zeros((predicted.shape[0], 4))
+    timestamps = arrays["source_timestamp_us"] \
+        if "source_timestamp_us" in arrays else np.zeros(predicted.shape[0], dtype=np.int64)
+
+    # A maneuver case should display a maneuver-time cone, not the arbitrary
+    # middle cone. Prefer lateral excitation, then vertical excitation.
+    lateral = np.abs(candidates[:, 3])
+    vertical = np.abs(candidates[:, 2])
+    if np.max(lateral) > 0.05:
+        representative = np.flatnonzero(lateral >= np.max(lateral) - 1.0e-6)
+    elif np.max(vertical) > 0.05:
+        representative = np.flatnonzero(vertical >= np.max(vertical) - 1.0e-6)
+    else:
+        representative = np.arange(predicted.shape[0])
+    index = int(representative[len(representative) // 2])
+    point_count = int(point_counts[index])
+    mean = predicted[index, :point_count]
+    truth = ground_truth[index, :point_count]
     fig, axis = plt.subplots(figsize=(7, 7))
     axis.plot(mean[:, 1], mean[:, 0], "o-", markersize=2.5, label="predicted mean")
     axis.plot(truth[:, 1], truth[:, 0], "-", color="tab:orange", label="ground truth")
@@ -119,14 +137,35 @@ def save_example(arrays_path: Path, output: Path):
         reordered_mean = mean[point, [1, 0, 2]]
         reordered_covariance = covariance[index, point][np.ix_([1, 0, 2], [1, 0, 2])]
         add_horizontal_ellipse(axis, reordered_mean, reordered_covariance)
-    axis.set(xlabel="East [m]", ylabel="North [m]", title="Representative 95% trajectory cone")
+    candidate = candidates[index]
+    horizon_s = max(0.0, (point_count - 1) * 0.1)
+    axis.set(
+        xlabel="East [m]",
+        ylabel="North [m]",
+        title=(
+            "Representative causal 95% trajectory cone\n"
+            f"ZOH: V={candidate[0]:.1f}, h_dot={candidate[2]:.1f}, "
+            f"a_lat={candidate[3]:.1f}; evaluated horizon={horizon_s:.1f}s"
+        ),
+    )
     axis.axis("equal")
     axis.grid(alpha=0.3)
     axis.legend()
     fig.tight_layout()
     fig.savefig(output / "trajectory_cone_example.png", dpi=160)
     plt.close(fig)
-    return True
+    return {
+        "array_index": index,
+        "source_timestamp_us": int(timestamps[index]),
+        "causal_point_count": point_count,
+        "evaluated_horizon_s": horizon_s,
+        "candidate_input": {
+            "V_cmd": float(candidate[0]),
+            "h_cmd": float(candidate[1]),
+            "h_dot_cmd": float(candidate[2]),
+            "a_lat_cmd": float(candidate[3]),
+        },
+    }
 
 
 def main() -> int:
@@ -154,7 +193,7 @@ def main() -> int:
     save_coverage(rows, output_dir)
     save_error(rows, output_dir)
     save_mahalanobis(rows, output_dir)
-    example_written = save_example(arrays_path, output_dir)
+    example = save_example(arrays_path, output_dir)
 
     manifest = {
         "source": str(input_dir.resolve()),
@@ -164,7 +203,8 @@ def main() -> int:
             "coverage_by_horizon.png",
             "position_error_by_horizon.png",
             "mahalanobis_by_horizon.png",
-        ] + (["trajectory_cone_example.png"] if example_written else []),
+        ] + (["trajectory_cone_example.png"] if example else []),
+        "representative_cone": example,
     }
     (output_dir / "plot_manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")

@@ -18,8 +18,12 @@ import numpy as np
 RUN_PATTERN = re.compile(r"^(?P<case>.+)_r(?P<repetition>[0-9]+)$")
 FIELDS = (
     "run_id", "case_id", "repetition", "analysis_ok", "missing_required_topics",
-    "invalid_cones", "complete_ground_truth_cones", "analyzed_points",
-    "covariance_failures", "cone_rate_hz", "empirical_coverage_all_horizons",
+    "ground_truth_sample_time_valid", "common_contract_failures",
+    "invalid_cones", "non_zoh_cones",
+    "complete_ground_truth_cones", "partial_horizon_cones",
+    "causal_partial_horizon_cones", "ground_truth_partial_horizon_cones",
+    "causally_censored_points", "analyzed_points", "covariance_failures",
+    "cone_rate_hz", "empirical_coverage_all_horizons",
     "empirical_coverage_at_4_5_s", "mean_position_error_m", "max_position_error_m",
 )
 
@@ -38,15 +42,30 @@ def read_runs(raw_root: Path):
         complete = int(summary.get("complete_ground_truth_cones", 0))
         covariance_failures = int(summary.get("covariance_failures", 0))
         invalid_cones = int(summary.get("invalid_cones", 0))
+        non_zoh_cones = int(summary.get("non_zoh_cones", 0))
+        sample_time_valid = bool(summary.get("ground_truth_sample_time_valid", False))
+        common_contract_failures = int(summary.get("common_contract_failures", 0))
         rows.append({
             "run_id": run_id,
             "case_id": match.group("case") if match else run_id,
             "repetition": int(match.group("repetition")) if match else 0,
-            "analysis_ok": int(not missing and complete > 0
-                               and covariance_failures == 0 and invalid_cones == 0),
+            "analysis_ok": int(
+                not missing and sample_time_valid and complete > 0
+                and covariance_failures == 0 and invalid_cones == 0
+                and non_zoh_cones == 0 and common_contract_failures == 0),
             "missing_required_topics": ";".join(missing),
+            "ground_truth_sample_time_valid": int(sample_time_valid),
+            "common_contract_failures": common_contract_failures,
             "invalid_cones": invalid_cones,
+            "non_zoh_cones": non_zoh_cones,
             "complete_ground_truth_cones": complete,
+            "partial_horizon_cones": int(summary.get("partial_horizon_cones", 0)),
+            "causal_partial_horizon_cones": int(
+                summary.get("causal_partial_horizon_cones", 0)),
+            "ground_truth_partial_horizon_cones": int(
+                summary.get("ground_truth_partial_horizon_cones", 0)),
+            "causally_censored_points": int(
+                summary.get("causally_censored_points", 0)),
             "analyzed_points": int(summary.get("analyzed_points", 0)),
             "covariance_failures": covariance_failures,
             "cone_rate_hz": nullable_float(summary.get("cone_rate_hz")),
@@ -145,6 +164,9 @@ def main() -> int:
             [row["empirical_coverage_at_4_5_s"] for row in rows]),
         "total_covariance_failures": sum(row["covariance_failures"] for row in rows),
         "total_invalid_cones": sum(row["invalid_cones"] for row in rows),
+        "total_non_zoh_cones": sum(row["non_zoh_cones"] for row in rows),
+        "total_common_contract_failures": sum(
+            row["common_contract_failures"] for row in rows),
         "formal_coverage_pass": None,
         "formal_coverage_note": (
             "Coverage is reported for calibration; acceptance limits are not gated yet."),

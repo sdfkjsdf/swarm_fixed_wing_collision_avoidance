@@ -15,7 +15,11 @@ result/
 `.gitkeep`만 형상 관리한다.
 
 실행 중에는 rosbag만 기록하고, 전체 수집이 끝난 뒤 자동으로 오프라인 분석과 plot을
-수행한다. 기본 반복 검증은 다음 명령으로 시작한다.
+수행한다. 정식 coverage 분석은 공통 NED로 평행이동된 `/common/px4_N/...` topic을
+사용한다. 분석기의 기본값도 `--coordinate-frame common`이며, `local` 모드는 공통
+좌표 topic이 없는 과거 bag을 진단할 때만 사용한다.
+
+기본 반복 검증은 다음 명령으로 시작한다.
 
 ```bash
 ./scripts/run_cone_scenarios.sh --profile coverage_core

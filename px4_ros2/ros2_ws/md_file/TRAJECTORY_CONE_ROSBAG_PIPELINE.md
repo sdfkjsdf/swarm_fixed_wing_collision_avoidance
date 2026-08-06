@@ -78,9 +78,21 @@ ROS 측은 `timestamp - timestamp_sample`만큼 7-state mean과 covariance를 �
 | 권장 | `/px4_0/fmu/out/wind` | 풍속에 따른 모델 오차 분해 |
 | 권장 | `/px4_0/collision_estimation/key_samples` | 기존 4시점 통신 표현과 cone 비교 |
 
-`TrajectoryCone.prediction_inputs`에는 45개 적분 구간의
-`[V_cmd, h_cmd, h_dot_cmd, a_lat_cmd]`가 함께 저장된다. 따라서 별도 setpoint
-토픽이 누락되어도 해당 cone을 재현할 수 있다.
+정식 coverage 분석은 위 raw topic과 함께 기록되는 다음 공통 NED topic을 사용한다.
+
+| 공통 좌표 topic | 내용 |
+|---|---|
+| `/common/px4_0/trans_estimator_trajectory_belief` | EKF reference를 공통 원점으로 평행이동한 belief |
+| `/common/px4_0/trans_vehicle_local_position` | 공통 NED의 현재 EKF local position |
+| `/common/px4_0/trans_vehicle_odometry` | 포메이션 제어와 공유하는 공통 odometry |
+| `/common/px4_0/trans_vehicle_local_position_groundtruth` | simulator reference를 공통 원점으로 옮긴 정답 |
+| `/common/px4_0/trans_trajectory_cone` | 모든 평균점을 공통 NED로 옮긴 cone |
+
+`TrajectoryCone.prediction_inputs`에는 현재 선택한 후보 입력
+`[V_cmd, h_cmd, h_dot_cmd, a_lat_cmd]`이 45개 적분 구간에 ZOH로 반복 저장된다.
+predictor는 YAML의 미래 입력 전환을 미리 읽지 않는다. 다음 0.1초 계산 시점에는 새
+상태와 현재 입력으로 4.5초 cone을 다시 만든다. 따라서 별도 setpoint 토픽이 누락되어도
+각 시점에서 평가한 후보 입력을 재현할 수 있다.
 
 ## 4. 파일 구조
 
@@ -95,8 +107,15 @@ collision_avoidance/
 │   └── TrajectoryUncertainty.cpp
 ├── msg/
 │   └── TrajectoryCone.msg
+├── include/collision_avoidance/coordinate/
+│   ├── CommonNedTransform.hpp
+│   └── TransferSameCoordinate.hpp
+├── src/coordinate/
+│   ├── CommonNedTransform.cpp
+│   └── TransferSameCoordinate.cpp
 └── test/
-    └── test_trajectory_uncertainty.cpp
+    ├── test_trajectory_uncertainty.cpp
+    └── test_common_ned_transform.cpp
 
 testing_module/trajectory_prediction_hils/
 ├── include/trajectory_prediction_hils/estimation/
@@ -187,6 +206,9 @@ ros2 run trajectory_prediction_hils analyze_trajectory_cone_bag.py \
   --namespace /px4_0
 ```
 
+기본 `--coordinate-frame common`이 정식 분석 모드이다. 이전 bag의 local-frame 결과를
+진단 목적으로 다시 볼 때만 `--coordinate-frame local`을 명시한다.
+
 개별 bag 분석 산출물은 다음 파일이다.
 
 - `summary.json`: 토픽 수, 누락, cone rate, PSD 오류, 포함률, 위치 오차 요약
@@ -240,3 +262,79 @@ batch ID: `cone_smoke_20260806_160203`
 검증은 통과했지만 nominal 95% cone의 통계 보정은 통과하지 않았다. 다음 데이터
 수집에서는 정상상태, 기동 구간, 전환 구간을 분리하고 calibration/holdout 시나리오를
 별도로 구성해야 한다.
+
+## 8. ZOH·causal evaluator 전환과 재실행 결과
+
+batch ID: `cone_smoke_causal_20260806`
+
+평가 의미를 "현재 선택한 입력을 유지했을 때의 후보 trajectory"로 고정하기 위해 다음을
+반영했다.
+
+1. PX4 simulator ground-truth attitude/global/local position에 HIL
+   `timestamp_sample`을 채운다.
+2. replay mode 활성 전에는 `TrajectoryCone`을 발행하지 않는다.
+3. 미래 YAML schedule-aware 예측을 제거하고 현재 입력 ZOH로만 4.5초를 예측한다.
+4. offline evaluator는 이후 cone의 현재 입력이 달라지는 첫 시각부터 기존 cone의
+   horizon을 평가에서 제외한다.
+5. ground truth는 유효한 `timestamp_sample`만 정식 분석에 사용한다. 과거 bag 진단은
+   명시적인 `--allow-publication-time-fallback`에서만 허용된다.
+
+causal evaluator의 입력 동일성 허용 오차는 순서대로
+`[V_cmd 0.05 m/s, h_cmd 0.10 m, h_dot_cmd 0.05 m/s, a_lat_cmd 0.05 m/s²]`이다.
+대표 cone plot은 횡가속 입력, 수직속도 입력, 중앙 cone 순으로 기동 시점을 선택하며
+입력 전환으로 잘린 경우 유효한 causal horizon만 그린다.
+
+| case | cone | non-ZOH | causal censor point | full 4.5 s cone | 전체 포함률 | 4.5 s 포함률 |
+|---|---:|---:|---:|---:|---:|---:|
+| S01 | 200 | 0 | 0 | 157 | 29.36% | 66.88% |
+| R15P | 200 | 0 | 991 | 112 | 26.18% | 74.11% |
+| A02 | 200 | 0 | 1,699 | 93 | 28.44% | 68.82% |
+
+- 수집/분석/plot 성공: 3/3
+- ground-truth time source: 모든 case `timestamp_sample`
+- ground-truth sample timestamp unique: 모든 메시지에서 고유, 약 42.4~42.6초 span
+- preflight cone 제거: 이전 case당 약 395개에서 replay cone 200개로 감소
+- invalid cone, covariance 유한성/대칭/PSD 실패: 0
+- cone 발행률: 약 10 Hz
+
+구조와 평가 의미의 smoke는 통과했다. 다만 horizon 0 평균 위치 오차가 약 2.5 m이고
+포함률이 0%이므로 현재 결과를 cone 정확도 합격으로 해석하지 않는다. bag을 분해하면
+EKF belief의 fusion-horizon position 자체가 같은 sample time의 simulator ground truth와
+약 2.1 m 차이가 나며, 0.152초 fusion-horizon delay를 전파한 cone 시작점은 약 2.65 m
+차이가 난다. 이는 이번에 제거한 publication timestamp 오류와 별개의 EKF 추정 오차 및
+초기 covariance calibration 문제이다. 반복 seed 기반 Q 보정 전에는 95% 안전 보장값으로
+사용하지 않는다.
+
+## 9. 공통 NED 좌표계 적용 결과
+
+batch ID: `cone_smoke_common_20260806`
+
+`coordinate_transformer_node`에는 기존 포메이션의 `spawn_offset` 모드를 유지하면서,
+HILS 검증용 `geodetic_reference` 모드를 추가했다. 공통 원점은
+`(47.397742°, 8.545594°, 488.0 m AMSL)`이다. 각 메시지의 EKF 또는 simulator
+`ref_lat/ref_lon/ref_alt`를 이 원점에 대한 NED 평행이동으로 바꾼다.
+
+```text
+p_common = p_local + translation(reference_local -> reference_common)
+P_common = P_local
+```
+
+축 회전은 없으므로 belief 9×9 covariance와 cone 3×3 position covariance는 그대로
+유지한다. analyzer는 raw/common 메시지를 timestamp로 짝지어 covariance가 변하지
+않았는지 자동 검사한다.
+
+- 수집/분석/plot: 3/3 성공
+- 공통 원점 검사: 3/3 성공
+- raw/common cone 매칭: case별 200/200
+- belief/cone covariance 최대 변화: 0
+- invalid cone, non-ZOH cone, covariance PSD 실패: 0
+
+| case | local-frame t=0 Down 오차 중앙값 | common-frame 값 | common-frame t=0 오차 중앙값 |
+|---|---:|---:|---:|
+| S01 | 0.647 m | 0.013 m | 2.630 m |
+| R15P | 0.653 m | -0.001 m | 2.650 m |
+| A02 | 0.723 m | -0.110 m | 2.579 m |
+
+좌표 원점 때문에 생긴 수직 오차는 제거되었다. 그러나 수평 오차 약 2.4~2.6 m가
+남아 horizon 0 포함률은 여전히 0%이다. 따라서 남은 오차는 common/local 좌표 표현
+불일치가 아니라 EKF 평균 추정 또는 fusion-horizon 지연 보상에서 분리해야 한다.

@@ -9,4 +9,11 @@ coordinate_transformer_node:
     spawn_offset_x: [0.0, 35.0, 70.0, 105.0, 140.0]
     spawn_offset_y: [0.0, 0.0, 0.0, 0.0, 0.0]
     spawn_offset_z: [0.83, 0.83, 0.83, 0.83, 0.83]
+    # Existing formation behavior remains the default. HILS trajectory-cone
+    # validation overrides this with geodetic_reference.
+    transform_mode: spawn_offset
+    apply_spawn_z_offset: false
+    common_origin_lat: 47.397742
+    common_origin_lon: 8.545594
+    common_origin_alt: 488.0
     propagation_time : 0.01

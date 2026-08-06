@@ -16,6 +16,19 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
     "msg/TrajectoryCone.msg"
 )
+rosidl_get_typesupport_target(collision_avoidance_typesupport_target
+    ${PROJECT_NAME} rosidl_typesupport_cpp)
+
+add_library(common_coordinate_transform STATIC
+    src/coordinate/CommonNedTransform.cpp
+)
+add_library(collision_avoidance::common_coordinate_transform ALIAS
+    common_coordinate_transform
+)
+target_include_directories(common_coordinate_transform PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
 
 # Pure C++ trajectory predictor. This is the production source of truth used by
 # both the onboard runtime and the HILS verification packages.
@@ -49,6 +62,7 @@ target_link_libraries(trajectory_reconstruction PUBLIC
 )
 
 install(TARGETS
+    common_coordinate_transform
     trajectory_prediction_core
     trajectory_reconstruction
     EXPORT collision_avoidance_targets
@@ -91,6 +105,10 @@ add_executable(coordinate_transformer_node
 )
 target_include_directories(coordinate_transformer_node PRIVATE include)
 ament_target_dependencies(coordinate_transformer_node rclcpp px4_msgs)
+target_link_libraries(coordinate_transformer_node
+    common_coordinate_transform
+    "${collision_avoidance_typesupport_target}"
+)
 
 install(TARGETS
     vtol_guidance_node
@@ -125,6 +143,14 @@ if(BUILD_TESTING)
         test/test_global_types.cpp
     )
     target_include_directories(test_global_types PRIVATE include)
+
+    ament_add_gtest(test_common_ned_transform
+        test/test_common_ned_transform.cpp
+    )
+    target_link_libraries(test_common_ned_transform
+        common_coordinate_transform
+    )
+    target_include_directories(test_common_ned_transform PRIVATE include)
 endif()
 
 ament_package()

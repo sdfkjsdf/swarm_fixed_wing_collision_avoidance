@@ -134,12 +134,6 @@ int main(int argc, char * argv[])
     auto sequencer = std::make_unique<SetpointSequencer>(
         seq_path, limits, node->get_logger());
 
-    /* [3.1] schedule-aware predict 용 별도 sequencer 인스턴스
-            (Replay 의 sequencer 와 별도 — m_cursor_rt race 회피).
-            동일 yaml 적재라 lookup 결과 동일.
-            wall_timer (main thread executor) 가 호출 → 단독 thread 접근. */
-    auto sequencer_for_predict = std::make_shared<SetpointSequencer>(
-        seq_path, limits, node->get_logger());
     const std::string topic_ns =
         node->get_parameter("topic_namespace_prefix").as_string();
     auto logger = std::make_shared<TrajectoryLogger>(
@@ -234,9 +228,6 @@ int main(int argc, char * argv[])
             CSV 의 다음 onTick (50Hz) 에 자연스럽게 같이 기록됨. */
     const auto predict_period = std::chrono::milliseconds(
         static_cast<int>(1000.0 / predict_call));
-    /* 표준 중력 — TrajectoryPredict.cpp 의 k_g 와 동일 (a_lat → phi 변환용) */
-    const double k_g = 9.80665;
-
     /* ★ 2026-05-13: collision_estimation key_samples publisher 등록.
        extractKeySamples 의 결과 (4 시점 × {pos, vel} = 6 Vec3 = 18 float) 를
        std_msgs/Float32MultiArray 로 publish. 멀티 에이전트 통신의 1차 prototype.
@@ -268,8 +259,8 @@ int main(int argc, char * argv[])
 
     auto predict_timer = node->create_wall_timer(
         predict_period,
-        [predictor, logger, sequencer_for_predict, predicted_traj, prediction_inputs,
-         cone_publisher, dt, k_g, alt_offset, key_samples_pub]() {
+        [predictor, logger, predicted_traj, prediction_inputs,
+         cone_publisher, dt, alt_offset, key_samples_pub]() {
             const auto m  = logger->getCurrentMeasurements();
             const auto sp = logger->getCurrentSetpointSnapshot();
 
@@ -318,50 +309,37 @@ int main(int argc, char * argv[])
             x0.h_dot = -m.vd;                               /* NED vd(down) → climb-rate(up) */
             x0.phi   = m.roll;                              /* ★ A-1: 실측 roll (quaternion → roll) */
 
-            /* ── schedule-aware predict ──
-               시퀀스 시간 t_now 부터 dt 간격으로 sequencer 미래 입력 lookup.
-               t_now NaN (Replay 비활성) 또는 sequencer_for_predict 가 없으면 ZOH fallback. */
+            /* Replay 활성 여부와 현재 적용 입력을 한 snapshot 으로 판정한다.
+               미래 YAML schedule 은 predictor 가 읽지 않는다. 매 계산 프레임에서
+               현재 선택된 후보 입력 하나를 4.5초 동안 ZOH 한 뒤 다음 프레임에서
+               새 상태/입력으로 다시 계산한다. */
             const double t_now = logger->getReplayTime();
 
             /* baseline altitude — Replay 가 onActivate 시점 alt 캡처해서 logger 에 push.
                NaN 이면 stepRK4 의 h_cmd NaN guard 가 x.h 로 fallback. */
             const double baseline_alt = logger->getBaselineAlt();
 
-            if (std::isfinite(t_now) && sequencer_for_predict) {
-                /* segment 전환 인지 적분 — stepRK4 직접 호출 */
-                auto & traj = *predicted_traj;
-                traj[0] = x0;
-                PredictState x = x0;
-                for (std::size_t k = 0; k + 1 < TrajectoryLogger::kPredictHorizon; ++k) {
-                    const double t_future = t_now + (k + 1) * dt;
-                    const auto sp_at_t = sequencer_for_predict->lookup(t_future);
-                    /* ★ 본 작업 (2026-05-12 의도 X): Formation 식 *고정 target*.
-                       h_cmd = baseline_alt + alt_offset (Replay 진입 시점 alt + yaml offset).
-                       alt_offset=0 → Formation 그대로. >0 → P-term 자극 (b_h 효과 격리 시험).
-                       회피 transient (± alt_envelope 안) 위주 정확성 보장.
-                       큰 alt 변화 시퀀스는 *별도 작업의 ramp-following 모드* 사용 권장. */
-                    const double h_cmd_future = baseline_alt + alt_offset;
-                    PredictInput u_at_t{ sp_at_t.V, h_cmd_future, sp_at_t.h_dot, sp_at_t.a_lat };
-                    (*prediction_inputs)[k] = u_at_t;
-                    x = predictor->stepRK4(x, u_at_t, dt);
-                    traj[k + 1] = x;
-                }
-            } else {
-                /* fallback: 기존 ZOH (Preflight 단계 / Replay 비활성).
-                   _safe 변수로 NaN 전파 방지.
-                   h_cmd = NaN → stepRK4 NaN guard 가 x.h 로 치환 → 1차 지연 동작 (b_h 0). */
-                PredictInput u_zoh{ V_safe, std::nan(""), h_dot_safe, a_lat_safe };
-                prediction_inputs->fill(u_zoh);
-                predictor->predict<TrajectoryLogger::kPredictHorizon>(
-                    x0, u_zoh, dt, *predicted_traj);
-            }
+            const bool replay_active = std::isfinite(t_now)
+                && !sp.is_fallback
+                && std::isfinite(sp.V)
+                && std::isfinite(sp.h_dot)
+                && std::isfinite(sp.a_lat);
+            const double h_cmd = replay_active
+                ? (std::isfinite(baseline_alt) ? baseline_alt + alt_offset : x0.h)
+                : std::nan("");
+            const PredictInput u_zoh{V_safe, h_cmd, h_dot_safe, a_lat_safe};
+            prediction_inputs->fill(u_zoh);
+            predictor->predict<TrajectoryLogger::kPredictHorizon>(
+                x0, u_zoh, dt, *predicted_traj);
             /* ★ Option A (2026-05-13): traj + m 을 *한 호출* 로 logger 에 publish.
                m 은 위 (~200) 에서 이미 읽혀 x0 를 만드는 데 쓰였음 — 동일 변수를
                그대로 넘김 → "예측 시점의 측정 = m_at_pred = p_*_0 의 입력" 이라는
                물리적 invariant 가 publish 단계에서 보존. 향후 RT thread 이전 시
                이 호출부는 변경 없음 (mutex → SPSC 는 logger 내부만 바꾸면 됨). */
             logger->publishPredictBundle(*predicted_traj, m);
-            cone_publisher->publish(*prediction_inputs, dt);
+            if (replay_active) {
+                cone_publisher->publish(*prediction_inputs, dt);
+            }
 
             /* ★ 2026-05-13 key_samples 추출 + publish + 테스트 출력.
                좌표계: NED (extractKeySamples 가 입력 PX4 NED 와 정확히 일치하는

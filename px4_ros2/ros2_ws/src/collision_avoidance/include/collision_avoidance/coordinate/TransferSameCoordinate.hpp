@@ -1,54 +1,100 @@
-/*
-해당 기능
-: 지금 vehicle_odometry을 그냥 subscribe 하는 경우에 지금 원점이 통일되지 않은 값이 등장
-  즉 맨 처음 ekf가 켜졌을 때의 지점을 원점으로 진행하는 좌표계의 값이 등장함으로
-  이것을 해결하기 위해서 지금 기존의 vehicle_odometry의 값에 초기조건의 위치를 평행이동 시켜서 진행을 함
-  참고로 지금 그냥 정확하게 위치만을 수정하는 것을 의미
-*/
-
 #pragma once
-#include <rclcpp/rclcpp.hpp>
-#include <px4_msgs/msg/vehicle_odometry.hpp>
 
+#include <array>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <rclcpp/rclcpp.hpp>
+
+#include <collision_avoidance/coordinate/CommonNedTransform.hpp>
+#include <collision_avoidance/msg/trajectory_cone.hpp>
+#include <px4_msgs/msg/estimator_trajectory_belief.hpp>
+#include <px4_msgs/msg/vehicle_local_position.hpp>
+#include <px4_msgs/msg/vehicle_odometry.hpp>
 
 namespace Transfer_coordinate
 {
 
- /*스폰 위치를 전달 받을 구조체 정의*/
- struct SpawnPosition {
-      float x;
-      float y;
-      float z;
-  };
-
+struct SpawnPosition
+{
+    float x{0.0F};
+    float y{0.0F};
+    float z{0.0F};
+};
 
 class TransferSameCoordinate : public rclcpp::Node
 {
+public:
+    TransferSameCoordinate();
 
-    public:
-        TransferSameCoordinate();
+private:
+    enum class TransformMode
+    {
+        SpawnOffset,
+        GeodeticReference,
+    };
 
-    private:
-       /*서브스크라이버에 대한 맴버변수*/
-       std::vector<rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr> raw_odom_subs_;
+    struct AgentReference
+    {
+        collision_avoidance::coordinate::GeodeticReference geodetic{};
+        bool valid{false};
+    };
 
-       /*퍼블리셔에 대한 맴버변수*/
-       std::vector<rclcpp::Publisher<px4_msgs::msg::VehicleOdometry>::SharedPtr> trans_odom_pubs_;
+    bool translationForAgent(int agent, std::array<double, 3> & translation) const;
+    bool translationFromReference(
+        double latitude_deg,
+        double longitude_deg,
+        double altitude_m,
+        std::array<double, 3> & translation) const;
+    void warnMissingReference(int agent);
 
-       /*원본 odometry 저장용*/
-       std::vector<px4_msgs::msg::VehicleOdometry> m_raw_odometry;
+    void onLocalPosition(
+        int agent,
+        const px4_msgs::msg::VehicleLocalPosition::UniquePtr message);
+    void onGroundTruth(
+        int agent,
+        const px4_msgs::msg::VehicleLocalPosition::UniquePtr message);
+    void onOdometry(
+        int agent,
+        const px4_msgs::msg::VehicleOdometry::UniquePtr message);
+    void onBelief(
+        int agent,
+        const px4_msgs::msg::EstimatorTrajectoryBelief::UniquePtr message);
+    void onCone(
+        int agent,
+        const collision_avoidance::msg::TrajectoryCone::UniquePtr message);
 
-       /*스폰 오프셋 구조체*/
-       std::vector<SpawnPosition> m_spawn_offsets;
+    int m_total_agent_num{0};
+    TransformMode m_transform_mode{TransformMode::SpawnOffset};
+    bool m_apply_spawn_z_offset{false};
+    collision_avoidance::coordinate::GeodeticReference m_common_reference{};
+    std::unique_ptr<collision_avoidance::coordinate::CommonNedTransform>
+        m_common_transform;
+    std::vector<SpawnPosition> m_spawn_offsets;
+    std::vector<AgentReference> m_agent_references;
 
-       /*파라미터 변수*/
+    std::vector<rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr>
+        m_odometry_subscriptions;
+    std::vector<rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr>
+        m_local_position_subscriptions;
+    std::vector<rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr>
+        m_ground_truth_subscriptions;
+    std::vector<rclcpp::Subscription<px4_msgs::msg::EstimatorTrajectoryBelief>::SharedPtr>
+        m_belief_subscriptions;
+    std::vector<rclcpp::Subscription<collision_avoidance::msg::TrajectoryCone>::SharedPtr>
+        m_cone_subscriptions;
 
-       int m_total_agent_num{0};
-       std::vector<double> m_spawn_offset_x;
-       std::vector<double> m_spawn_offset_y;
-       std::vector<double> m_spawn_offset_z;
-
+    std::vector<rclcpp::Publisher<px4_msgs::msg::VehicleOdometry>::SharedPtr>
+        m_odometry_publishers;
+    std::vector<rclcpp::Publisher<px4_msgs::msg::VehicleLocalPosition>::SharedPtr>
+        m_local_position_publishers;
+    std::vector<rclcpp::Publisher<px4_msgs::msg::VehicleLocalPosition>::SharedPtr>
+        m_ground_truth_publishers;
+    std::vector<rclcpp::Publisher<px4_msgs::msg::EstimatorTrajectoryBelief>::SharedPtr>
+        m_belief_publishers;
+    std::vector<rclcpp::Publisher<collision_avoidance::msg::TrajectoryCone>::SharedPtr>
+        m_cone_publishers;
 };
 
-
-}
+}  // namespace Transfer_coordinate

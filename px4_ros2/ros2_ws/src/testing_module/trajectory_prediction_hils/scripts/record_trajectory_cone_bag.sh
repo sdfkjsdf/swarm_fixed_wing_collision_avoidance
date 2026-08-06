@@ -4,6 +4,8 @@ set -e
 
 OUTPUT_DIR=${1:-}
 TOPIC_NS=${2:-/px4_0}
+AGENT_NAME=${TOPIC_NS#/}
+COMMON_NS=/common/${AGENT_NAME}
 
 if [[ -z "${OUTPUT_DIR}" ]]; then
     echo "usage: $0 OUTPUT_DIR [TOPIC_NAMESPACE]" >&2
@@ -29,9 +31,14 @@ TOPICS=(
     "${TOPIC_NS}/fmu/out/wind"
     "${TOPIC_NS}/collision_estimation/trajectory_cone"
     "${TOPIC_NS}/collision_estimation/key_samples"
+    "${COMMON_NS}/trans_estimator_trajectory_belief"
+    "${COMMON_NS}/trans_vehicle_local_position"
+    "${COMMON_NS}/trans_vehicle_odometry"
+    "${COMMON_NS}/trans_vehicle_local_position_groundtruth"
+    "${COMMON_NS}/trans_trajectory_cone"
 )
 
-echo "[rosbag] output=${OUTPUT_DIR} namespace=${TOPIC_NS}"
+echo "[rosbag] output=${OUTPUT_DIR} namespace=${TOPIC_NS} common=${COMMON_NS}"
 exec ros2 bag record \
     --storage sqlite3 \
     --output "${OUTPUT_DIR}" \
