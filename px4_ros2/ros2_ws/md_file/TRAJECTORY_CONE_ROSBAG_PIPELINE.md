@@ -1,5 +1,25 @@
 # Trajectory cone ROS bag 파이프라인
 
+## 0. 외부 의존성 고정
+
+trajectory belief full covariance 인터페이스는 다음 개인 fork와 커밋에 고정한다.
+공식 PX4 upstream을 직접 수정하거나 해당 저장소의 `main`을 전제로 하지 않는다.
+
+| 의존성 | fork/branch | 고정 commit |
+|---|---|---|
+| PX4-Autopilot | `sdfkjsdf/PX4-Autopilot` / `feature/trajectory-belief-covariance` | `f763fdd99f06fe53d72d948995a780d96f397fd1` |
+| px4_msgs | `sdfkjsdf/px4_msgs` / `feature/trajectory-belief-message` | `f7741616e14c8330b54acdaf8daf382750896081` |
+
+재현 시에는 branch 이름만 따르지 말고 위 commit을 명시적으로 checkout한다.
+
+```bash
+git clone https://github.com/sdfkjsdf/PX4-Autopilot.git
+git -C PX4-Autopilot checkout f763fdd99f06fe53d72d948995a780d96f397fd1
+
+git clone https://github.com/sdfkjsdf/px4_msgs.git
+git -C px4_msgs checkout f7741616e14c8330b54acdaf8daf382750896081
+```
+
 ## 1. 이번 단계의 범위
 
 이번 단계는 다음 흐름이 Gazebo Classic headless SILS에서 끝까지 동작하는지 확인한다.
