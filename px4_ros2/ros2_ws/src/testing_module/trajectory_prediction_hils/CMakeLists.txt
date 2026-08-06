@@ -49,7 +49,12 @@ install(DIRECTORY config/
 
 install(PROGRAMS
     scripts/record_trajectory_cone_bag.sh
+    scripts/process_cone_batch.sh
+    scripts/run_cone_scenarios.sh
     analysis/analyze_trajectory_cone_bag.py
+    analysis/expand_cone_scenarios.py
+    analysis/plot_trajectory_cone_results.py
+    analysis/summarize_cone_batch.py
     DESTINATION lib/${PROJECT_NAME}
 )
 

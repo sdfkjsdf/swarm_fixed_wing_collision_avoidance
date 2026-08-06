@@ -1,0 +1,89 @@
+version: 1
+
+defaults:
+  repetitions: 1
+  timeout_s: 180
+  pause_after_case_s: 2
+
+profiles:
+  # Fast wiring check before a large unattended batch.
+  smoke:
+    repetitions: 1
+    cases: [S01, R15P, A02]
+
+  # Primary cone-coverage dataset: steady, symmetric roll sweep and avoidance.
+  coverage_core:
+    repetitions: 3
+    cases:
+      - S01
+      - S02
+      - S03
+      - S04
+      - S05
+      - S06
+      - R05P
+      - R05M
+      - R15P
+      - R15M
+      - R25P
+      - R25M
+      - A01
+      - A02
+      - A03
+
+  # Reduced-order model identification and channel-coupling dataset.
+  model_identification:
+    repetitions: 2
+    cases:
+      - V01
+      - V02
+      - H01
+      - H02
+      - H03
+      - H04
+      - P01
+      - P02
+      - P03
+      - P04
+      - C01
+      - C02
+      - C03
+      - C04
+
+  # Every currently maintained scenario, once. Useful for regression sweeps.
+  regression_all:
+    repetitions: 1
+    cases:
+      - V01
+      - V02
+      - H01
+      - H02
+      - H03
+      - H04
+      - P01
+      - P02
+      - P03
+      - P04
+      - S01
+      - S02
+      - S03
+      - S04
+      - S05
+      - S06
+      - C01
+      - C02
+      - C03
+      - C04
+      - A01
+      - A02
+      - A03
+      - LH01
+      - LH02
+      - LH03
+      - LH04
+      - R05P
+      - R05M
+      - R15P
+      - R15M
+      - R25P
+      - R25M

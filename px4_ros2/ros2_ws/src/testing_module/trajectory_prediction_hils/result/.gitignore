@@ -1,0 +1,10 @@
+rosbag/*
+!rosbag/.gitkeep
+raw/*
+!raw/.gitkeep
+plot/*
+!plot/.gitkeep
+summary/*
+!summary/.gitkeep
+log/*
+!log/.gitkeep

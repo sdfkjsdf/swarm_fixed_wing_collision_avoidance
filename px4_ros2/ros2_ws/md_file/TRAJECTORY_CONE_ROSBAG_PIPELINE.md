@@ -84,15 +84,68 @@ testing_module/trajectory_prediction_hils/
 ├── src/estimation/
 │   └── BeliefConePublisher.cpp
 ├── scripts/
-│   └── record_trajectory_cone_bag.sh
-└── analysis/
-    └── analyze_trajectory_cone_bag.py
+│   ├── record_trajectory_cone_bag.sh
+│   ├── run_cone_scenarios.sh
+│   └── process_cone_batch.sh
+├── analysis/
+│   ├── analyze_trajectory_cone_bag.py
+│   ├── plot_trajectory_cone_results.py
+│   └── summarize_cone_batch.py
+└── result/
+    ├── rosbag/   # 온라인 수집 데이터
+    ├── raw/      # bag 사후 분석 데이터
+    ├── plot/     # case별 PNG
+    ├── summary/  # batch 요약
+    └── log/      # launch/분석 로그
 ```
 
 ROS 인터페이스 정의는 ROS 2 빌드 규칙 때문에 `msg/`에 둔다. 수학 자료형과 구현은
 각각 `include/`와 대응하는 `src/`에 분리되어 있다.
 
 ## 5. 실행 방법
+
+### 5.1 반복 시나리오: 기록과 분석 분리
+
+`config/cone_scenario_matrix.yaml`이 case 목록, 반복 횟수, timeout의 단일 원본이다.
+다음 명령은 실행 중에는 bag만 기록하고, 모든 case가 끝난 뒤에만 분석과 plot을
+수행한다.
+
+```bash
+cd /home/hmcl/workspace/swarm-fixed-wing/source/swarm_fixed_wing_collision_avoidance/\
+px4_ros2/ros2_ws/src/testing_module/trajectory_prediction_hils
+./scripts/run_cone_scenarios.sh --profile coverage_core
+```
+
+실제 실행 전 전체 작업 목록 확인:
+
+```bash
+./scripts/run_cone_scenarios.sh --profile coverage_core --dry-run
+```
+
+수집과 분석을 서로 다른 시점에 실행할 수도 있다.
+
+```bash
+./scripts/run_cone_scenarios.sh --profile coverage_core \
+  --batch-id coverage_01 --collect-only
+./scripts/process_cone_batch.sh --batch-id coverage_01
+```
+
+이 분리는 Matplotlib, CSV/NPZ 변환, Mahalanobis 계산이 Gazebo/PX4 실행과 CPU를
+경쟁하지 않게 한다. 단, 이것은 분석 부하를 제거하는 것이며 Gazebo의 물리 시간을
+임의로 가속하는 기능은 아니다. 물리 시간 가속은 PX4 lockstep과 센서 발행 주기의
+별도 재검증 후 적용해야 한다.
+
+결과는 다음 경로에 생성된다.
+
+```text
+result/rosbag/<batch_id>/<case_id>_rNN/
+result/raw/<batch_id>/<case_id>_rNN/
+result/plot/<batch_id>/<case_id>_rNN/
+result/summary/<batch_id>/
+result/log/<batch_id>/
+```
+
+### 5.2 단일 smoke 실행
 
 GUI를 열지 않는 통합 실행과 자동 bag 분석:
 
@@ -114,11 +167,14 @@ ros2 run trajectory_prediction_hils analyze_trajectory_cone_bag.py \
   --namespace /px4_0
 ```
 
-분석 산출물은 다음 세 파일이다.
+개별 bag 분석 산출물은 다음 파일이다.
 
 - `summary.json`: 토픽 수, 누락, cone rate, PSD 오류, 포함률, 위치 오차 요약
 - `cone_samples.csv`: cone 시각과 horizon별 예측·정답·오차·Mahalanobis 거리
 - `cone_arrays.npz`: 후속 NumPy/Monte Carlo/Q 튜닝용 배열
+- `result/plot/.../*.png`: horizon별 포함률·오차와 대표 cone
+- `result/summary/<batch>/cases.csv`: 반복 실행 비교표
+- `result/summary/<batch>/batch_summary.json`: batch 구조 무결성과 집계값
 
 ## 6. 2026-08-06 headless SILS smoke 결과
 

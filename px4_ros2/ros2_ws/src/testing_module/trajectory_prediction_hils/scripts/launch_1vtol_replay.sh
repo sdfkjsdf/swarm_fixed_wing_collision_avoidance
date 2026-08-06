@@ -19,7 +19,10 @@
 # 사용법:
 #   $ launch_1vtol_replay.sh             # 전체 부팅 + 노드 실행 (foreground spin)
 #   $ launch_1vtol_replay.sh --no-node   # SITL 만 띄우고 종료 (노드는 별도 셸에서)
-#   $ launch_1vtol_replay.sh --record-bag # 필수 검증 토픽 rosbag + 사후 분석
+#   $ launch_1vtol_replay.sh --record-bag # 필수 검증 토픽 rosbag 기록
+#
+# 반복 수집에서는 SKIP_ROSBAG_ANALYSIS=1 로 온라인 분석을 끄고, 모든 실행이 끝난 뒤
+# process_cone_batch.sh 로 rosbag을 일괄 처리한다.
 #
 # 종료:
 #   - 노드 spin 중 Ctrl+C  → trap 이 모든 자식 정리 후 exit 0
@@ -39,6 +42,8 @@
 # ─── 경로/설정 ─────────────────────────────────────────────────────
 PX4_DIR=${PX4_DIR:-/home/hmcl/workspace/swarm-fixed-wing/firmware/PX4-Autopilot}
 ROS2_WS=${ROS2_WS:-/home/hmcl/workspace/swarm-fixed-wing/ros2_ws}
+HILS_SRC=${HILS_SRC:-${ROS2_WS}/src/testing_module/trajectory_prediction_hils}
+HILS_RESULT_ROOT=${HILS_RESULT_ROOT:-${HILS_SRC}/result}
 ANALYSIS_DIR=${ANALYSIS_DIR:-${ROS2_WS}/src/testing_module/analysis_tools}
 ANALYSIS_PYTHON=${ANALYSIS_PYTHON:-python3}
 BUILD=${PX4_DIR}/build/px4_sitl_default
@@ -77,8 +82,9 @@ for argument in "$@"; do
 done
 
 BAG_PID=""
-BAG_OUTPUT_DIR=${BAG_OUTPUT_DIR:-/tmp/trajectory_bags/trajectory_cone_$(date +%Y%m%d_%H%M%S)}
-BAG_ANALYSIS_DIR=${BAG_ANALYSIS_DIR:-${BAG_OUTPUT_DIR}_analysis}
+HILS_RUN_ID=${HILS_RUN_ID:-manual_$(date +%Y%m%d_%H%M%S)}
+BAG_OUTPUT_DIR=${BAG_OUTPUT_DIR:-${HILS_RESULT_ROOT}/rosbag/${HILS_RUN_ID}}
+BAG_ANALYSIS_DIR=${BAG_ANALYSIS_DIR:-${HILS_RESULT_ROOT}/raw/${HILS_RUN_ID}}
 
 stop_rosbag() {
     if [[ -n "${BAG_PID}" ]] && kill -0 "${BAG_PID}" 2>/dev/null; then
@@ -261,11 +267,15 @@ if [[ "${LAUNCH_NODE}" == "1" ]]; then
 
     if [[ "${RECORD_BAG}" == "1" ]]; then
         stop_rosbag
-        echo "[launch] rosbag 분석: ${BAG_ANALYSIS_DIR}"
-        "${HILS_SHARE}/../../lib/trajectory_prediction_hils/analyze_trajectory_cone_bag.py" \
-            "${BAG_OUTPUT_DIR}" --output "${BAG_ANALYSIS_DIR}" \
-            --namespace "/px4_${INSTANCE}" || \
-            echo "[launch] WARN: rosbag smoke 분석 실패 — ${BAG_ANALYSIS_DIR}/summary.json 확인"
+        if [[ "${SKIP_ROSBAG_ANALYSIS:-0}" == "1" ]]; then
+            echo "[launch] rosbag 기록 완료 — 오프라인 분석 대기: ${BAG_OUTPUT_DIR}"
+        else
+            echo "[launch] rosbag 분석: ${BAG_ANALYSIS_DIR}"
+            "${HILS_SHARE}/../../lib/trajectory_prediction_hils/analyze_trajectory_cone_bag.py" \
+                "${BAG_OUTPUT_DIR}" --output "${BAG_ANALYSIS_DIR}" \
+                --namespace "/px4_${INSTANCE}" || \
+                echo "[launch] WARN: rosbag smoke 분석 실패 — ${BAG_ANALYSIS_DIR}/summary.json 확인"
+        fi
     fi
 
     # ─── 분석: 가장 최근 CSV → chunk_analysis → PNG 2장 ────────────
