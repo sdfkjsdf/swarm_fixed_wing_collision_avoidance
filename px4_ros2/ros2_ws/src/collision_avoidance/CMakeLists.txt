@@ -11,11 +11,17 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(px4_ros2_cpp REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+    "msg/TrajectoryCone.msg"
+)
 
 # Pure C++ trajectory predictor. This is the production source of truth used by
 # both the onboard runtime and the HILS verification packages.
 add_library(trajectory_prediction_core STATIC
     src/estimation/trajectory_prediction/TrajectoryPredict.cpp
+    src/estimation/trajectory_prediction/TrajectoryUncertainty.cpp
 )
 add_library(collision_avoidance::trajectory_prediction_core ALIAS
     trajectory_prediction_core
@@ -62,6 +68,7 @@ install(DIRECTORY include/
 ament_export_targets(collision_avoidance_targets HAS_LIBRARY_TARGET)
 ament_export_include_directories(include)
 ament_export_dependencies(Eigen3)
+ament_export_dependencies(rosidl_default_runtime)
 
 add_executable(vtol_guidance_node
     src/nodes/vtol_guidance_main.cpp
@@ -105,6 +112,14 @@ if(BUILD_TESTING)
         trajectory_prediction_core
     )
     target_include_directories(test_trajectory_predict PRIVATE include)
+
+    ament_add_gtest(test_trajectory_uncertainty
+        test/test_trajectory_uncertainty.cpp
+    )
+    target_link_libraries(test_trajectory_uncertainty
+        trajectory_prediction_core
+    )
+    target_include_directories(test_trajectory_uncertainty PRIVATE include)
 
     ament_add_gtest(test_global_types
         test/test_global_types.cpp

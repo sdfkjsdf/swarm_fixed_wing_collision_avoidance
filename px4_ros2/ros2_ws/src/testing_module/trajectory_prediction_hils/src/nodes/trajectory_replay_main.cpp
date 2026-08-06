@@ -34,9 +34,11 @@
 #include <trajectory_prediction_hils/modes/TrajectoryReplayExecutor.hpp>
 #include <trajectory_prediction_hils/replay/SetpointSequencer.hpp>
 #include <trajectory_prediction_hils/logging/TrajectoryLogger.hpp>
+#include <trajectory_prediction_hils/estimation/BeliefConePublisher.hpp>
 /* ★ 2026-05-13 마이그레이션: TrajectoryPredict 헤더는 collision_avoidance 의
    collision_estimation library 로 이동. 본 include 경로는 새 위치 가리킴. */
 #include <collision_avoidance/estimation/trajectory_prediction/TrajectoryPredict.hpp>
+#include <collision_avoidance/estimation/trajectory_prediction/UncertaintyTypes.hpp>
 /* ★ 2026-05-13 테스트용: ReconstructTrajectory 의 debug 함수 사용
    (extractKeySamples 의 결과 검증 / 출력). */
 #include <collision_avoidance/estimation/reconstruction/ReconstructTrajectory.hpp>
@@ -47,6 +49,8 @@ using collision_avoidance::estimation::PredictInput;
 using collision_avoidance::estimation::PredictParams;
 using collision_avoidance::estimation::TrajectoryPredict;
 using collision_avoidance::estimation::TrajectorySample;        /* ★ extractKeySamples 반환 타입 */
+using collision_avoidance::estimation::PredictionInputTrajectory;
+using collision_avoidance::estimation::UncertaintyParams;
 
 
 int main(int argc, char * argv[])
@@ -94,6 +98,16 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("predict_horizon_endpoint_s", 4.5);
     node->declare_parameter<double>("predict_rate_hz",            10.0);
     node->declare_parameter<double>("predict_call_hz",            10.0);
+
+    /* Continuous-time process-noise diagonal for the 7-state covariance model.
+       These are initial engineering values; formal bag-based coverage calibration follows. */
+    node->declare_parameter<double>("uncertainty.q_pn",   0.25);
+    node->declare_parameter<double>("uncertainty.q_pe",   0.25);
+    node->declare_parameter<double>("uncertainty.q_h",    0.25);
+    node->declare_parameter<double>("uncertainty.q_v",    0.04);
+    node->declare_parameter<double>("uncertainty.q_psi",  0.001);
+    node->declare_parameter<double>("uncertainty.q_hdot", 0.04);
+    node->declare_parameter<double>("uncertainty.q_phi",  0.001);
 
     const int    vehicle_ID     = node->get_parameter("vehicle_ID").as_int();
     const std::string seq_path  = node->get_parameter("sequence_file").as_string();
@@ -172,10 +186,23 @@ int main(int argc, char * argv[])
 
     auto predictor = std::make_shared<TrajectoryPredict>(pp);
 
+    UncertaintyParams uncertainty_params;
+    uncertainty_params.process_noise_diagonal = {
+        node->get_parameter("uncertainty.q_pn").as_double(),
+        node->get_parameter("uncertainty.q_pe").as_double(),
+        node->get_parameter("uncertainty.q_h").as_double(),
+        node->get_parameter("uncertainty.q_v").as_double(),
+        node->get_parameter("uncertainty.q_psi").as_double(),
+        node->get_parameter("uncertainty.q_hdot").as_double(),
+        node->get_parameter("uncertainty.q_phi").as_double()};
+    auto cone_publisher = std::make_shared<BeliefConePublisher>(
+        *node, topic_ns, predictor, uncertainty_params);
+
     /* 호출자 멤버 array — 매 predict 호출마다 in-place 덮어쓰기 (heap 0).
        shared_ptr 로 감싸 lambda 캡처 lifetime 보장 (노드 종료까지 살아있음). */
     auto predicted_traj =
         std::make_shared<TrajectoryLogger::PredictedTrajectory>();
+    auto prediction_inputs = std::make_shared<PredictionInputTrajectory>();
 
     const double dt = 1.0 / predict_rate;
     RCLCPP_INFO(node->get_logger(),
@@ -241,8 +268,8 @@ int main(int argc, char * argv[])
 
     auto predict_timer = node->create_wall_timer(
         predict_period,
-        [predictor, logger, sequencer_for_predict, predicted_traj, dt, k_g, alt_offset,
-         key_samples_pub]() {
+        [predictor, logger, sequencer_for_predict, predicted_traj, prediction_inputs,
+         cone_publisher, dt, k_g, alt_offset, key_samples_pub]() {
             const auto m  = logger->getCurrentMeasurements();
             const auto sp = logger->getCurrentSetpointSnapshot();
 
@@ -315,6 +342,7 @@ int main(int argc, char * argv[])
                        큰 alt 변화 시퀀스는 *별도 작업의 ramp-following 모드* 사용 권장. */
                     const double h_cmd_future = baseline_alt + alt_offset;
                     PredictInput u_at_t{ sp_at_t.V, h_cmd_future, sp_at_t.h_dot, sp_at_t.a_lat };
+                    (*prediction_inputs)[k] = u_at_t;
                     x = predictor->stepRK4(x, u_at_t, dt);
                     traj[k + 1] = x;
                 }
@@ -323,6 +351,7 @@ int main(int argc, char * argv[])
                    _safe 변수로 NaN 전파 방지.
                    h_cmd = NaN → stepRK4 NaN guard 가 x.h 로 치환 → 1차 지연 동작 (b_h 0). */
                 PredictInput u_zoh{ V_safe, std::nan(""), h_dot_safe, a_lat_safe };
+                prediction_inputs->fill(u_zoh);
                 predictor->predict<TrajectoryLogger::kPredictHorizon>(
                     x0, u_zoh, dt, *predicted_traj);
             }
@@ -332,6 +361,7 @@ int main(int argc, char * argv[])
                물리적 invariant 가 publish 단계에서 보존. 향후 RT thread 이전 시
                이 호출부는 변경 없음 (mutex → SPSC 는 logger 내부만 바꾸면 됨). */
             logger->publishPredictBundle(*predicted_traj, m);
+            cone_publisher->publish(*prediction_inputs, dt);
 
             /* ★ 2026-05-13 key_samples 추출 + publish + 테스트 출력.
                좌표계: NED (extractKeySamples 가 입력 PX4 NED 와 정확히 일치하는

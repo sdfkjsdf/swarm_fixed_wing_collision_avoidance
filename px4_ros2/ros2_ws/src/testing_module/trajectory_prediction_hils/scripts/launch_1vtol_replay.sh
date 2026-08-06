@@ -19,6 +19,7 @@
 # 사용법:
 #   $ launch_1vtol_replay.sh             # 전체 부팅 + 노드 실행 (foreground spin)
 #   $ launch_1vtol_replay.sh --no-node   # SITL 만 띄우고 종료 (노드는 별도 셸에서)
+#   $ launch_1vtol_replay.sh --record-bag # 필수 검증 토픽 rosbag + 사후 분석
 #
 # 종료:
 #   - 노드 spin 중 Ctrl+C  → trap 이 모든 자식 정리 후 exit 0
@@ -41,7 +42,23 @@ ROS2_WS=${ROS2_WS:-/home/hmcl/workspace/swarm-fixed-wing/ros2_ws}
 ANALYSIS_DIR=${ANALYSIS_DIR:-${ROS2_WS}/src/testing_module/analysis_tools}
 ANALYSIS_PYTHON=${ANALYSIS_PYTHON:-python3}
 BUILD=${PX4_DIR}/build/px4_sitl_default
-PX4_PYTHON_BIN=${PX4_PYTHON:-python3}
+PX4_PYTHON_BIN=${PX4_PYTHON_BIN:-${PX4_PYTHON:-}}
+if [[ -z "${PX4_PYTHON_BIN}" ]]; then
+    if [[ -x /home/hmcl/workspace/swarm-fixed-wing/.envs/px4/bin/python3 ]]; then
+        PX4_PYTHON_BIN=/home/hmcl/workspace/swarm-fixed-wing/.envs/px4/bin/python3
+    else
+        PX4_PYTHON_BIN=python3
+    fi
+fi
+MICRO_XRCE_AGENT_BIN=${MICRO_XRCE_AGENT_BIN:-}
+if [[ -z "${MICRO_XRCE_AGENT_BIN}" ]]; then
+    if command -v MicroXRCEAgent >/dev/null 2>&1; then
+        MICRO_XRCE_AGENT_BIN=$(command -v MicroXRCEAgent)
+    else
+        MICRO_XRCE_AGENT_BIN=/home/hmcl/workspace/swarm-fixed-wing/tools/micro-xrce-dds-agent/bin/MicroXRCEAgent
+    fi
+fi
+MICRO_XRCE_AGENT_LIB_DIR=${MICRO_XRCE_AGENT_LIB_DIR:-$(dirname "${MICRO_XRCE_AGENT_BIN}")/../lib}
 INSTANCE=0
 SDF_OUT=/tmp/standard_vtol_${INSTANCE}.sdf
 
@@ -50,7 +67,27 @@ LOG_GZ=/tmp/gzserver.log
 LOG_PX4=/tmp/px4_inst${INSTANCE}.log
 
 LAUNCH_NODE=1
-[[ "${1:-}" == "--no-node" ]] && LAUNCH_NODE=0
+RECORD_BAG=${RECORD_ROSBAG:-0}
+for argument in "$@"; do
+    case "${argument}" in
+        --no-node) LAUNCH_NODE=0 ;;
+        --record-bag) RECORD_BAG=1 ;;
+        *) echo "[launch] ERROR: unknown argument '${argument}'"; exit 2 ;;
+    esac
+done
+
+BAG_PID=""
+BAG_OUTPUT_DIR=${BAG_OUTPUT_DIR:-/tmp/trajectory_bags/trajectory_cone_$(date +%Y%m%d_%H%M%S)}
+BAG_ANALYSIS_DIR=${BAG_ANALYSIS_DIR:-${BAG_OUTPUT_DIR}_analysis}
+
+stop_rosbag() {
+    if [[ -n "${BAG_PID}" ]] && kill -0 "${BAG_PID}" 2>/dev/null; then
+        echo "[launch] rosbag flush/종료 중..."
+        kill -INT "${BAG_PID}" 2>/dev/null || true
+        wait "${BAG_PID}" 2>/dev/null || true
+    fi
+    BAG_PID=""
+}
 
 # 백그라운드 PID 추적 (trap 으로 정리)
 PIDS=()
@@ -58,6 +95,7 @@ PIDS=()
 cleanup() {
     echo ""
     echo "[launch] cleanup — 백그라운드 프로세스 정리 중..."
+    stop_rosbag
     pkill -KILL -f "trajectory_replay_node" 2>/dev/null
     pkill -KILL -f "px4 -i ${INSTANCE}" 2>/dev/null
     pkill -KILL -f "gzserver Tools/simulation" 2>/dev/null
@@ -78,7 +116,12 @@ rm -f /tmp/px4_lock-* /tmp/px4-sock-* "${LOG_AGENT}" "${LOG_GZ}" "${LOG_PX4}" 2>
 
 # ─── 2. MicroXRCEAgent ─────────────────────────────────────────────
 echo "[launch 2/7] MicroXRCEAgent 시작 (udp4 -p 8888)..."
-MicroXRCEAgent udp4 -p 8888 > "${LOG_AGENT}" 2>&1 &
+if [[ ! -x "${MICRO_XRCE_AGENT_BIN}" ]]; then
+    echo "[launch] ERROR: MicroXRCEAgent 실행 파일 없음: ${MICRO_XRCE_AGENT_BIN}"
+    exit 1
+fi
+LD_LIBRARY_PATH="${MICRO_XRCE_AGENT_LIB_DIR}:${LD_LIBRARY_PATH:-}" \
+    "${MICRO_XRCE_AGENT_BIN}" udp4 -p 8888 > "${LOG_AGENT}" 2>&1 &
 PIDS+=($!)
 sleep 3
 if ! pgrep -f "MicroXRCEAgent udp4 -p 8888" > /dev/null; then
@@ -193,6 +236,20 @@ if [[ "${LAUNCH_NODE}" == "1" ]]; then
         fi
     fi
 
+    if [[ "${RECORD_BAG}" == "1" ]]; then
+        echo "[launch] rosbag 기록 시작: ${BAG_OUTPUT_DIR}"
+        bash "${HILS_SHARE}/../../lib/trajectory_prediction_hils/record_trajectory_cone_bag.sh" \
+            "${BAG_OUTPUT_DIR}" "/px4_${INSTANCE}" \
+            > /tmp/trajectory_cone_rosbag.log 2>&1 &
+        BAG_PID=$!
+        PIDS+=("${BAG_PID}")
+        sleep 2
+        if ! kill -0 "${BAG_PID}" 2>/dev/null; then
+            echo "[launch] ERROR: rosbag recorder 시작 실패. 로그: /tmp/trajectory_cone_rosbag.log"
+            exit 1
+        fi
+    fi
+
     ros2 run trajectory_prediction_hils trajectory_replay_node --ros-args \
         -p topic_namespace_prefix:=/px4_${INSTANCE} \
         -p vehicle_ID:=${INSTANCE} \
@@ -201,6 +258,15 @@ if [[ "${LAUNCH_NODE}" == "1" ]]; then
         "${SEQ_PARAMS[@]}" \
         "${B_H_PARAMS[@]}"
     # rclcpp::spin 끝나면 (Ctrl+C 또는 자동 shutdown) 여기로 옴
+
+    if [[ "${RECORD_BAG}" == "1" ]]; then
+        stop_rosbag
+        echo "[launch] rosbag 분석: ${BAG_ANALYSIS_DIR}"
+        "${HILS_SHARE}/../../lib/trajectory_prediction_hils/analyze_trajectory_cone_bag.py" \
+            "${BAG_OUTPUT_DIR}" --output "${BAG_ANALYSIS_DIR}" \
+            --namespace "/px4_${INSTANCE}" || \
+            echo "[launch] WARN: rosbag smoke 분석 실패 — ${BAG_ANALYSIS_DIR}/summary.json 확인"
+    fi
 
     # ─── 분석: 가장 최근 CSV → chunk_analysis → PNG 2장 ────────────
     # SKIP_CHUNK_ANALYSIS=1 면 분석 스킵 (run_all_cases.sh 가 끝에 별도 analyze_cases.py 호출).

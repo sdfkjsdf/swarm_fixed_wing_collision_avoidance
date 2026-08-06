@@ -20,6 +20,7 @@ add_executable(trajectory_replay_node
     src/replay/TrajectoryReplayMode.cpp
     src/replay/SetpointSequencer.cpp
     src/logging/TrajectoryLogger.cpp
+    src/estimation/BeliefConePublisher.cpp
 )
 target_include_directories(trajectory_replay_node PRIVATE include)
 ament_target_dependencies(trajectory_replay_node
@@ -44,6 +45,12 @@ install(TARGETS
 
 install(DIRECTORY config/
     DESTINATION share/${PROJECT_NAME}/config
+)
+
+install(PROGRAMS
+    scripts/record_trajectory_cone_bag.sh
+    analysis/analyze_trajectory_cone_bag.py
+    DESTINATION lib/${PROJECT_NAME}
 )
 
 ament_package()

@@ -22,3 +22,14 @@
     predict_horizon_endpoint_s: 4.5         # 예측 *마지막 점* 의 시각 [s]
     predict_rate_hz:   10.0                 # 예측 점 간격 = 1/rate [s] → dt=0.1s
     predict_call_hz:   10.0                 # predict() 자체 호출 주기 [Hz]
+
+    # ── 7-state covariance propagation Qc diagonal ──
+    # Initial engineering values only. Bag ground-truth coverage analysis will
+    # calibrate these before formal validation or flight use.
+    uncertainty.q_pn:   0.25
+    uncertainty.q_pe:   0.25
+    uncertainty.q_h:    0.25
+    uncertainty.q_v:    0.04
+    uncertainty.q_psi:  0.001
+    uncertainty.q_hdot: 0.04
+    uncertainty.q_phi:  0.001
