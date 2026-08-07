@@ -67,6 +67,23 @@ uncertainty envelope가 실제 오차의 95%를 덮도록 튜닝한다는 covera
 
 - [Development of an Automatic Aircraft Collision Avoidance](../../../../../../reference/paper/Lockheed_Martin_collision_avoidance/Development%20of%20an%20Automatic%20Aircraft%20Collision%20Avoidance.pdf)
 
+### 2.3 회피 목적과 roll-and-pull 해석
+
+이 문서가 참조하는 Auto ACAS는 다른 항공기와의 공중 충돌 회피 시스템이다. 논문은
+기본 Auto ACAS가 지형 제약을 직접 고려하지 않으며 Auto GCAS와의 통합을 별도 확장
+과제로 구분한다. 따라서 논문의 roll-and-pull을 지면 충돌을 피하기 위한 고도 회복
+기동으로 해석하면 안 된다.
+
+전투기용 roll-and-pull은 bank를 만들면서 양의 normal load factor를 함께 명령해
+비행경로를 빠르게 굽히는 공중 충돌 회피 기동이다. 이것은 "먼저 roll로 방향을 바꾼
+뒤 pull로 원래 고도를 맞춘다"는 순차 고도복구 절차가 아니다.
+
+현재 소형 고정익 무인기 프로젝트는 전투기의 `+5 g` 기동 세트를 그대로 복제하지
+않는다. 현 단계의 프로젝트 선택은 속도를 트림 운용점으로 만든 뒤 수평 횡가속도만
+회피 후보로 사용하고 `h_dot_cmd=0`을 유지하는 것이다. 다만 선회 중 실제 고도 변화와
+수직 covariance는 3차원 trajectory cone에서 계속 예측·평가한다. 이는 논문의
+trajectory-cone 개념을 차용하되 기동 집합은 대상 기체에 맞게 제한한 것이다.
+
 ## 3. PMR, MASD, AD 관계
 
 논문의 활성화 판단은 다음 세 양으로 정리할 수 있다.
@@ -164,7 +181,7 @@ envelope"다.
 
 ### 6.1 구현된 부분
 
-현재 프로젝트에는 cone의 중심선을 만들고 압축/복원하는 기반이 있다.
+현재 프로젝트에는 cone의 중심선, full-covariance 전파, 압축/복원 기반이 있다.
 
 ```text
 PredictState + PredictInput
@@ -178,29 +195,38 @@ TrajectorySample: positions at 0.0/1.5/3.0/4.5 s
         |
         v
 ReconstructTrajectory: clamped cubic spline
+
+EstimatorTrajectoryBelief: 9-state mean + 9x9 covariance
+        |
+        v
+TrajectoryUncertainty: delay compensation + 46-point covariance propagation
+        |
+        v
+TrajectoryCone.msg: 46-point mean + 3x3 position covariance
 ```
 
 - `TrajectoryPredict`: nominal trajectory 생성
 - `TrajectorySample`: 데이터링크용 핵심 sample 표현
 - `ReconstructTrajectory`: 수신 측 nominal trajectory 복원
-- `trajectory_prediction_hils`: nominal prediction과 PX4 SITL 측정 궤적 비교
-- `analysis_tools`: 시간별 위치/속도/자세 오차 분석
+- `TrajectoryUncertainty`: EKF 평균·full covariance를 4.5초 동안 전파
+- `trajectory_prediction_hils`: cone 발행, rosbag 기록과 PX4 SILS ground truth 비교
+- offline analyzer: horizon별 coverage, 전체 궤적 포함, 최초 이탈, 정렬/전파 오차 분석
 
 ### 6.2 아직 구현되지 않은 부분
 
-현재 코드에는 다음 기능이 없다.
+현재 코드에는 다음 기능이 아직 없다.
 
-- 시간별 trajectory uncertainty 자료형
 - TPA residual의 95% envelope 산출 및 lookup table
 - navigation/spline/datalink/delay uncertainty roll-up
-- ownship/threat cone 생성
+- 독립 holdout으로 확정된 covariance/process-noise calibration
+- ownship/threat 두 cone의 동시 비교
 - PMR, MASD, AD 계산
 - cone contact/overlap 판단
 - AD 기반 maneuver activation
 
-따라서 현재 구현은 Auto ACAS 흐름 중 nominal trajectory prediction과
-trajectory reconstruction까지 구현된 상태이며, uncertainty cone과 AMAC 판단은
-후속 collision-estimation 단계다.
+따라서 현재 구현은 nominal trajectory와 단일 기체 EKF 기반 uncertainty cone까지
+구현된 상태다. 여러 오차원의 최종 roll-up과 두 기체 cone을 이용한 AMAC 판단은 후속
+collision-estimation 단계다.
 
 ## 7. 현재 HILS 데이터를 이용한 구현 방향
 
@@ -221,8 +247,9 @@ e_horizontal(k) = sqrt(e_n(k)^2 + e_e(k)^2)
 e_vertical(k)   = abs(e_h(k))
 ```
 
-속도, 고도, roll, 상승/하강, 입력 변화율별 HILS case를 반복 실행해 각
-horizon 시각의 residual 분포를 모은다.
+여러 트림 속도점, 좌·우 횡가속도 크기, 풍속과 센서/Gazebo seed별 SILS case를 반복
+실행해 각 horizon 시각의 residual 분포를 모은다. 회피 입력은 `h_dot_cmd=0`으로
+제한하지만 선회 중 수직 residual과 covariance는 계속 수집한다.
 
 ### Phase 2 - 95% TPA envelope 생성
 
@@ -347,7 +374,8 @@ nominal trajectory
     = trajectory cone / MASD 판단 기반
 ```
 
-현재 프로젝트는 cone의 중심선 생성, 압축, 전송 prototype, spline 복원까지
-준비되어 있다. 다음 단계는 HILS residual로 TPA와 spline uncertainty를 정량화한
-뒤, 나머지 오차원을 보수적으로 roll-up하여 PMR/MASD/AD 기반 collision
-estimation으로 연결하는 것이다.
+현재 프로젝트는 cone 중심선, EKF full-covariance 전파, ROS 2 cone 발행, 압축 전송
+prototype과 spline 복원까지 준비되어 있다. 다음 단계는 트림 후 수평 회피 SILS
+residual로 모델과 process noise를 calibration/holdout 분리 검증하고, spline 및 나머지
+오차원을 보수적으로 roll-up하여 PMR/MASD/AD 기반 collision estimation으로 연결하는
+것이다.

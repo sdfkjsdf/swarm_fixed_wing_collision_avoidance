@@ -98,6 +98,13 @@ def candidate_changed(lhs: np.ndarray, rhs: np.ndarray) -> bool:
     return bool(np.any(np.abs(lhs - rhs) > INPUT_CHANGE_TOLERANCE))
 
 
+def quaternion_to_roll(quaternion) -> float:
+    q_w, q_x, q_y, q_z = (float(value) for value in quaternion)
+    sin_roll = 2.0 * (q_w * q_x + q_y * q_z)
+    cos_roll = 1.0 - 2.0 * (q_x * q_x + q_y * q_y)
+    return math.atan2(sin_roll, cos_roll)
+
+
 def vector_error_statistics(vectors: List[np.ndarray]):
     """Return JSON-safe vector and norm statistics for NED errors."""
     if not vectors:
@@ -165,6 +172,7 @@ def analyze(args) -> int:
         "local_position": local_position_topic,
         "odometry": odometry_topic,
         "gps_position": f"{namespace}/fmu/out/vehicle_gps_position",
+        "airspeed": f"{namespace}/fmu/out/airspeed_validated_v1",
         "attitude": f"{namespace}/fmu/out/vehicle_attitude",
         "ground_truth_position": ground_truth_topic,
         "ground_truth_attitude":
@@ -173,6 +181,8 @@ def analyze(args) -> int:
         "cone": cone_topic,
         "raw_cone": f"{namespace}/collision_estimation/trajectory_cone",
         "key_samples": f"{namespace}/collision_estimation/key_samples",
+        "prediction_debug":
+            f"{namespace}/testing/trajectory_prediction_debug",
     }
     required_keys = (
         "belief", "local_position", "ground_truth_position",
@@ -193,6 +203,10 @@ def analyze(args) -> int:
         "discovered_topic_count": len(topic_types),
         "chi_square_95_df3": CHI_SQUARE_95_DF3,
         "evaluation_mode": "current-input ZOH with causal horizon censoring",
+        "analysis_version": "propagation_alignment_v1",
+        "time_contract": (
+            "cone point 0 and ground truth use cone.source_timestamp; "
+            "later points use source_timestamp + message time_offset_s"),
         "input_change_tolerance": {
             "V_cmd_mps": float(INPUT_CHANGE_TOLERANCE[0]),
             "h_cmd_m": float(INPUT_CHANGE_TOLERANCE[1]),
@@ -200,6 +214,161 @@ def analyze(args) -> int:
             "a_lat_cmd_mps2": float(INPUT_CHANGE_TOLERANCE[3]),
         },
     }
+
+    debug_messages = [
+        item for _, item in messages.get(topics["prediction_debug"], [])
+    ]
+    if debug_messages:
+        cone_source_timestamps = {
+            int(item.source_timestamp)
+            for _, item in messages.get(topics["cone"], [])
+        }
+        debug_non_zoh = 0
+        debug_nonzero_height_rate = 0
+        for item in debug_messages:
+            debug_inputs = np.asarray(
+                item.prediction_inputs, dtype=np.float64).reshape(
+                    PREDICTION_INTERVAL_COUNT, 4)
+            if not (
+                np.isfinite(debug_inputs).all()
+                and np.all(
+                    np.abs(debug_inputs - debug_inputs[0])
+                    <= INPUT_CHANGE_TOLERANCE)
+            ):
+                debug_non_zoh += 1
+            if np.any(np.abs(debug_inputs[:, 2]) > 1.0e-9):
+                debug_nonzero_height_rate += 1
+        valid_count = sum(bool(item.valid) for item in debug_messages)
+        point_count_ok = sum(
+            int(item.point_count) == TRAJECTORY_POINT_COUNT
+            for item in debug_messages)
+        epoch_self_consistent = sum(
+            int(item.cone_epoch_timestamp) == int(item.source_timestamp)
+            for item in debug_messages)
+        epoch_matched_to_cone = sum(
+            int(item.cone_epoch_timestamp) in cone_source_timestamps
+            for item in debug_messages)
+        applied_before_source = sum(
+            0 < int(item.applied_input_timestamp) <= int(item.source_timestamp)
+            for item in debug_messages)
+        debug_count = len(debug_messages)
+        summary["propagation_test_contract"] = {
+            "present": True,
+            "case_ids": sorted({item.case_id for item in debug_messages}),
+            "message_count": debug_count,
+            "valid_message_count": valid_count,
+            "point_count_46_count": point_count_ok,
+            "zoh_message_count": debug_count - debug_non_zoh,
+            "lateral_only_message_count": (
+                debug_count - debug_nonzero_height_rate),
+            "epoch_self_consistent_count": epoch_self_consistent,
+            "epoch_matched_to_cone_count": epoch_matched_to_cone,
+            "input_applied_before_source_count": applied_before_source,
+            "pass": bool(
+                valid_count == debug_count
+                and point_count_ok == debug_count
+                and debug_non_zoh == 0
+                and debug_nonzero_height_rate == 0
+                and epoch_self_consistent == debug_count
+                and epoch_matched_to_cone == debug_count
+                and applied_before_source == debug_count),
+        }
+    else:
+        summary["propagation_test_contract"] = {
+            "present": False,
+            "pass": None,
+        }
+
+    summary["trim_gate"] = {
+        "required": bool(args.require_propagation_contract),
+        "pass": None,
+    }
+    if debug_messages:
+        applied_timestamps = sorted({
+            int(item.applied_input_timestamp) for item in debug_messages
+            if int(item.applied_input_timestamp) > 0
+        })
+        first_inputs = np.asarray(
+            debug_messages[0].prediction_inputs,
+            dtype=np.float64).reshape(PREDICTION_INTERVAL_COUNT, 4)[0]
+        if applied_timestamps:
+            applied_us = applied_timestamps[0]
+            window_start_us = applied_us - int(args.trim_hold_s * 1.0e6)
+            airspeed_samples = [
+                (int(item.timestamp), float(item.calibrated_airspeed_m_s))
+                for _, item in messages.get(topics["airspeed"], [])
+                if window_start_us <= int(item.timestamp) <= applied_us
+                and math.isfinite(float(item.calibrated_airspeed_m_s))
+            ]
+            vertical_speed_samples = [
+                (int(item.timestamp), float(item.vz))
+                for _, item in messages.get(topics["local_position"], [])
+                if window_start_us <= int(item.timestamp) <= applied_us
+                and math.isfinite(float(item.vz))
+            ]
+            roll_samples = [
+                (int(item.timestamp), quaternion_to_roll(item.q))
+                for _, item in messages.get(topics["attitude"], [])
+                if window_start_us <= int(item.timestamp) <= applied_us
+            ]
+            max_age_us = int(args.trim_max_sample_age_s * 1.0e6)
+
+            def window_valid(samples):
+                return bool(
+                    samples
+                    and samples[0][0] <= window_start_us + max_age_us
+                    and samples[-1][0] >= applied_us - max_age_us)
+
+            target_airspeed = float(first_inputs[0])
+            max_airspeed_error = (
+                max(abs(value - target_airspeed)
+                    for _, value in airspeed_samples)
+                if airspeed_samples else None)
+            max_vertical_speed = (
+                max(abs(value) for _, value in vertical_speed_samples)
+                if vertical_speed_samples else None)
+            max_roll_rad = (
+                max(abs(value) for _, value in roll_samples)
+                if roll_samples else None)
+            window_coverage_valid = bool(
+                window_valid(airspeed_samples)
+                and window_valid(vertical_speed_samples)
+                and window_valid(roll_samples))
+            trim_pass = bool(
+                len(applied_timestamps) == 1
+                and window_coverage_valid
+                and max_airspeed_error is not None
+                and max_airspeed_error <= args.trim_airspeed_tolerance_mps
+                and max_vertical_speed is not None
+                and max_vertical_speed
+                    <= args.trim_vertical_speed_tolerance_mps
+                and max_roll_rad is not None
+                and max_roll_rad
+                    <= math.radians(args.trim_roll_tolerance_deg))
+            summary["trim_gate"] = {
+                "required": bool(args.require_propagation_contract),
+                "pass": trim_pass,
+                "applied_input_timestamp_us": applied_us,
+                "unique_applied_input_timestamp_count": len(applied_timestamps),
+                "hold_s": float(args.trim_hold_s),
+                "window_coverage_valid": window_coverage_valid,
+                "target_calibrated_airspeed_mps": target_airspeed,
+                "max_airspeed_error_mps": max_airspeed_error,
+                "airspeed_tolerance_mps": float(
+                    args.trim_airspeed_tolerance_mps),
+                "max_abs_vertical_speed_mps": max_vertical_speed,
+                "vertical_speed_tolerance_mps": float(
+                    args.trim_vertical_speed_tolerance_mps),
+                "max_abs_roll_deg": (
+                    math.degrees(max_roll_rad)
+                    if max_roll_rad is not None else None),
+                "roll_tolerance_deg": float(args.trim_roll_tolerance_deg),
+                "sample_counts": {
+                    "airspeed": len(airspeed_samples),
+                    "vertical_speed": len(vertical_speed_samples),
+                    "roll": len(roll_samples),
+                },
+            }
     if missing:
         (output_dir / "summary.json").write_text(
             json.dumps(summary, indent=2), encoding="utf-8")
@@ -418,6 +587,8 @@ def analyze(args) -> int:
         offsets = np.asarray(cone.time_offset_s, dtype=np.float64)
         ground_truth_array = np.full((TRAJECTORY_POINT_COUNT, 3), np.nan)
         cone_rows = []
+        initial_ground_truth = None
+        initial_predicted_position = mean[0].copy()
         causal_limit_s = 4.5
         if record["valid_until_us"] is not None:
             causal_limit_s = max(
@@ -529,7 +700,12 @@ def analyze(args) -> int:
             if ground_truth is None:
                 partial_reason = "ground_truth_boundary"
                 break
+            if initial_ground_truth is None:
+                initial_ground_truth = ground_truth.copy()
             error = ground_truth - mean[index]
+            propagation_error = (
+                (ground_truth - initial_ground_truth)
+                - (mean[index] - initial_predicted_position))
             mahalanobis_sq = float(
                 error @ np.linalg.pinv(current_covariance, hermitian=True) @ error)
             candidate = record["candidate"]
@@ -547,7 +723,15 @@ def analyze(args) -> int:
                 "truth_n": float(ground_truth[0]),
                 "truth_e": float(ground_truth[1]),
                 "truth_d": float(ground_truth[2]),
+                "error_n": float(error[0]),
+                "error_e": float(error[1]),
+                "error_d": float(error[2]),
                 "error_norm_m": float(np.linalg.norm(error)),
+                "propagation_error_n": float(propagation_error[0]),
+                "propagation_error_e": float(propagation_error[1]),
+                "propagation_error_d": float(propagation_error[2]),
+                "propagation_error_norm_m": float(
+                    np.linalg.norm(propagation_error)),
                 "mahalanobis_sq": mahalanobis_sq,
                 "inside_95": int(mahalanobis_sq <= CHI_SQUARE_95_DF3),
                 "symmetry_error": symmetry_error,
@@ -588,6 +772,12 @@ def analyze(args) -> int:
             "full_4_5s_horizon": int(full_horizon),
             "full_4_5s_trajectory_inside_95": (
                 int(all(inside_flags)) if full_horizon else None),
+            "horizon_zero_alignment_error_m": float(
+                cone_rows[0]["error_norm_m"]),
+            "terminal_absolute_error_m": float(
+                cone_rows[-1]["error_norm_m"]),
+            "terminal_propagation_error_m": float(
+                cone_rows[-1]["propagation_error_norm_m"]),
         })
         npz_mean.append(mean)
         npz_covariance.append(covariance)
@@ -621,6 +811,9 @@ def analyze(args) -> int:
             [row["error_norm_m"] for row in horizon_rows], dtype=np.float64)
         mahalanobis = np.asarray(
             [row["mahalanobis_sq"] for row in horizon_rows], dtype=np.float64)
+        propagation_errors = np.asarray([
+            row["propagation_error_norm_m"] for row in horizon_rows
+        ], dtype=np.float64)
         horizon_statistics.append({
             "horizon_s": horizon,
             "sample_count": len(horizon_rows),
@@ -629,6 +822,10 @@ def analyze(args) -> int:
             "mean_error_m": float(np.mean(errors)),
             "median_error_m": float(np.median(errors)),
             "percentile_95_error_m": float(np.percentile(errors, 95)),
+            "mean_propagation_error_m": float(np.mean(propagation_errors)),
+            "median_propagation_error_m": float(np.median(propagation_errors)),
+            "percentile_95_propagation_error_m": float(
+                np.percentile(propagation_errors, 95)),
             "mean_mahalanobis_sq": float(np.mean(mahalanobis)),
             "median_mahalanobis_sq": float(np.median(mahalanobis)),
             "percentile_95_mahalanobis_sq": float(np.percentile(mahalanobis, 95)),
@@ -650,6 +847,11 @@ def analyze(args) -> int:
         row["first_exit_horizon_s"] for row in cone_evaluation_rows
         if row["first_exit_horizon_s"] is not None
     ]
+    full_endpoint_propagation_errors = [np.asarray([
+        row["propagation_error_n"], row["propagation_error_e"],
+        row["propagation_error_d"]
+    ]) for row in rows if math.isclose(
+        row["horizon_s"], 4.5, abs_tol=1.0e-3)]
 
     fusion_errors = [np.asarray([
         row["fusion_error_n"], row["fusion_error_e"], row["fusion_error_d"]
@@ -704,6 +906,25 @@ def analyze(args) -> int:
                 for row in initial_alignment_rows
             )) if initial_alignment_rows else None),
     }
+    alignment_norms = np.asarray([
+        row["error_norm_m"] for row in rows
+        if math.isclose(row["horizon_s"], 0.0, abs_tol=1.0e-6)
+    ], dtype=np.float64)
+    alignment_gate = {
+        "required": bool(args.require_alignment),
+        "median_limit_m": float(args.alignment_median_limit_m),
+        "percentile_95_limit_m": float(args.alignment_p95_limit_m),
+        "sample_count": int(len(alignment_norms)),
+        "median_m": (
+            float(np.median(alignment_norms)) if len(alignment_norms) else None),
+        "percentile_95_m": (
+            float(np.percentile(alignment_norms, 95))
+            if len(alignment_norms) else None),
+    }
+    alignment_gate["pass"] = bool(
+        len(alignment_norms)
+        and alignment_gate["median_m"] <= args.alignment_median_limit_m
+        and alignment_gate["percentile_95_m"] <= args.alignment_p95_limit_m)
 
     # A timestamp shift sweep is diagnostic only. A large optimum shift aligned
     # with the flight direction indicates a state-time labeling issue; it must
@@ -766,7 +987,10 @@ def analyze(args) -> int:
             float(np.mean(first_exit_horizons)) if first_exit_horizons else None),
         "mean_position_error_m": mean_error,
         "max_position_error_m": max_error,
+        "propagation_error_at_4_5_s": vector_error_statistics(
+            full_endpoint_propagation_errors),
         "initial_alignment": initial_alignment,
+        "alignment_gate": alignment_gate,
         "current_local_position_error": vector_error_statistics(
             current_local_position_errors),
         "belief_position_velocity_kinematic_error_mps": belief_kinematic_error,
@@ -822,6 +1046,13 @@ def analyze(args) -> int:
         or non_zoh_cones > 0
         or covariance_failures > 0
         or complete_cones == 0
+        or (args.require_alignment and not alignment_gate["pass"])
+        or (
+            args.require_propagation_contract
+            and not summary["propagation_test_contract"]["pass"])
+        or (
+            args.require_propagation_contract
+            and not summary["trim_gate"]["pass"])
     )
     return 1 if smoke_failed else 0
 
@@ -847,6 +1078,23 @@ def main() -> int:
         action="store_true",
         help="legacy diagnostic only; formal runs require timestamp_sample",
     )
+    parser.add_argument(
+        "--require-alignment", action="store_true",
+        help="fail analysis when horizon-zero alignment exceeds configured limits")
+    parser.add_argument(
+        "--require-propagation-contract", action="store_true",
+        help=(
+            "require the FixedWing propagation debug topic and a valid "
+            "input/epoch/ZOH contract"))
+    parser.add_argument("--trim-hold-s", type=float, default=2.0)
+    parser.add_argument(
+        "--trim-airspeed-tolerance-mps", type=float, default=1.0)
+    parser.add_argument(
+        "--trim-vertical-speed-tolerance-mps", type=float, default=0.5)
+    parser.add_argument("--trim-roll-tolerance-deg", type=float, default=5.0)
+    parser.add_argument("--trim-max-sample-age-s", type=float, default=0.5)
+    parser.add_argument("--alignment-median-limit-m", type=float, default=0.5)
+    parser.add_argument("--alignment-p95-limit-m", type=float, default=1.0)
     return analyze(parser.parse_args())
 
 

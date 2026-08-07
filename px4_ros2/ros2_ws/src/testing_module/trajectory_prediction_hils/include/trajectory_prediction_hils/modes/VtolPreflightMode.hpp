@@ -5,7 +5,7 @@
    책임: 멀티콥터 → 고정익 천이 + 순항 안정화 (단일 비행기)
    - 천이 명령 송신 (m_vtol->toFixedwing())
    - FW 진입 시 cruise altitude 캡처
-   - 5초 안정화 후 completed(Success) → Executor 가 다음 모드 schedule
+   - 설정된 안정화 시간 후 completed(Success) → Executor 가 다음 모드 schedule
 
    collision_avoidance 의 VtolPreflightMode 베이스로 다중 비행기 동기화
    (m_total_agent_num, _vtol_status_subs[], allAgentsInFw()) 제거.
@@ -27,7 +27,8 @@
 class VtolPreflightMode : public px4_ros2::ModeBase
 {
 public:
-    VtolPreflightMode(rclcpp::Node & node, int vehicle_id);
+    VtolPreflightMode(rclcpp::Node & node, int vehicle_id,
+                      double stabilize_s = 5.0);
     ~VtolPreflightMode() override = default;
 
     void onActivate() override;
@@ -65,6 +66,6 @@ private:
     float m_desired_ground_speed{15.f};
 
     int m_vehicle_id{0};
-
-    static constexpr double kMinStabilizeSec = 5.0;
+    double m_stabilize_s{5.0};
+    bool m_completion_requested{false};
 };

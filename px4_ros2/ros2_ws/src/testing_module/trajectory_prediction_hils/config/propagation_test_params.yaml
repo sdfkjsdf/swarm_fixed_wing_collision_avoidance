@@ -1,0 +1,27 @@
+"/**":
+  ros__parameters:
+    test.case_id: "ZOH_V20_STRAIGHT"
+    test.equivalent_airspeed: 20.0
+    test.lateral_acceleration: 0.0
+    test.trim_timeout_s: 45.0
+    test.trim_hold_s: 2.0
+    test.trim_airspeed_tolerance_mps: 1.0
+    test.trim_vertical_speed_tolerance_mps: 0.5
+    test.trim_roll_tolerance_deg: 5.0
+    test.trim_max_sample_age_s: 0.5
+    test.cone_generation_duration_s: 5.0
+    test.tail_hold_duration_s: 4.6
+
+    predict_horizon_endpoint_s: 4.5
+    predict_rate_hz: 10.0
+    predict_call_hz: 10.0
+
+    uncertainty.q_pn: 0.25
+    uncertainty.q_pe: 0.25
+    uncertainty.q_h: 0.25
+    uncertainty.q_v: 0.04
+    uncertainty.q_psi: 0.001
+    uncertainty.q_hdot: 0.04
+    uncertainty.q_phi: 0.001
+    uncertainty.q_scale: 0.8
+    uncertainty.estimator_output_delay_s: 0.13

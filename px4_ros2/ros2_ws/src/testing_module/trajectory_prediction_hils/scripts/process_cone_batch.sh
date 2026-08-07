@@ -10,9 +10,11 @@ RESULT_ROOT=${RESULT_ROOT:-${HILS_SRC}/result}
 ANALYSIS_PYTHON=${ANALYSIS_PYTHON:-/home/hmcl/workspace/swarm-fixed-wing/.envs/px4/bin/python3}
 NAMESPACE=/px4_0
 BATCH_ID=""
+PROPAGATION_TEST=0
 
 usage() {
     echo "Usage: $0 --batch-id ID [--result-root PATH] [--namespace /px4_0]"
+    echo "          [--propagation-test]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -20,6 +22,7 @@ while [[ $# -gt 0 ]]; do
         --batch-id) BATCH_ID=${2:-}; shift 2 ;;
         --result-root) RESULT_ROOT=${2:-}; shift 2 ;;
         --namespace) NAMESPACE=${2:-}; shift 2 ;;
+        --propagation-test) PROPAGATION_TEST=1; shift ;;
         --help|-h) usage; exit 0 ;;
         *) echo "[process] ERROR: unknown argument '$1'"; usage; exit 2 ;;
     esac
@@ -71,7 +74,12 @@ printf 'run_id\tanalysis_rc\tplot_rc\n' > "${STATUS_FILE}"
 FAILED=0
 PROCESSED=0
 
-while IFS=$'\t' read -r run_id case_id case_file repetition timeout_s pause_s; do
+ANALYSIS_ARGS=()
+if [[ ${PROPAGATION_TEST} -eq 1 ]]; then
+    ANALYSIS_ARGS+=(--require-alignment --require-propagation-contract)
+fi
+
+while IFS=$'\t' read -r run_id _manifest_remainder; do
     [[ "${run_id}" == "run_id" ]] && continue
     [[ -z "${run_id}" ]] && continue
     bag_dir=${ROSBAG_ROOT}/${run_id}
@@ -89,6 +97,7 @@ while IFS=$'\t' read -r run_id case_id case_file repetition timeout_s pause_s; d
 
     "${ANALYSIS_PYTHON}" "${ANALYZER}" "${bag_dir}" \
         --output "${raw_dir}" --namespace "${NAMESPACE}" \
+        "${ANALYSIS_ARGS[@]}" \
         > "${process_log}" 2>&1
     analysis_rc=$?
     plot_rc=2

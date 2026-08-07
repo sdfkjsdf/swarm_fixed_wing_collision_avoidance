@@ -78,6 +78,7 @@ ROS 측은 `timestamp - timestamp_sample`만큼 7-state mean과 covariance를 �
 | 권장 | `/px4_0/fmu/out/airspeed_validated_v1` | airspeed 모델 오차 진단 |
 | 권장 | `/px4_0/fmu/out/wind` | 풍속에 따른 모델 오차 분해 |
 | 권장 | `/px4_0/collision_estimation/key_samples` | 기존 4시점 통신 표현과 cone 비교 |
+| 전파시험 필수 | `/px4_0/testing/trajectory_prediction_debug` | 실제 입력 적용 시각, case ID, cone epoch, 46점 전체 상태와 ZOH 입력 계약 확인 |
 
 정식 coverage 분석은 위 raw topic과 함께 기록되는 다음 공통 NED topic을 사용한다.
 
@@ -121,14 +122,30 @@ collision_avoidance/
 testing_module/trajectory_prediction_hils/
 ├── include/trajectory_prediction_hils/estimation/
 │   └── BeliefConePublisher.hpp
+├── include/trajectory_prediction_hils/testing/
+│   ├── PropagationTestMode.hpp
+│   └── PropagationTestExecutor.hpp
 ├── src/estimation/
 │   └── BeliefConePublisher.cpp
+├── src/testing/
+│   ├── PropagationTestMode.cpp
+│   └── PropagationTestExecutor.cpp
+├── src/nodes/
+│   └── trajectory_prediction_sils_test_main.cpp
+├── msg/
+│   └── TrajectoryPredictionDebug.msg
+├── config/
+│   ├── propagation_test_params.yaml
+│   └── propagation_scenario_matrix.yaml
 ├── scripts/
+│   ├── launch_propagation_test.sh
 │   ├── record_trajectory_cone_bag.sh
+│   ├── run_propagation_scenarios.sh
 │   ├── run_cone_scenarios.sh
 │   └── process_cone_batch.sh
 ├── analysis/
 │   ├── analyze_trajectory_cone_bag.py
+│   ├── expand_propagation_scenarios.py
 │   ├── plot_trajectory_cone_results.py
 │   └── summarize_cone_batch.py
 └── result/
@@ -209,6 +226,92 @@ ros2 run trajectory_prediction_hils analyze_trajectory_cone_bag.py \
 
 기본 `--coordinate-frame common`이 정식 분석 모드이다. 이전 bag의 local-frame 결과를
 진단 목적으로 다시 볼 때만 `--coordinate-frame local`을 명시한다.
+
+### 5.3 FixedWing 트림 후 ZOH 전파시험
+
+기존 replay case는 준비·기동·회복 구간이 섞일 수 있으므로 동역학 전파 오차를 직접
+측정할 때는 전용 노드를 사용한다. 이 노드는 자동 이륙과 VTOL 천이가 완료되어 PX4가
+FixedWing 상태가 되면 먼저 횡가속도와 상승률이 0인 트림 setpoint를 발행한다. 이후
+실측 calibrated airspeed, 수직속도와 roll이 허용 범위에 2초간 연속으로 머문 뒤에만
+수평 회피 입력과 cone 생성을 시작한다.
+
+```bash
+cd /home/hmcl/workspace/swarm-fixed-wing/source/swarm_fixed_wing_collision_avoidance
+TEST_CASE_ID=ZOH_ALATP2P628_V20 \
+TEST_V_CMD=20.0 TEST_ALAT_CMD=2.628 \
+BAG_OUTPUT_DIR=/tmp/propagation_trim_lateral_v20 \
+BAG_ANALYSIS_DIR=/tmp/propagation_trim_lateral_v20_analysis \
+  px4_ros2/ros2_ws/src/testing_module/trajectory_prediction_hils/scripts/\
+launch_propagation_test.sh --record-bag
+```
+
+기본 시험 계약은 다음과 같다.
+
+1. 트림 구간에서 `a_lat_cmd=0`, `h_dot_cmd=0`을 유지한다.
+2. 실측 CAS 오차 1.0 m/s 이하, `|vz|` 0.5 m/s 이하, `|roll|` 5도 이하가 2초간
+   유지되어야 트림 게이트를 통과한다.
+3. 첫 수평 회피 setpoint가 실제 발행된 시각을 `applied_input_timestamp`로 기록한다.
+4. cone은 이 시각과 같거나 더 새로운 EKF belief만 사용한다.
+5. 동일한 `[V_cmd, h_cmd, 0, a_lat_cmd]`를 45개 적분 구간에 ZOH로 넣는다.
+6. 5초 동안 10 Hz로 4.5초 cone을 생성한다.
+7. 마지막 cone의 ground truth가 확보되도록 같은 입력을 최소 4.5초 더 유지한다.
+8. analyzer의 `--require-alignment`가 horizon 0 중앙값 0.5 m 이하, 95 percentile
+   1.0 m 이하인지 검사한다.
+
+여기서 `V_cmd`는 회피 순간에 새로 가하는 종방향 회피 입력이 아니라 시험을 시작할
+운용 속도점이다. 회피 후보는 `a_lat_cmd`이며 `h_dot_cmd=0`은 전체 시험에서 강제한다.
+
+절대 위치 오차는 `truth(t)-prediction(t)`이고, 전파 오차는 시작점 차이를 제거한
+다음 값이다.
+
+```text
+e_prop(t) = [truth(t) - truth(0)] - [prediction(t) - prediction(0)]
+```
+
+따라서 horizon 0 오차는 EKF 평균·좌표·시각 정렬 진단에, `e_prop`는 predictor
+동역학 진단에 사용한다. 둘을 합친 절대 종점 오차만 보고 Q를 키우지 않는다.
+
+### 5.4 ZOH 반복 검증 matrix
+
+`config/propagation_scenario_matrix.yaml`이 후보 입력, profile, 반복 횟수와 Gazebo seed의
+단일 원본이다. 새 전파시험에서는 replay용 `cone_scenario_matrix.yaml`을 사용하지 않는다.
+
+```bash
+cd /home/hmcl/workspace/swarm-fixed-wing/source/swarm_fixed_wing_collision_avoidance/\
+px4_ros2/ros2_ws/src/testing_module/trajectory_prediction_hils
+
+# 실행 계획만 출력
+./scripts/run_propagation_scenarios.sh --profile model_identification --dry-run
+
+# 실행 중에는 bag만 수집
+./scripts/run_propagation_scenarios.sh \
+  --profile model_identification --batch-id propagation_model_01 --collect-only
+
+# 수집 완료 후 별도 오프라인 분석
+./scripts/process_cone_batch.sh \
+  --batch-id propagation_model_01 --propagation-test
+```
+
+profile 순서는 다음과 같이 고정한다.
+
+| profile | 실행 수 | 용도 |
+|---|---:|---|
+| `wiring_smoke` | 3 | 직선·좌선회·우선회 각 1회, 전체 배선 확인 |
+| `model_identification` | 22 | 속도/횡가속도 단일 채널 11 case × 2 seed |
+| `model_holdout` | 12 | 속도+횡가속도 결합 4 case × 3 seed |
+| `cone_calibration` | 21 | 외곽 입력 7 case × 3 seed, 모델 고정 후 Q 보정 |
+| `cone_holdout` | 40 | 중간값·결합 입력 8 case × 5 seed, 최종 독립 검증 |
+| `regression_all` | 15 | 유지 중인 모든 case 1회 회귀 검사 |
+
+각 반복은 manifest에 고정된 서로 다른 `gzserver --seed`를 사용한다. calibration과
+holdout은 case뿐 아니라 seed 범위도 분리한다. `model_holdout`이 통과하기 전에는
+`cone_calibration`을 실행하거나 Q를 변경하지 않는다.
+
+운용 회피 후보는 속도와 횡가속도만 사용하며 모든 case에서 `h_dot_cmd=0`을 강제한다.
+resolver는 0이 아닌 height-rate case를 오류로 거부한다. 이는 3차원 상태와 고도
+불확실성을 없앤다는 뜻이 아니다. 선회 중 lift/에너지 결합으로 실제 고도가 변할 수
+있으므로 `Down`, `h_dot`과 수직 covariance는 계속 예측·평가하되 상승을 회피 입력으로
+선택하지 않는다.
 
 개별 bag 분석 산출물은 다음 파일이다.
 
@@ -375,3 +478,82 @@ scale 0.8의 3 case × 3회 반복에서는 invalid/non-ZOH/covariance/common-co
 HILS 예비 기본값은 0.8로 유지한다. 이 값은 calibration 시나리오에 맞춘 결과이며,
 독립 holdout과 시간축 joint covariance 없이 정식 95% trajectory-tube 보장으로
 해석하지 않는다.
+
+## 11. 2026-08-07 FixedWing ZOH 전파시험 smoke
+
+batch ID: `propagation_v1_straight_20260807_02`
+
+`ZOH_V20_STRAIGHT`를 GUI 없이 한 번 실행했다. PX4 FixedWing 전환 직후
+`V_cmd=20 m/s`, `h_dot_cmd=0 m/s`, `a_lat_cmd=0 m/s²`를 적용했고, 같은 입력을
+cone 생성 5.0초와 미래 정답 수집 4.6초 동안 유지했다.
+
+- cone/debug message: 각각 50개
+- valid 46점, ZOH, 입력 적용 선행, cone epoch 대응 계약: 50/50, 통과
+- complete 4.5초 ground-truth cone: 50/50
+- horizon 0 정렬 오차: 중앙값 0.471 m, 95 percentile 0.541 m, gate 통과
+- start-aligned 4.5초 전파 오차: 중앙값 3.757 m, 95 percentile 7.077 m
+- 대표 cone: horizon 0 0.475 m, 절대 종점 4.306 m, 전파 종점 3.963 m
+- 4.5초 점별 포함률 및 전체 궤적 포함률: 각각 40%
+
+이번 결과는 시작점 불일치와 전파 모델 오차의 분리에 성공했다는 smoke 결과다. 4.5초
+전파 오차와 포함률은 합격값이 아니며, 다음 단계에서 속도·횡가속도 후보를 각각
+일정하게 유지하는 사례로 확장한 뒤 모델 파라미터와 Q를 별도로 보정해야 한다.
+
+추가된 대표 plot은 다음 두 의미를 분리한다.
+
+- `trajectory_cone_example.png`: 공통 NED 절대 위치와 두 개의 `t=0` marker
+- `trajectory_start_aligned.png`: 두 시작점을 원점으로 옮긴 순수 변위 비교
+- `propagation_error_by_horizon.png`: horizon별 start-aligned 전파 오차 통계
+
+## 12. 2026-08-07 초기 3-channel 탐색 smoke
+
+batch ID: `propagation_wiring_smoke_20260807_01`
+
+새 matrix runner의 최초 배선 확인에서 직선, 상승, 선회 사례를 서로 다른 Gazebo
+seed에서 연속 실행했다.
+
+- 수집 성공: 3/3
+- 오프라인 분석/plot 성공: 3/3
+- propagation debug 계약: 3/3 통과
+- horizon 0 정렬 gate: 3/3 통과
+- invalid/non-ZOH/covariance/common-coordinate 실패: 0
+
+| case | horizon 0 중앙값 | 4.5초 전파 오차 중앙값 | 4.5초 전파 오차 p95 | 종점/전체 궤적 포함률 |
+|---|---:|---:|---:|---:|
+| `ZOH_V20_STRAIGHT` | 0.335 m | 3.556 m | 6.886 m | 54% |
+| `ZOH_HUP2_V20` | 0.271 m | 6.654 m | 9.829 m | 0% |
+| `ZOH_ALATP2P628_V20` | 0.252 m | 3.851 m | 12.165 m | 58% |
+
+세 case 평균 horizon 0 오차는 0.286 m로 정렬 문제가 주원인이 아님을 재확인했다.
+그러나 운용 회피 입력을 다시 검토한 결과 별도 상승 회피를 사용하지 않기로 확정했다.
+따라서 `ZOH_HUP2_V20`은 파이프라인 탐색 기록으로만 남기며 모델 fitting,
+calibration, holdout에서 제외한다. 현재 matrix의 wiring smoke는 직선과 좌·우 선회로
+교체했고 모든 case에 `h_dot_cmd=0` 제약을 추가했다. 선회 중 발생하는 실제 고도 변화와
+수직 오차는 계속 `trajectory_vertical_start_aligned.png`에서 감시한다.
+
+## 13. 2026-08-07 트림 후 수평 회피 smoke
+
+batch ID: `propagation_trim_lateral_20260807_02`
+
+run ID: `ZOH_ALATP2P628_V20_r01`, Gazebo seed `11002`
+
+VTOL의 FixedWing 천이 직후 데이터를 바로 평가하지 않고 `V_cmd=20 m/s`,
+`a_lat_cmd=0`, `h_dot_cmd=0`으로 먼저 정착시켰다. 트림 게이트는
+`CAS=19.47 m/s`, `vz=-0.149 m/s`, `roll=0.02 deg`에서 통과했고, 이후
+`a_lat_cmd=2.628 m/s²`만 적용했다.
+
+- cone/debug message: 각각 50개, valid/ZOH/lateral-only 계약 50/50
+- 입력 시각보다 오래된 EKF source: 0개, 인과성 계약 50/50
+- 트림 재구성 gate: 통과
+  - 직전 2초 최대 CAS 오차 0.967 m/s
+  - 최대 `|vz|` 0.344 m/s
+  - 최대 `|roll|` 0.108 deg
+- horizon 0 정렬 오차: 중앙값 0.204 m, p95 0.231 m, gate 통과
+- start-aligned 4.5초 전파 오차: 중앙값 1.124 m, p95 1.274 m
+- 대표 cone의 horizon 0/4.5초 전파 오차: 0.213 m / 1.206 m
+- invalid/non-ZOH/covariance/common-coordinate 실패: 0
+
+`trajectory_start_aligned.png`에서 예측과 ground truth의 수평 변위가 같은 원점에서
+가깝게 겹친다. `trajectory_vertical_start_aligned.png`에는 `h_dot_cmd=0`인데도 발생한
+약 0.23 m의 수직 전파 차이가 남는다. 이는 상승 회피를 시험한 결과가 아니라 선회 중
+lift/에너지 결합을 상태·불확실성 차원에서 계속 감시한 결과다.

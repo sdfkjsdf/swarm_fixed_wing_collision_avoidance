@@ -14,6 +14,14 @@
 class BeliefConePublisher
 {
 public:
+    struct PropagationSnapshot
+    {
+        std::uint64_t source_timestamp{0};
+        std::uint64_t source_timestamp_sample{0};
+        double source_delay_s{0.0};
+        collision_avoidance::estimation::TrajectoryCone cone{};
+    };
+
     BeliefConePublisher(
         rclcpp::Node & node,
         std::string topic_namespace_prefix,
@@ -23,7 +31,9 @@ public:
 
     bool publish(
         const collision_avoidance::estimation::PredictionInputTrajectory & inputs,
-        double dt);
+        double dt,
+        PropagationSnapshot * snapshot = nullptr,
+        std::uint64_t minimum_source_timestamp = 0);
 
 private:
     rclcpp::Node & m_node;

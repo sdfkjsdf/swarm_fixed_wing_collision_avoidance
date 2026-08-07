@@ -21,7 +21,8 @@ def load_rows(path: Path):
     with path.open(newline="", encoding="utf-8") as stream:
         rows = list(csv.DictReader(stream))
     numeric_fields = (
-        "horizon_s", "error_norm_m", "mahalanobis_sq", "inside_95",
+        "horizon_s", "error_norm_m", "propagation_error_norm_m",
+        "mahalanobis_sq", "inside_95",
     )
     for row in rows:
         for field in numeric_fields:
@@ -66,6 +67,25 @@ def save_error(rows, output: Path):
     axis.legend()
     fig.tight_layout()
     fig.savefig(output / "position_error_by_horizon.png", dpi=160)
+    plt.close(fig)
+
+
+def save_propagation_error(rows, output: Path):
+    horizons, values = grouped(rows, "propagation_error_norm_m")
+    median = np.asarray([np.median(item) for item in values])
+    percentile_95 = np.asarray([np.percentile(item, 95) for item in values])
+    maximum = np.asarray([np.max(item) for item in values])
+    fig, axis = plt.subplots(figsize=(8, 4.5))
+    axis.plot(horizons, median, label="median")
+    axis.plot(horizons, percentile_95, label="95th percentile")
+    axis.plot(horizons, maximum, alpha=0.65, label="maximum")
+    axis.set(
+        xlabel="prediction horizon [s]",
+        ylabel="start-aligned propagation error [m]")
+    axis.grid(alpha=0.3)
+    axis.legend()
+    fig.tight_layout()
+    fig.savefig(output / "propagation_error_by_horizon.png", dpi=160)
     plt.close(fig)
 
 
@@ -199,6 +219,12 @@ def save_example(arrays_path: Path, output: Path):
     fig, axis = plt.subplots(figsize=(7, 7))
     axis.plot(mean[:, 1], mean[:, 0], "o-", markersize=2.5, label="predicted mean")
     axis.plot(truth[:, 1], truth[:, 0], "-", color="tab:orange", label="ground truth")
+    axis.scatter(
+        mean[0, 1], mean[0, 0], marker="s", s=45, color="tab:blue",
+        zorder=5, label="predicted t=0")
+    axis.scatter(
+        truth[0, 1], truth[0, 0], marker="x", s=55, color="tab:orange",
+        linewidths=2.0, zorder=6, label="truth t=0")
     for point in range(0, mean.shape[0], 5):
         # Plot axes are East, North, so reorder both center and covariance.
         reordered_mean = mean[point, [1, 0, 2]]
@@ -221,11 +247,67 @@ def save_example(arrays_path: Path, output: Path):
     fig.tight_layout()
     fig.savefig(output / "trajectory_cone_example.png", dpi=160)
     plt.close(fig)
+    alignment_error_m = float(np.linalg.norm(truth[0] - mean[0]))
+
+    relative_mean = mean - mean[0]
+    relative_truth = truth - truth[0]
+    fig, axis = plt.subplots(figsize=(7, 7))
+    axis.plot(
+        relative_mean[:, 1], relative_mean[:, 0], "o-", markersize=2.5,
+        label="predicted displacement")
+    axis.plot(
+        relative_truth[:, 1], relative_truth[:, 0], "-",
+        color="tab:orange", label="ground-truth displacement")
+    axis.scatter(0.0, 0.0, marker="s", s=45, color="black", zorder=5)
+    axis.set(
+        xlabel="relative East [m]",
+        ylabel="relative North [m]",
+        title=(
+            "Start-aligned propagation diagnostic\n"
+            f"removed horizon-zero offset={alignment_error_m:.3f}m; "
+            f"evaluated horizon={horizon_s:.1f}s"),
+    )
+    axis.axis("equal")
+    axis.grid(alpha=0.3)
+    axis.legend()
+    fig.tight_layout()
+    fig.savefig(output / "trajectory_start_aligned.png", dpi=160)
+    plt.close(fig)
+
+    horizons = np.arange(point_count, dtype=np.float64) * 0.1
+    relative_mean_altitude = -relative_mean[:, 2]
+    relative_truth_altitude = -relative_truth[:, 2]
+    fig, axis = plt.subplots(figsize=(8, 4.8))
+    axis.plot(
+        horizons, relative_mean_altitude, "o-", markersize=2.5,
+        label="predicted relative altitude")
+    axis.plot(
+        horizons, relative_truth_altitude, "-", color="tab:orange",
+        label="ground-truth relative altitude")
+    axis.set(
+        xlabel="prediction horizon [s]",
+        ylabel="relative altitude [m]",
+        title=(
+            "Start-aligned vertical propagation diagnostic\n"
+            f"ZOH h_dot={candidate[2]:.1f}m/s; "
+            f"evaluated horizon={horizon_s:.1f}s"),
+    )
+    axis.grid(alpha=0.3)
+    axis.legend()
+    fig.tight_layout()
+    fig.savefig(output / "trajectory_vertical_start_aligned.png", dpi=160)
+    plt.close(fig)
     return {
         "array_index": index,
         "source_timestamp_us": int(timestamps[index]),
         "causal_point_count": point_count,
         "evaluated_horizon_s": horizon_s,
+        "horizon_zero_alignment_error_m": alignment_error_m,
+        "terminal_absolute_error_m": float(np.linalg.norm(truth[-1] - mean[-1])),
+        "terminal_propagation_error_m": float(np.linalg.norm(
+            (truth[-1] - truth[0]) - (mean[-1] - mean[0]))),
+        "terminal_vertical_propagation_error_m": float(
+            relative_truth_altitude[-1] - relative_mean_altitude[-1]),
         "candidate_input": {
             "V_cmd": float(candidate[0]),
             "h_cmd": float(candidate[1]),
@@ -259,6 +341,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     save_coverage(rows, output_dir)
     save_error(rows, output_dir)
+    save_propagation_error(rows, output_dir)
     save_mahalanobis(rows, output_dir)
     save_trajectory_survival(rows, output_dir)
     alignment_plot = save_initial_alignment(input_dir, output_dir)
@@ -271,10 +354,13 @@ def main() -> int:
         "plots": [
             "coverage_by_horizon.png",
             "position_error_by_horizon.png",
+            "propagation_error_by_horizon.png",
             "mahalanobis_by_horizon.png",
             "trajectory_survival_by_horizon.png",
         ] + (["initial_alignment_decomposition.png"] if alignment_plot else []) \
-          + (["trajectory_cone_example.png"] if example else []),
+          + (["trajectory_cone_example.png", "trajectory_start_aligned.png",
+              "trajectory_vertical_start_aligned.png"]
+             if example else []),
         "representative_cone": example,
     }
     (output_dir / "plot_manifest.json").write_text(

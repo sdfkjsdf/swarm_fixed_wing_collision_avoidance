@@ -1,0 +1,12 @@
+string case_id
+uint64 message_timestamp
+uint64 cone_epoch_timestamp
+uint64 source_timestamp
+uint64 source_timestamp_sample
+uint64 applied_input_timestamp
+float64 source_delay_s
+uint8 point_count
+bool valid
+float64[46] time_offset_s
+float64[322] predicted_state
+float64[180] prediction_inputs

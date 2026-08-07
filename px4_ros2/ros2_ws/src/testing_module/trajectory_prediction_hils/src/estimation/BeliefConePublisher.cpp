@@ -46,7 +46,9 @@ BeliefConePublisher::BeliefConePublisher(
 
 bool BeliefConePublisher::publish(
     const collision_avoidance::estimation::PredictionInputTrajectory & inputs,
-    double dt)
+    double dt,
+    PropagationSnapshot * snapshot,
+    std::uint64_t minimum_source_timestamp)
 {
     px4_msgs::msg::EstimatorTrajectoryBelief source;
     {
@@ -55,6 +57,9 @@ bool BeliefConePublisher::publish(
             return false;
         }
         source = m_latest_belief;
+        if (source.timestamp < minimum_source_timestamp) {
+            return false;
+        }
         m_last_published_source_timestamp = source.timestamp;
     }
 
@@ -125,6 +130,12 @@ bool BeliefConePublisher::publish(
             }
         }
         message.valid = true;
+        if (snapshot != nullptr) {
+            snapshot->source_timestamp = source.timestamp;
+            snapshot->source_timestamp_sample = source.timestamp_sample;
+            snapshot->source_delay_s = delay_s;
+            snapshot->cone = cone;
+        }
     }
 
     m_cone_pub->publish(message);

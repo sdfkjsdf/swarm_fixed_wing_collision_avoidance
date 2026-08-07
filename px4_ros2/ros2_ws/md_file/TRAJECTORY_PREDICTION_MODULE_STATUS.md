@@ -2,7 +2,7 @@
 
 ## 문서 기준
 
-- 확인 날짜: 2026-08-06
+- 확인 날짜: 2026-08-07
 - 기준 브랜치: `main`
 - 기준 커밋: `6e4a3cc` (`refactor: centralize shared runtime types`)
 - 대상 범위:
@@ -21,6 +21,9 @@
 | 4개 핵심 시점 sample 추출 | 구현 완료 |
 | 핵심 sample 기반 cubic spline 재구성 | 구현 완료 |
 | HILS replay 노드 연결 | 구현 완료 |
+| FixedWing 트림 후 ZOH 전파시험 노드 | 구현 완료, 20 m/s 수평 선회 smoke 통과 |
+| horizon 0/전파 오차 분리 평가 | 구현 완료 |
+| ZOH 반복 matrix·seed·batch runner | 구현 완료, 속도 운용점×수평 입력으로 재구성 |
 | 예측·실측·spline CSV 기록 | 구현 완료 |
 | key sample ROS 2 송신 | `Float32MultiArray` prototype 구현 |
 | production `vtol_guidance_node` 연결 | 미구현 |
@@ -52,7 +55,8 @@ collision_avoidance (production source of truth)
 trajectory_prediction_hils
 ├── trajectory_prediction_core 링크
 ├── trajectory_reconstruction 링크
-└── trajectory_replay_node에서 예측·추출·재구성·기록 수행
+├── trajectory_replay_node에서 예측·추출·재구성·기록 수행
+└── trajectory_prediction_sils_test_node에서 FixedWing 트림 후 수평 ZOH 전파시험 수행
 ```
 
 의존 방향은 `testing_module → collision_avoidance` 한 방향이다. production
@@ -80,6 +84,13 @@ trajectory_prediction_hils
 | `testing_module/trajectory_prediction_hils/src/logging/TrajectoryLogger.cpp` | CSV 기록 및 46점 spline 재구성 |
 | `testing_module/trajectory_prediction_hils/include/trajectory_prediction_hils/replay/SetpointSequencer.hpp` | 시간별 시험 setpoint 조회 API |
 | `testing_module/trajectory_prediction_hils/src/replay/SetpointSequencer.cpp` | YAML segment 로딩과 lookup 구현 |
+| `testing_module/trajectory_prediction_hils/src/nodes/trajectory_prediction_sils_test_main.cpp` | 트림 후 수평 입력을 적용하고 4.5초 cone/debug publish |
+| `testing_module/trajectory_prediction_hils/include/trajectory_prediction_hils/testing/PropagationTestMode.hpp` | 트림 게이트, ZOH 수평 입력, cone 생성/미래 정답 수집 구간 API |
+| `testing_module/trajectory_prediction_hils/src/testing/PropagationTestMode.cpp` | 실측 CAS·수직속도·roll 정착 판정과 시험 종료 조건 구현 |
+| `testing_module/trajectory_prediction_hils/include/trajectory_prediction_hils/testing/PropagationTestExecutor.hpp` | 이륙→천이→전파시험 상태 머신 API |
+| `testing_module/trajectory_prediction_hils/src/testing/PropagationTestExecutor.cpp` | 전파시험 자동 실행 상태 머신 구현 |
+| `testing_module/trajectory_prediction_hils/msg/TrajectoryPredictionDebug.msg` | case, 입력 적용 시각, cone epoch, 46점 상태와 입력 기록 |
+| `testing_module/trajectory_prediction_hils/config/propagation_test_params.yaml` | FixedWing ZOH 전파시험 기본 파라미터 |
 | `testing_module/trajectory_prediction_hils/config/replay_params.yaml` | horizon, 예측률, 호출률, 로그 주기 |
 | `testing_module/trajectory_prediction_hils/config/airframe_spec.yaml` | 기체 제한, 시정수, 고도 모델 파라미터 |
 | `testing_module/trajectory_prediction_hils/config/cases/*.yaml` | 채널별 시험 입력 case |
@@ -104,6 +115,8 @@ trajectory_prediction_hils
 ### 현재 소비자
 
 `trajectory_prediction_hils/trajectory_replay_node`는 두 라이브러리를 모두 링크한다.
+`trajectory_prediction_sils_test_node`는 전파와 cone 생성을 위해 prediction core를
+링크한다.
 반면 production `vtol_guidance_node`는 현재 `FlockingGuidance`만 포함하며 예측·재구성
 target을 링크하지 않는다.
 
@@ -212,24 +225,27 @@ phi_cmd = atan2(a_lat_cmd, g)
 - 결과 배열은 호출자가 소유한다.
 - 내부 heap 할당이 없다.
 
-### HILS의 schedule-aware 경로
+### HILS의 current-input ZOH 경로
 
-HILS replay 중에는 미래 YAML segment를 알고 있으므로 단일 ZOH 입력만 사용하지 않는다.
+현재 cone은 예측 시점에 실제로 선택된 입력 하나만 알고 있다고 가정한다. YAML의 미래
+segment를 미리 읽지 않고 동일한 후보 입력을 45개 적분 구간에 유지한다.
 
 ```text
 현재 측정 x0
-  → 미래 시각 t + 0.1, t + 0.2, ... 에서 sequencer lookup
-  → 각 step마다 서로 다른 PredictInput 생성
-  → stepRK4를 45회 호출
+  → 현재 후보 입력 u(t)를 캡처
+  → 동일한 u(t)로 stepRK4를 45회 호출
   → 46점 trajectory 생성
 ```
 
-Replay가 비활성 상태이거나 replay 시간이 유효하지 않으면 현재 setpoint를 사용하는
-`predict<46>()` ZOH 경로로 fallback한다.
+다음 예측 호출에서는 갱신된 상태와 그 시점의 현재 입력으로 다시 4.5초를 예측한다.
+오프라인 평가기는 기존 cone 이후 실제 입력이 바뀌면 그 시각 이후 horizon을 causal하게
+제외한다. FixedWing 전파시험 노드는 입력을 4.5초보다 오래 고정하므로 모든 cone의 전체
+horizon을 평가할 수 있다.
 
 ## 8. 입력 측정값 변환
 
-HILS 노드는 PX4 측정 snapshot을 다음과 같이 초기 상태로 변환한다.
+기존 replay logger의 nominal trajectory는 PX4 측정 snapshot을 다음과 같이 초기 상태로
+변환한다.
 
 ```text
 p_n   = local_position.x
@@ -248,6 +264,12 @@ phi   = measured roll
 - `phi`는 횡가속도 명령으로 역산하지 않고 vehicle attitude의 실측 roll을 사용한다.
 - setpoint가 fallback 전환 중 NaN이면 HILS 호출부가 속력·상승률·횡가속도에 안전값을
   넣어 예측 전체가 NaN으로 오염되는 것을 막는다.
+
+불확실성 cone 경로는 위 replay snapshot과 달리
+`EstimatorTrajectoryBelief`의 fusion-horizon 평균과 9×9 full covariance에서 시작한다.
+timestamp 지연과 HILS에서 측정한 추가 estimator output delay를 현재 epoch까지 보상한
+뒤 7-state mean/covariance를 함께 전파한다. 따라서 cone의 `t=0`은 ground truth를 강제로
+복사한 점이 아니며, 같은 시각의 EKF 추정 오차가 남는 것이 정상이다.
 
 ## 9. Horizon과 실행 주기
 
@@ -422,14 +444,16 @@ ego/neighbor 상태
 
 ## 16. 다음 작업 권장 순서
 
-1. `PredictionSamples.msg` 인터페이스 정의
-2. reconstruction 상태를 `ReconstructTrajectory` 인스턴스 멤버로 이동
-3. production용 `TrajectoryPredictionService` 또는 component 설계
-4. ego 및 neighbor sample timestamp 동기화
-5. 최소거리·CPA/TCPA 기반 충돌 판정 모듈 구현
-6. HILS에서 2기체 crossing/head-on/overtake 시나리오 검증
-7. 회피 guidance와 formation 복귀 상태 머신 연결
-8. 5기체 HILS 및 실기체 배포 전 fault-injection 검증
+1. `h_dot_cmd=0` 조건의 FixedWing ZOH 속도·횡가속도 matrix 실행
+2. calibration/holdout bag을 분리 수집하고 horizon별 전파 오차 분석
+3. 모델 파라미터와 process noise Q를 서로 분리해 보정
+4. `PredictionSamples.msg` 인터페이스 정의
+5. reconstruction 상태를 `ReconstructTrajectory` 인스턴스 멤버로 이동
+6. production용 `TrajectoryPredictionService` 또는 component 설계
+7. ego 및 neighbor sample timestamp 동기화
+8. 최소거리·CPA/TCPA 기반 충돌 판정 모듈 구현
+9. HILS에서 2기체 crossing/head-on/overtake 시나리오 검증
+10. 회피 guidance, formation 복귀, 5기체 fault-injection 검증
 
 ## 17. 변경 추적 표
 
@@ -438,4 +462,7 @@ ego/neighbor 상태
 | 날짜 | 기준 커밋 | 변경 내용 | 검증 결과 |
 | --- | --- | --- | --- |
 | 2026-08-06 | `6e4a3cc` | 현재 궤적 예측·재구성·HILS 구성 최초 정리 | 기존 Release build 및 17 tests 통과 상태 확인 |
-
+| 2026-08-07 | 커밋 전 | FixedWing 직후 ZOH 전파시험 노드와 start-aligned evaluator 추가 | 20 m/s straight headless smoke: 계약/정렬 gate 통과, 4.5초 전파 오차 중앙값 3.757 m |
+| 2026-08-07 | 커밋 전 | 모델/calibration/holdout 분리 matrix와 seed 기반 batch runner 추가 | 직선·상승·선회 3/3 수집·분석 통과, 상승 4.5초 전파 오차 중앙값 6.654 m 확인 |
+| 2026-08-07 | 커밋 전 | 운용 회피 입력을 속도·횡가속도로 제한하고 matrix에서 상승 case 제거 | 모든 유지 case `h_dot_cmd=0` resolver 강제, 직선·좌선회·우선회 smoke로 교체 |
+| 2026-08-07 | 커밋 전 | FixedWing 전환 후 2초 트림 게이트와 입력 이후 EKF source 계약 추가 | `V=20 m/s`, `a_lat=2.628 m/s²` headless smoke에서 trim/인과성/정렬 계약 통과, 4.5초 전파 오차 중앙값 1.124 m, p95 1.274 m |

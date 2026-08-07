@@ -65,7 +65,16 @@ if [[ -z "${MICRO_XRCE_AGENT_BIN}" ]]; then
 fi
 MICRO_XRCE_AGENT_LIB_DIR=${MICRO_XRCE_AGENT_LIB_DIR:-$(dirname "${MICRO_XRCE_AGENT_BIN}")/../lib}
 INSTANCE=0
+HILS_NODE_EXECUTABLE=${HILS_NODE_EXECUTABLE:-trajectory_replay_node}
 SDF_OUT=/tmp/standard_vtol_${INSTANCE}.sdf
+GAZEBO_SEED_ARGS=()
+if [[ -n "${GAZEBO_SEED:-}" ]]; then
+    if [[ ! "${GAZEBO_SEED}" =~ ^[0-9]+$ ]]; then
+        echo "[launch] ERROR: GAZEBO_SEED must be a non-negative integer"
+        exit 2
+    fi
+    GAZEBO_SEED_ARGS=(--seed "${GAZEBO_SEED}")
+fi
 
 LOG_AGENT=/tmp/micro_xrce_agent.log
 LOG_GZ=/tmp/gzserver.log
@@ -104,6 +113,7 @@ cleanup() {
     echo "[launch] cleanup — 백그라운드 프로세스 정리 중..."
     stop_rosbag
     pkill -KILL -f "trajectory_replay_node" 2>/dev/null
+    pkill -KILL -f "trajectory_prediction_sils_test_node" 2>/dev/null
     pkill -KILL -f "coordinate_transformer_node" 2>/dev/null
     pkill -KILL -f "px4 -i ${INSTANCE}" 2>/dev/null
     pkill -KILL -f "gzserver Tools/simulation" 2>/dev/null
@@ -116,6 +126,7 @@ trap cleanup EXIT INT TERM
 # ─── 1. 정리 ────────────────────────────────────────────────────────
 echo "[launch 1/7] 기존 프로세스 정리..."
 pkill -KILL -f "trajectory_replay_node" 2>/dev/null || true
+pkill -KILL -f "trajectory_prediction_sils_test_node" 2>/dev/null || true
 pkill -KILL -f "coordinate_transformer_node" 2>/dev/null || true
 pkill -KILL -f "px4 -i ${INSTANCE}" 2>/dev/null || true
 pkill -KILL -f "gzserver Tools/simulation" 2>/dev/null || true
@@ -141,10 +152,14 @@ fi
 
 # ─── 3. gzserver ────────────────────────────────────────────────────
 echo "[launch 3/7] gzserver 시작 (empty.world headless)..."
+if [[ ${#GAZEBO_SEED_ARGS[@]} -gt 0 ]]; then
+    echo "[launch] Gazebo random seed: ${GAZEBO_SEED}"
+fi
 cd "${PX4_DIR}"
 # shellcheck disable=SC1091
 source Tools/simulation/gazebo-classic/setup_gazebo.bash "${PX4_DIR}" "${BUILD}" >/dev/null 2>&1
-gzserver Tools/simulation/gazebo-classic/sitl_gazebo-classic/worlds/empty.world --verbose \
+gzserver Tools/simulation/gazebo-classic/sitl_gazebo-classic/worlds/empty.world \
+    --verbose "${GAZEBO_SEED_ARGS[@]}" \
     > "${LOG_GZ}" 2>&1 &
 PIDS+=($!)
 sleep 8
@@ -213,7 +228,7 @@ sleep 5
 
 # ─── 7. (옵션) 노드 실행 ────────────────────────────────────────────
 if [[ "${LAUNCH_NODE}" == "1" ]]; then
-    echo "[launch 7/7] trajectory_replay_node 실행..."
+    echo "[launch 7/7] ${HILS_NODE_EXECUTABLE} 실행..."
     cd "${ROS2_WS}"
     # shellcheck disable=SC1091
     source install/setup.bash
@@ -289,14 +304,28 @@ if [[ "${LAUNCH_NODE}" == "1" ]]; then
         fi
     fi
 
-    ros2 run trajectory_prediction_hils trajectory_replay_node --ros-args \
-        -p topic_namespace_prefix:=/px4_${INSTANCE} \
-        -p vehicle_ID:=${INSTANCE} \
-        --params-file "${HILS_SHARE}/config/replay_params.yaml" \
-        --params-file "${HILS_SHARE}/config/airframe_spec.yaml" \
-        "${SEQ_PARAMS[@]}" \
-        "${B_H_PARAMS[@]}" \
-        "${Q_SCALE_PARAMS[@]}"
+    if [[ "${HILS_NODE_EXECUTABLE}" == "trajectory_prediction_sils_test_node" ]]; then
+        TEST_PARAMS=()
+        [[ -n "${TEST_CASE_ID:-}" ]] && TEST_PARAMS+=(-p "test.case_id:=${TEST_CASE_ID}")
+        [[ -n "${TEST_V_CMD:-}" ]] && TEST_PARAMS+=(-p "test.equivalent_airspeed:=${TEST_V_CMD}")
+        [[ -n "${TEST_ALAT_CMD:-}" ]] && TEST_PARAMS+=(-p "test.lateral_acceleration:=${TEST_ALAT_CMD}")
+        ros2 run trajectory_prediction_hils "${HILS_NODE_EXECUTABLE}" --ros-args \
+            -p topic_namespace_prefix:=/px4_${INSTANCE} \
+            -p vehicle_ID:=${INSTANCE} \
+            --params-file "${HILS_SHARE}/config/propagation_test_params.yaml" \
+            --params-file "${HILS_SHARE}/config/airframe_spec.yaml" \
+            "${Q_SCALE_PARAMS[@]}" \
+            "${TEST_PARAMS[@]}"
+    else
+        ros2 run trajectory_prediction_hils "${HILS_NODE_EXECUTABLE}" --ros-args \
+            -p topic_namespace_prefix:=/px4_${INSTANCE} \
+            -p vehicle_ID:=${INSTANCE} \
+            --params-file "${HILS_SHARE}/config/replay_params.yaml" \
+            --params-file "${HILS_SHARE}/config/airframe_spec.yaml" \
+            "${SEQ_PARAMS[@]}" \
+            "${B_H_PARAMS[@]}" \
+            "${Q_SCALE_PARAMS[@]}"
+    fi
     NODE_RC=$?
     # rclcpp::spin 끝나면 (Ctrl+C 또는 자동 shutdown) 여기로 옴
 
@@ -306,21 +335,26 @@ if [[ "${LAUNCH_NODE}" == "1" ]]; then
             echo "[launch] rosbag 기록 완료 — 오프라인 분석 대기: ${BAG_OUTPUT_DIR}"
         else
             echo "[launch] rosbag 분석: ${BAG_ANALYSIS_DIR}"
+            ANALYSIS_ARGS=()
+            if [[ "${HILS_NODE_EXECUTABLE}" == "trajectory_prediction_sils_test_node" ]]; then
+                ANALYSIS_ARGS+=(--require-alignment --require-propagation-contract)
+            fi
             "${HILS_SHARE}/../../lib/trajectory_prediction_hils/analyze_trajectory_cone_bag.py" \
                 "${BAG_OUTPUT_DIR}" --output "${BAG_ANALYSIS_DIR}" \
-                --namespace "/px4_${INSTANCE}" || \
+                --namespace "/px4_${INSTANCE}" "${ANALYSIS_ARGS[@]}" || \
                 echo "[launch] WARN: rosbag smoke 분석 실패 — ${BAG_ANALYSIS_DIR}/summary.json 확인"
         fi
     fi
 
     if [[ ${NODE_RC} -ne 0 ]]; then
-        echo "[launch] ERROR: trajectory_replay_node exited with rc=${NODE_RC}"
+        echo "[launch] ERROR: ${HILS_NODE_EXECUTABLE} exited with rc=${NODE_RC}"
         exit "${NODE_RC}"
     fi
 
     # ─── 분석: 가장 최근 CSV → chunk_analysis → PNG 2장 ────────────
     # SKIP_CHUNK_ANALYSIS=1 면 분석 스킵 (run_all_cases.sh 가 끝에 별도 analyze_cases.py 호출).
-    if [[ -z "${SKIP_CHUNK_ANALYSIS:-}" ]]; then
+    if [[ "${HILS_NODE_EXECUTABLE}" == "trajectory_replay_node" \
+          && -z "${SKIP_CHUNK_ANALYSIS:-}" ]]; then
         LATEST_CSV=$(ls -t /tmp/trajectory_*.csv 2>/dev/null | head -1)
         if [[ -n "${LATEST_CSV}" ]]; then
             OUT_DIR=/tmp/tc_synced

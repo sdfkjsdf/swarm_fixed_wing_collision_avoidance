@@ -4,7 +4,7 @@
    하는 일:
      - 활성화 시 현재 VTOL 상태 확인 → TransitionToFw / FwCruise 분기
      - TransitionToFw: m_vtol->toFixedwing() 호출, 천이 가속도 setpoint 송신
-     - FwCruise: cruise altitude 유지하며 5초 안정화 대기
+     - FwCruise: cruise altitude 유지하며 설정된 시간만큼 안정화 대기
      - 안정화 완료 → completed(Success) → Executor 가 다음 단계 (Replay) 로
 
    collision_avoidance 의 동명 클래스를 1대용으로 단순화:
@@ -15,12 +15,16 @@
 
 #include <trajectory_prediction_hils/modes/VtolPreflightMode.hpp>
 
+#include <algorithm>
+
 using namespace px4_msgs::msg;
 
 
-VtolPreflightMode::VtolPreflightMode(rclcpp::Node & node, int vehicle_id)
+VtolPreflightMode::VtolPreflightMode(
+    rclcpp::Node & node, int vehicle_id, double stabilize_s)
 : ModeBase(node, Settings{"VTOL Preflight (Replay)"}, "/px4_" + std::to_string(vehicle_id) + "/")
 , _node(node)
+, m_stabilize_s(std::max(0.0, stabilize_s))
 {
     m_vehicle_id = vehicle_id;
 
@@ -67,6 +71,7 @@ void VtolPreflightMode::onActivate()
         m_phase = Phase::TransitionToFw;
     }
     _phase_start_time = _node.get_clock()->now();
+    m_completion_requested = false;
 }
 
 void VtolPreflightMode::onDeactivate()
@@ -85,14 +90,16 @@ void VtolPreflightMode::updateSetpoint(float /*dt_s*/)
         case Phase::FwCruise: {
             sendFwCruiseSetpoint();
 
-            /* Replay 진입 조건: 천이 후 5초 안정화 (단일 기체이므로 동기화 게이트 없음) */
+            /* 다음 모드 진입 조건: 천이 후 설정된 안정화 시간 경과 */
             const double elapsed =
                 (_node.get_clock()->now() - _phase_start_time).seconds();
 
             const bool fw_ok =
                 (_vtol->getCurrentState() == px4_ros2::VTOL::State::FixedWing);
 
-            if (fw_ok && elapsed > kMinStabilizeSec) {
+            if (fw_ok && elapsed >= m_stabilize_s
+                && !m_completion_requested) {
+                m_completion_requested = true;
                 RCLCPP_INFO(_node.get_logger(),
                     "[Preflight] 안정화 완료 → completed() (cruise alt=%.1f m)",
                     m_cruise_altitude_amsl);

@@ -32,6 +32,7 @@ TOPICS=(
     "${TOPIC_NS}/fmu/out/wind"
     "${TOPIC_NS}/collision_estimation/trajectory_cone"
     "${TOPIC_NS}/collision_estimation/key_samples"
+    "${TOPIC_NS}/testing/trajectory_prediction_debug"
     "${COMMON_NS}/trans_estimator_trajectory_belief"
     "${COMMON_NS}/trans_vehicle_local_position"
     "${COMMON_NS}/trans_vehicle_odometry"
