@@ -98,6 +98,50 @@ def candidate_changed(lhs: np.ndarray, rhs: np.ndarray) -> bool:
     return bool(np.any(np.abs(lhs - rhs) > INPUT_CHANGE_TOLERANCE))
 
 
+def vector_error_statistics(vectors: List[np.ndarray]):
+    """Return JSON-safe vector and norm statistics for NED errors."""
+    if not vectors:
+        return {
+            "count": 0,
+            "mean_vector_ned_m": None,
+            "median_vector_ned_m": None,
+            "mean_norm_m": None,
+            "median_norm_m": None,
+            "percentile_95_norm_m": None,
+            "max_norm_m": None,
+        }
+    values = np.asarray(vectors, dtype=np.float64)
+    norms = np.linalg.norm(values, axis=1)
+    return {
+        "count": int(len(values)),
+        "mean_vector_ned_m": np.mean(values, axis=0).tolist(),
+        "median_vector_ned_m": np.median(values, axis=0).tolist(),
+        "mean_norm_m": float(np.mean(norms)),
+        "median_norm_m": float(np.median(norms)),
+        "percentile_95_norm_m": float(np.percentile(norms, 95)),
+        "max_norm_m": float(np.max(norms)),
+    }
+
+
+def kinematic_position_velocity_error(times_us, positions, velocities):
+    """Compare finite-difference position rate with the reported NED velocity."""
+    times_us = np.asarray(times_us, dtype=np.float64)
+    positions = np.asarray(positions, dtype=np.float64)
+    velocities = np.asarray(velocities, dtype=np.float64)
+    if len(times_us) < 2:
+        return vector_error_statistics([])
+    order = np.argsort(times_us, kind="stable")
+    times_us = times_us[order]
+    positions = positions[order]
+    velocities = velocities[order]
+    dt_s = np.diff(times_us) * 1.0e-6
+    valid = np.isfinite(dt_s) & (dt_s > 1.0e-4) & (dt_s < 0.2)
+    position_rate = np.diff(positions, axis=0)[valid] / dt_s[valid, None]
+    velocity_midpoint = 0.5 * (
+        velocities[:-1][valid] + velocities[1:][valid])
+    return vector_error_statistics(list(position_rate - velocity_midpoint))
+
+
 def analyze(args) -> int:
     namespace = args.namespace.rstrip("/")
     common_namespace = f"/common/{namespace.lstrip('/')}"
@@ -120,6 +164,7 @@ def analyze(args) -> int:
         "raw_belief": f"{namespace}/fmu/out/estimator_trajectory_belief",
         "local_position": local_position_topic,
         "odometry": odometry_topic,
+        "gps_position": f"{namespace}/fmu/out/vehicle_gps_position",
         "attitude": f"{namespace}/fmu/out/vehicle_attitude",
         "ground_truth_position": ground_truth_topic,
         "ground_truth_attitude":
@@ -273,6 +318,41 @@ def analyze(args) -> int:
     gt_times_us = gt_times_us[keep]
     gt_positions = gt_positions[keep]
 
+    gt_velocities_all = np.asarray(
+        [[item.vx, item.vy, item.vz] for _, item in ground_truth_messages],
+        dtype=np.float64)[order][keep]
+    ground_truth_kinematic_error = kinematic_position_velocity_error(
+        gt_times_us, gt_positions, gt_velocities_all)
+
+    belief_messages_all = [item for _, item in messages[topics["belief"]]]
+    belief_kinematic_error = kinematic_position_velocity_error(
+        [item.timestamp_sample for item in belief_messages_all],
+        [item.position for item in belief_messages_all],
+        [item.velocity for item in belief_messages_all],
+    )
+
+    current_local_position_errors = []
+    local_position_messages = [
+        item for _, item in messages[topics["local_position"]]
+    ]
+    local_times_us = np.asarray([
+        item.timestamp_sample for item in local_position_messages
+    ], dtype=np.float64)
+    local_positions = np.asarray([
+        [item.x, item.y, item.z] for item in local_position_messages
+    ], dtype=np.float64)
+    local_order = np.argsort(local_times_us, kind="stable")
+    local_times_us = local_times_us[local_order]
+    local_positions = local_positions[local_order]
+    for local_position in local_position_messages:
+        truth = interpolate_ground_truth(
+            gt_times_us, gt_positions, float(local_position.timestamp_sample))
+        if truth is not None:
+            current_local_position_errors.append(
+                truth - np.asarray([
+                    local_position.x, local_position.y, local_position.z
+                ], dtype=np.float64))
+
     cone_records = []
     invalid_cones = 0
     non_zoh_cones = 0
@@ -298,6 +378,10 @@ def analyze(args) -> int:
         })
     cone_records.sort(key=lambda record: record["source_timestamp"])
 
+    beliefs_by_timestamp = {
+        int(item.timestamp): item for _, item in messages[topics["belief"]]
+    }
+
     # The first subsequently published cone with another current command marks
     # the end of the interval in which the original ZOH candidate was applied.
     for index, record in enumerate(cone_records):
@@ -321,6 +405,8 @@ def analyze(args) -> int:
     npz_point_count = []
     npz_source_timestamp = []
     npz_candidate_inputs = []
+    initial_alignment_rows = []
+    cone_evaluation_rows = []
 
     for record in cone_records:
         cone = record["message"]
@@ -344,6 +430,79 @@ def analyze(args) -> int:
                 causal_targets_us >= record["valid_until_us"]))
 
         partial_reason = None
+
+        # Exact horizon-zero decomposition:
+        # truth(now) - cone(0)
+        #   = [truth(fusion) - belief(fusion)]
+        #   + [(truth(now) - truth(fusion)) - (cone(0) - belief(fusion))].
+        # This separates the EKF mean error from delay-compensation error without
+        # attributing either component to process noise Q.
+        belief = beliefs_by_timestamp.get(record["source_timestamp"])
+        if belief is not None:
+            publication_time_us = float(record["source_timestamp"])
+            timestamp_delay_s = (
+                publication_time_us - float(belief.timestamp_sample)) * 1.0e-6
+            total_source_delay_s = float(cone.source_delay_s)
+            additional_output_delay_s = max(
+                0.0, total_source_delay_s - timestamp_delay_s)
+            fusion_time_us = (
+                publication_time_us - total_source_delay_s * 1.0e6)
+            truth_at_fusion = interpolate_ground_truth(
+                gt_times_us, gt_positions, fusion_time_us)
+            truth_at_publication = interpolate_ground_truth(
+                gt_times_us, gt_positions, publication_time_us)
+            if truth_at_fusion is not None and truth_at_publication is not None:
+                belief_position = np.asarray(belief.position, dtype=np.float64)
+                predicted_delay_motion = mean[0] - belief_position
+                truth_delay_motion = truth_at_publication - truth_at_fusion
+                fusion_error = truth_at_fusion - belief_position
+                delay_compensation_error = (
+                    truth_delay_motion - predicted_delay_motion)
+                horizon_zero_error = truth_at_publication - mean[0]
+                reconstructed_error = fusion_error + delay_compensation_error
+                closure_error = horizon_zero_error - reconstructed_error
+                current_ekf_position = interpolate_ground_truth(
+                    local_times_us, local_positions, publication_time_us)
+                cone_to_current_ekf = (
+                    current_ekf_position - mean[0]
+                    if current_ekf_position is not None else np.full(3, np.nan))
+                initial_alignment_rows.append({
+                    "source_timestamp_us": int(record["source_timestamp"]),
+                    "source_timestamp_sample_us": int(belief.timestamp_sample),
+                    "effective_fusion_timestamp_us": int(round(fusion_time_us)),
+                    "timestamp_delay_s": timestamp_delay_s,
+                    "additional_output_delay_s": additional_output_delay_s,
+                    "source_delay_s": total_source_delay_s,
+                    "fusion_error_n": float(fusion_error[0]),
+                    "fusion_error_e": float(fusion_error[1]),
+                    "fusion_error_d": float(fusion_error[2]),
+                    "fusion_error_norm_m": float(np.linalg.norm(fusion_error)),
+                    "truth_delay_motion_n": float(truth_delay_motion[0]),
+                    "truth_delay_motion_e": float(truth_delay_motion[1]),
+                    "truth_delay_motion_d": float(truth_delay_motion[2]),
+                    "truth_delay_motion_norm_m": float(np.linalg.norm(truth_delay_motion)),
+                    "predicted_delay_motion_n": float(predicted_delay_motion[0]),
+                    "predicted_delay_motion_e": float(predicted_delay_motion[1]),
+                    "predicted_delay_motion_d": float(predicted_delay_motion[2]),
+                    "predicted_delay_motion_norm_m": float(
+                        np.linalg.norm(predicted_delay_motion)),
+                    "delay_compensation_error_n": float(delay_compensation_error[0]),
+                    "delay_compensation_error_e": float(delay_compensation_error[1]),
+                    "delay_compensation_error_d": float(delay_compensation_error[2]),
+                    "delay_compensation_error_norm_m": float(
+                        np.linalg.norm(delay_compensation_error)),
+                    "horizon_zero_error_n": float(horizon_zero_error[0]),
+                    "horizon_zero_error_e": float(horizon_zero_error[1]),
+                    "horizon_zero_error_d": float(horizon_zero_error[2]),
+                    "horizon_zero_error_norm_m": float(
+                        np.linalg.norm(horizon_zero_error)),
+                    "cone_to_current_ekf_n": float(cone_to_current_ekf[0]),
+                    "cone_to_current_ekf_e": float(cone_to_current_ekf[1]),
+                    "cone_to_current_ekf_d": float(cone_to_current_ekf[2]),
+                    "cone_to_current_ekf_norm_m": float(
+                        np.linalg.norm(cone_to_current_ekf)),
+                    "decomposition_closure_norm_m": float(np.linalg.norm(closure_error)),
+                })
 
         for index in range(TRAJECTORY_POINT_COUNT):
             target_us = float(cone.source_timestamp) + offsets[index] * 1.0e6
@@ -409,6 +568,27 @@ def analyze(args) -> int:
                 causal_partial_cones += 1
             elif partial_reason == "ground_truth_boundary":
                 ground_truth_partial_cones += 1
+        inside_flags = [bool(row["inside_95"]) for row in cone_rows]
+        first_exit_index = next(
+            (index for index, inside in enumerate(inside_flags) if not inside), None)
+        first_exit_horizon_s = (
+            float(cone_rows[first_exit_index]["horizon_s"])
+            if first_exit_index is not None else None)
+        full_horizon = point_count == TRAJECTORY_POINT_COUNT
+        cone_evaluation_rows.append({
+            "source_timestamp_us": int(record["source_timestamp"]),
+            "analyzed_point_count": point_count,
+            "evaluated_horizon_s": float(cone_rows[-1]["horizon_s"]),
+            "partial_reason": partial_reason or "none",
+            "all_analyzed_points_inside_95": int(all(inside_flags)),
+            "inside_fraction": float(np.mean(inside_flags)),
+            "first_exit_horizon_s": first_exit_horizon_s,
+            "max_mahalanobis_sq": float(max(
+                row["mahalanobis_sq"] for row in cone_rows)),
+            "full_4_5s_horizon": int(full_horizon),
+            "full_4_5s_trajectory_inside_95": (
+                int(all(inside_flags)) if full_horizon else None),
+        })
         npz_mean.append(mean)
         npz_covariance.append(covariance)
         npz_ground_truth.append(ground_truth_array)
@@ -430,6 +610,130 @@ def analyze(args) -> int:
         max_error = float(np.max([row["error_norm_m"] for row in rows]))
     else:
         coverage = endpoint_coverage = mean_error = max_error = None
+
+    horizon_statistics = []
+    for horizon in sorted({round(row["horizon_s"], 6) for row in rows}):
+        horizon_rows = [
+            row for row in rows if math.isclose(
+                row["horizon_s"], horizon, abs_tol=1.0e-6)
+        ]
+        errors = np.asarray(
+            [row["error_norm_m"] for row in horizon_rows], dtype=np.float64)
+        mahalanobis = np.asarray(
+            [row["mahalanobis_sq"] for row in horizon_rows], dtype=np.float64)
+        horizon_statistics.append({
+            "horizon_s": horizon,
+            "sample_count": len(horizon_rows),
+            "empirical_coverage": float(np.mean([
+                row["inside_95"] for row in horizon_rows])),
+            "mean_error_m": float(np.mean(errors)),
+            "median_error_m": float(np.median(errors)),
+            "percentile_95_error_m": float(np.percentile(errors, 95)),
+            "mean_mahalanobis_sq": float(np.mean(mahalanobis)),
+            "median_mahalanobis_sq": float(np.median(mahalanobis)),
+            "percentile_95_mahalanobis_sq": float(np.percentile(mahalanobis, 95)),
+        })
+
+    causal_containment = (
+        float(np.mean([
+            row["all_analyzed_points_inside_95"]
+            for row in cone_evaluation_rows
+        ])) if cone_evaluation_rows else None)
+    full_evaluations = [
+        row for row in cone_evaluation_rows if row["full_4_5s_horizon"]
+    ]
+    full_containment = (
+        float(np.mean([
+            row["full_4_5s_trajectory_inside_95"] for row in full_evaluations
+        ])) if full_evaluations else None)
+    first_exit_horizons = [
+        row["first_exit_horizon_s"] for row in cone_evaluation_rows
+        if row["first_exit_horizon_s"] is not None
+    ]
+
+    fusion_errors = [np.asarray([
+        row["fusion_error_n"], row["fusion_error_e"], row["fusion_error_d"]
+    ]) for row in initial_alignment_rows]
+    truth_delay_motions = [np.asarray([
+        row["truth_delay_motion_n"], row["truth_delay_motion_e"],
+        row["truth_delay_motion_d"]
+    ]) for row in initial_alignment_rows]
+    predicted_delay_motions = [np.asarray([
+        row["predicted_delay_motion_n"], row["predicted_delay_motion_e"],
+        row["predicted_delay_motion_d"]
+    ]) for row in initial_alignment_rows]
+    delay_compensation_errors = [np.asarray([
+        row["delay_compensation_error_n"], row["delay_compensation_error_e"],
+        row["delay_compensation_error_d"]
+    ]) for row in initial_alignment_rows]
+    horizon_zero_errors = [np.asarray([
+        row["horizon_zero_error_n"], row["horizon_zero_error_e"],
+        row["horizon_zero_error_d"]
+    ]) for row in initial_alignment_rows]
+    cone_to_current_ekf_errors = [np.asarray([
+        row["cone_to_current_ekf_n"], row["cone_to_current_ekf_e"],
+        row["cone_to_current_ekf_d"]
+    ]) for row in initial_alignment_rows
+        if np.isfinite(row["cone_to_current_ekf_norm_m"])]
+    initial_alignment = {
+        "matched_cone_belief_count": len(initial_alignment_rows),
+        "source_delay_median_s": (
+            float(np.median([
+                row["source_delay_s"] for row in initial_alignment_rows
+            ])) if initial_alignment_rows else None),
+        "timestamp_delay_median_s": (
+            float(np.median([
+                row["timestamp_delay_s"] for row in initial_alignment_rows
+            ])) if initial_alignment_rows else None),
+        "additional_output_delay_median_s": (
+            float(np.median([
+                row["additional_output_delay_s"]
+                for row in initial_alignment_rows
+            ])) if initial_alignment_rows else None),
+        "fusion_horizon_ekf_error": vector_error_statistics(fusion_errors),
+        "ground_truth_delay_motion": vector_error_statistics(truth_delay_motions),
+        "predicted_delay_motion": vector_error_statistics(predicted_delay_motions),
+        "delay_compensation_error": vector_error_statistics(
+            delay_compensation_errors),
+        "horizon_zero_error": vector_error_statistics(horizon_zero_errors),
+        "cone_to_current_ekf_error": vector_error_statistics(
+            cone_to_current_ekf_errors),
+        "decomposition_closure_max_norm_m": (
+            float(max(
+                row["decomposition_closure_norm_m"]
+                for row in initial_alignment_rows
+            )) if initial_alignment_rows else None),
+    }
+
+    # A timestamp shift sweep is diagnostic only. A large optimum shift aligned
+    # with the flight direction indicates a state-time labeling issue; it must
+    # not be silently applied as a correction because spatial bias can look
+    # similar during straight flight.
+    alignment_shifts_s = np.linspace(-0.25, 0.25, 501)
+    alignment_shift_scores = []
+    belief_messages = [item for _, item in messages[topics["belief"]]]
+    for shift_s in alignment_shifts_s:
+        norms = []
+        for belief in belief_messages:
+            truth = interpolate_ground_truth(
+                gt_times_us, gt_positions,
+                float(belief.timestamp_sample) + shift_s * 1.0e6)
+            if truth is not None:
+                error = truth - np.asarray(belief.position, dtype=np.float64)
+                norms.append(float(np.linalg.norm(error)))
+        alignment_shift_scores.append(
+            float(np.median(norms)) if norms else math.inf)
+    if alignment_shift_scores and np.isfinite(alignment_shift_scores).any():
+        best_shift_index = int(np.argmin(alignment_shift_scores))
+        initial_alignment.update({
+            "diagnostic_best_fusion_truth_time_shift_s": float(
+                alignment_shifts_s[best_shift_index]),
+            "diagnostic_best_shift_median_error_m": float(
+                alignment_shift_scores[best_shift_index]),
+            "diagnostic_zero_shift_median_error_m": float(
+                alignment_shift_scores[len(alignment_shifts_s) // 2]),
+            "diagnostic_shift_search_range_s": [-0.25, 0.25],
+        })
 
     source_times = np.unique(np.asarray(
         [record["source_timestamp"] for record in cone_records], dtype=np.float64))
@@ -453,11 +757,24 @@ def analyze(args) -> int:
         "cone_rate_hz": cone_rate_hz,
         "empirical_coverage_all_horizons": coverage,
         "empirical_coverage_at_4_5_s": endpoint_coverage,
+        "causal_segment_trajectory_containment_rate": causal_containment,
+        "full_4_5s_trajectory_containment_rate": full_containment,
+        "cones_with_95_first_exit": len(first_exit_horizons),
+        "first_exit_horizon_median_s": (
+            float(np.median(first_exit_horizons)) if first_exit_horizons else None),
+        "first_exit_horizon_mean_s": (
+            float(np.mean(first_exit_horizons)) if first_exit_horizons else None),
         "mean_position_error_m": mean_error,
         "max_position_error_m": max_error,
+        "initial_alignment": initial_alignment,
+        "current_local_position_error": vector_error_statistics(
+            current_local_position_errors),
+        "belief_position_velocity_kinematic_error_mps": belief_kinematic_error,
+        "ground_truth_position_velocity_kinematic_error_mps": (
+            ground_truth_kinematic_error),
         "formal_coverage_pass": None,
         "formal_coverage_note":
-            "Q calibration and repeated scenarios are deferred; coverage is reported, not gated.",
+            "Preliminary Q scaling is reported; independent holdout and simultaneous-path acceptance are not gated.",
     })
 
     with (output_dir / "cone_samples.csv").open("w", newline="", encoding="utf-8") as stream:
@@ -465,6 +782,27 @@ def analyze(args) -> int:
             writer = csv.DictWriter(stream, fieldnames=list(rows[0].keys()))
             writer.writeheader()
             writer.writerows(rows)
+    with (output_dir / "initial_alignment.csv").open(
+            "w", newline="", encoding="utf-8") as stream:
+        if initial_alignment_rows:
+            writer = csv.DictWriter(
+                stream, fieldnames=list(initial_alignment_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(initial_alignment_rows)
+    with (output_dir / "cone_evaluation.csv").open(
+            "w", newline="", encoding="utf-8") as stream:
+        if cone_evaluation_rows:
+            writer = csv.DictWriter(
+                stream, fieldnames=list(cone_evaluation_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(cone_evaluation_rows)
+    with (output_dir / "coverage_by_horizon.csv").open(
+            "w", newline="", encoding="utf-8") as stream:
+        if horizon_statistics:
+            writer = csv.DictWriter(
+                stream, fieldnames=list(horizon_statistics[0].keys()))
+            writer.writeheader()
+            writer.writerows(horizon_statistics)
     np.savez_compressed(
         output_dir / "cone_arrays.npz",
         predicted_mean=np.asarray(npz_mean),

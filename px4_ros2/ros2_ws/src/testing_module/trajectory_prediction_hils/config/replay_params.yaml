@@ -33,3 +33,12 @@
     uncertainty.q_psi:  0.001
     uncertainty.q_hdot: 0.04
     uncertainty.q_phi:  0.001
+    # Preliminary calibration from 3 cases x 3 repeats. Keep a conservative
+    # margin until independent holdout scenarios are evaluated.
+    uncertainty.q_scale: 0.8
+
+    # The PX4 current local-position output follows Gazebo truth by about
+    # 0.125-0.130 s in the present 1-VTOL HILS setup. This latency is measured
+    # independently from timestamp - timestamp_sample and is compensated before
+    # assigning cone horizon zero. Recalibrate when the estimator/sensor setup changes.
+    uncertainty.estimator_output_delay_s: 0.13

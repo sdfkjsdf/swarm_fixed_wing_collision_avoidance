@@ -72,6 +72,7 @@ ROS 측은 `timestamp - timestamp_sample`만큼 7-state mean과 covariance를 �
 | 필수 | `/px4_0/fmu/out/vehicle_local_position_groundtruth_v1` | 미래 예측 위치의 Gazebo 정답 |
 | 필수 | `/px4_0/fmu/out/vehicle_attitude_groundtruth` | 자세 정답과 simulator 상태 확인 |
 | 권장 | `/px4_0/fmu/out/vehicle_odometry` | 기존 평균과 대각 분산 출력 비교 |
+| 권장 | `/px4_0/fmu/out/vehicle_gps_position` | GNSS sample 지연과 EKF 위치 추종 오차 분해 |
 | 권장 | `/px4_0/fmu/out/vehicle_attitude` | EKF 자세 진단 |
 | 권장 | `/px4_0/fmu/out/vehicle_status_v3` | arming, nav state, flight phase 분리 |
 | 권장 | `/px4_0/fmu/out/airspeed_validated_v1` | airspeed 모델 오차 진단 |
@@ -338,3 +339,39 @@ P_common = P_local
 좌표 원점 때문에 생긴 수직 오차는 제거되었다. 그러나 수평 오차 약 2.4~2.6 m가
 남아 horizon 0 포함률은 여전히 0%이다. 따라서 남은 오차는 common/local 좌표 표현
 불일치가 아니라 EKF 평균 추정 또는 fusion-horizon 지연 보상에서 분리해야 한다.
+
+## 10. Horizon 0 분해와 예비 Q calibration
+
+기존 common-frame bag을 다시 분해하면 timestamp 기반 fusion-horizon 지연은 중앙값
+0.152초이며, 이 구간의 실제 이동과 predictor 이동 차이는 중앙값 0.024~0.040 m에
+불과했다. 반면 cone 시작점은 PX4 current local-position과 약 0.02 m로 일치하지만
+Gazebo truth에는 약 2.5 m 뒤처졌다. 세 시나리오의 위치 시계열 정렬 결과 이 PX4 출력
+추종 지연은 0.125~0.130초로 반복되었다.
+
+HILS 설정에 별도 `uncertainty.estimator_output_delay_s=0.13`을 추가해 belief 평균과
+공분산을 더 전파했다. 이 값은 `timestamp - timestamp_sample`을 대체하지 않고 더해진다.
+실기체나 다른 센서 설정에서는 반드시 다시 측정해야 하며 기본 라이브러리 의미로
+일반화하지 않는다.
+
+analyzer에는 다음 산출물을 추가했다.
+
+- `initial_alignment.csv`: fusion 평균, timestamp 지연, 추가 출력 지연, horizon 0 오차 분해
+- `coverage_by_horizon.csv`: horizon별 표본 수, 포함률, 오차, Mahalanobis 통계
+- `cone_evaluation.csv`: cone별 전체 포함, 최초 이탈 시각, 최대 Mahalanobis 거리
+- `trajectory_survival_by_horizon.png`: horizon까지 한 번도 이탈하지 않은 cone 비율
+
+추가 지연 보상 후 horizon 0 오차 중앙값은 약 0.09~0.18 m로 감소했다. 이후 모든 Q를
+동일 비율로 조정하는 `uncertainty.q_scale`을 배선하고 다음 smoke를 비교했다.
+
+| Q scale | 실행 | 전체 점별 포함률 | 4.5초 포함률 | 전체 4.5초 궤적 포함률 |
+|---:|---:|---:|---:|---:|
+| 0.0 | 3 | 85.18% | 55.01% | 55.01% |
+| 0.5 | 3 | 98.98% | 94.89% | 94.68% |
+| 0.8 | 9 | 99.93% | 99.39% | 99.39% |
+
+scale 0.8의 3 case × 3회 반복에서는 invalid/non-ZOH/covariance/common-contract 실패가
+모두 0이었다. A02의 4.5초 포함률은 반복 평균 98.18%, S01과 R15P는 100%였다.
+오프라인 선형 보간상 scale 0.7이 A02에서 약 96.4%이지만 holdout 여유가 없으므로
+HILS 예비 기본값은 0.8로 유지한다. 이 값은 calibration 시나리오에 맞춘 결과이며,
+독립 holdout과 시간축 joint covariance 없이 정식 95% trajectory-tube 보장으로
+해석하지 않는다.

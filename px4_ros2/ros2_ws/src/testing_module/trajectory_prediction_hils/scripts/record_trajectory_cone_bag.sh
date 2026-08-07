@@ -23,6 +23,7 @@ TOPICS=(
     "${TOPIC_NS}/fmu/out/estimator_trajectory_belief"
     "${TOPIC_NS}/fmu/out/vehicle_local_position_v1"
     "${TOPIC_NS}/fmu/out/vehicle_odometry"
+    "${TOPIC_NS}/fmu/out/vehicle_gps_position"
     "${TOPIC_NS}/fmu/out/vehicle_attitude"
     "${TOPIC_NS}/fmu/out/vehicle_local_position_groundtruth_v1"
     "${TOPIC_NS}/fmu/out/vehicle_attitude_groundtruth"

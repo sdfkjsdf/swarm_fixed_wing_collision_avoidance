@@ -108,6 +108,11 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("uncertainty.q_psi",  0.001);
     node->declare_parameter<double>("uncertainty.q_hdot", 0.04);
     node->declare_parameter<double>("uncertainty.q_phi",  0.001);
+    node->declare_parameter<double>("uncertainty.q_scale", 1.0);
+    /* Additional empirically measured estimator-output latency. This is
+       separate from timestamp - timestamp_sample and defaults to zero outside
+       the HILS configuration. */
+    node->declare_parameter<double>("uncertainty.estimator_output_delay_s", 0.0);
 
     const int    vehicle_ID     = node->get_parameter("vehicle_ID").as_int();
     const std::string seq_path  = node->get_parameter("sequence_file").as_string();
@@ -189,8 +194,26 @@ int main(int argc, char * argv[])
         node->get_parameter("uncertainty.q_psi").as_double(),
         node->get_parameter("uncertainty.q_hdot").as_double(),
         node->get_parameter("uncertainty.q_phi").as_double()};
+    const double q_scale = node->get_parameter("uncertainty.q_scale").as_double();
+    if (!std::isfinite(q_scale) || q_scale < 0.0 || q_scale > 100.0) {
+        throw std::runtime_error("uncertainty.q_scale must be in [0, 100]");
+    }
+    for (double & value : uncertainty_params.process_noise_diagonal) {
+        value *= q_scale;
+    }
+    const double estimator_output_delay_s =
+        node->get_parameter("uncertainty.estimator_output_delay_s").as_double();
+    if (!std::isfinite(estimator_output_delay_s)
+        || estimator_output_delay_s < 0.0
+        || estimator_output_delay_s > 0.5) {
+        throw std::runtime_error(
+            "uncertainty.estimator_output_delay_s must be in [0, 0.5]");
+    }
     auto cone_publisher = std::make_shared<BeliefConePublisher>(
-        *node, topic_ns, predictor, uncertainty_params);
+        *node, topic_ns, predictor, uncertainty_params, estimator_output_delay_s);
+    RCLCPP_INFO(node->get_logger(),
+        "[main] uncertainty Q scale=%.4f, estimator output delay=%.3fs",
+        q_scale, estimator_output_delay_s);
 
     /* 호출자 멤버 array — 매 predict 호출마다 in-place 덮어쓰기 (heap 0).
        shared_ptr 로 감싸 lambda 캡처 lifetime 보장 (노드 종료까지 살아있음). */

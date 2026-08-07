@@ -16,10 +16,12 @@ BeliefConePublisher::BeliefConePublisher(
     rclcpp::Node & node,
     std::string topic_namespace_prefix,
     std::shared_ptr<collision_avoidance::estimation::TrajectoryPredict> predictor,
-    const collision_avoidance::estimation::UncertaintyParams & uncertainty_params)
+    const collision_avoidance::estimation::UncertaintyParams & uncertainty_params,
+    double estimator_output_delay_s)
 : m_node(node),
   m_predictor(std::move(predictor)),
-  m_uncertainty(uncertainty_params)
+  m_uncertainty(uncertainty_params),
+  m_estimator_output_delay_s(estimator_output_delay_s)
 {
     const auto qos = rclcpp::SensorDataQoS();
     const std::string belief_topic =
@@ -38,7 +40,8 @@ BeliefConePublisher::BeliefConePublisher(
         cone_topic, qos);
 
     RCLCPP_INFO(m_node.get_logger(),
-        "[cone] belief='%s', output='%s'", belief_topic.c_str(), cone_topic.c_str());
+        "[cone] belief='%s', output='%s', estimator_output_delay=%.3fs",
+        belief_topic.c_str(), cone_topic.c_str(), m_estimator_output_delay_s);
 }
 
 bool BeliefConePublisher::publish(
@@ -66,7 +69,8 @@ bool BeliefConePublisher::publish(
 
     const std::uint64_t delay_us = source.timestamp >= source.timestamp_sample
         ? source.timestamp - source.timestamp_sample : 0;
-    const double delay_s = static_cast<double>(delay_us) * 1.0e-6;
+    const double timestamp_delay_s = static_cast<double>(delay_us) * 1.0e-6;
+    const double delay_s = timestamp_delay_s + m_estimator_output_delay_s;
     message.source_delay_s = static_cast<float>(delay_s);
 
     for (std::size_t interval = 0; interval < kTrajectoryIntervalCount; ++interval) {

@@ -11,6 +11,12 @@ profiles:
     repetitions: 1
     cases: [S01, R15P, A02]
 
+  # Small independent-repeat set for preliminary latency/Q calibration.
+  # Keep holdout cases out of this profile.
+  calibration_smoke:
+    repetitions: 3
+    cases: [S01, R15P, A02]
+
   # Primary cone-coverage dataset: steady, symmetric roll sweep and avoidance.
   coverage_core:
     repetitions: 3

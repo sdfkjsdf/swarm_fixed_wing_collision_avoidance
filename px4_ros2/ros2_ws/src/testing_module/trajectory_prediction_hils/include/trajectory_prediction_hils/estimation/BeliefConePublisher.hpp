@@ -18,7 +18,8 @@ public:
         rclcpp::Node & node,
         std::string topic_namespace_prefix,
         std::shared_ptr<collision_avoidance::estimation::TrajectoryPredict> predictor,
-        const collision_avoidance::estimation::UncertaintyParams & uncertainty_params);
+        const collision_avoidance::estimation::UncertaintyParams & uncertainty_params,
+        double estimator_output_delay_s);
 
     bool publish(
         const collision_avoidance::estimation::PredictionInputTrajectory & inputs,
@@ -28,6 +29,7 @@ private:
     rclcpp::Node & m_node;
     std::shared_ptr<collision_avoidance::estimation::TrajectoryPredict> m_predictor;
     collision_avoidance::estimation::TrajectoryUncertainty m_uncertainty;
+    double m_estimator_output_delay_s{0.0};
 
     rclcpp::Subscription<px4_msgs::msg::EstimatorTrajectoryBelief>::SharedPtr m_belief_sub;
     rclcpp::Publisher<collision_avoidance::msg::TrajectoryCone>::SharedPtr m_cone_pub;

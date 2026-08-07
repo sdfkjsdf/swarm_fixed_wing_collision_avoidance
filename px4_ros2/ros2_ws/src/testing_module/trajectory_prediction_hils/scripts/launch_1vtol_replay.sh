@@ -264,6 +264,17 @@ if [[ "${LAUNCH_NODE}" == "1" ]]; then
         fi
     fi
 
+    # Uniform process-noise scale used by repeatable bag calibration sweeps.
+    Q_SCALE_PARAMS=()
+    if [[ -n "${Q_SCALE:-}" ]]; then
+        Q_SCALE_VALUE=${Q_SCALE}
+        if [[ "${Q_SCALE_VALUE}" =~ ^[+-]?[0-9]+$ ]]; then
+            Q_SCALE_VALUE=${Q_SCALE_VALUE}.0
+        fi
+        Q_SCALE_PARAMS=(-p "uncertainty.q_scale:=${Q_SCALE_VALUE}")
+        echo "[launch] uncertainty Q scale override: ${Q_SCALE_VALUE}"
+    fi
+
     if [[ "${RECORD_BAG}" == "1" ]]; then
         echo "[launch] rosbag 기록 시작: ${BAG_OUTPUT_DIR}"
         bash "${HILS_SHARE}/../../lib/trajectory_prediction_hils/record_trajectory_cone_bag.sh" \
@@ -284,7 +295,9 @@ if [[ "${LAUNCH_NODE}" == "1" ]]; then
         --params-file "${HILS_SHARE}/config/replay_params.yaml" \
         --params-file "${HILS_SHARE}/config/airframe_spec.yaml" \
         "${SEQ_PARAMS[@]}" \
-        "${B_H_PARAMS[@]}"
+        "${B_H_PARAMS[@]}" \
+        "${Q_SCALE_PARAMS[@]}"
+    NODE_RC=$?
     # rclcpp::spin 끝나면 (Ctrl+C 또는 자동 shutdown) 여기로 옴
 
     if [[ "${RECORD_BAG}" == "1" ]]; then
@@ -298,6 +311,11 @@ if [[ "${LAUNCH_NODE}" == "1" ]]; then
                 --namespace "/px4_${INSTANCE}" || \
                 echo "[launch] WARN: rosbag smoke 분석 실패 — ${BAG_ANALYSIS_DIR}/summary.json 확인"
         fi
+    fi
+
+    if [[ ${NODE_RC} -ne 0 ]]; then
+        echo "[launch] ERROR: trajectory_replay_node exited with rc=${NODE_RC}"
+        exit "${NODE_RC}"
     fi
 
     # ─── 분석: 가장 최근 CSV → chunk_analysis → PNG 2장 ────────────

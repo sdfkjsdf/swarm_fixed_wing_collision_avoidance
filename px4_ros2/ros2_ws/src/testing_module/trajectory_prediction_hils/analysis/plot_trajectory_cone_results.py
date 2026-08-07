@@ -86,6 +86,73 @@ def save_mahalanobis(rows, output: Path):
     plt.close(fig)
 
 
+def save_trajectory_survival(rows, output: Path):
+    """Plot the fraction of evaluable cones that have not exited by each horizon."""
+    by_cone = {}
+    for row in rows:
+        by_cone.setdefault(row["source_timestamp_us"], []).append(row)
+    horizons = sorted({row["horizon_s"] for row in rows})
+    survival = []
+    at_risk = []
+    for horizon in horizons:
+        eligible = [
+            cone_rows for cone_rows in by_cone.values()
+            if max(row["horizon_s"] for row in cone_rows) >= horizon
+        ]
+        survived = sum(
+            all(row["inside_95"] >= 0.5 for row in cone_rows
+                if row["horizon_s"] <= horizon)
+            for cone_rows in eligible
+        )
+        at_risk.append(len(eligible))
+        survival.append(100.0 * survived / len(eligible) if eligible else np.nan)
+    fig, axis = plt.subplots(figsize=(8, 4.5))
+    axis.step(horizons, survival, where="post", label="no 95% cone exit yet")
+    axis.axhline(95.0, color="tab:red", linestyle="--", label="nominal reference")
+    axis.set(
+        xlabel="prediction horizon [s]",
+        ylabel="trajectory survival inside cone [%]",
+        ylim=(0, 102),
+    )
+    axis.grid(alpha=0.3)
+    axis.legend()
+    axis.text(
+        0.99, 0.03,
+        f"at risk: {at_risk[0]} → {at_risk[-1]}",
+        transform=axis.transAxes, ha="right", va="bottom", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(output / "trajectory_survival_by_horizon.png", dpi=160)
+    plt.close(fig)
+
+
+def save_initial_alignment(input_dir: Path, output: Path):
+    path = input_dir / "initial_alignment.csv"
+    if not path.is_file():
+        return False
+    with path.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    if not rows:
+        return False
+    fields = (
+        "fusion_error_norm_m",
+        "delay_compensation_error_norm_m",
+        "horizon_zero_error_norm_m",
+    )
+    values = [np.asarray([float(row[field]) for row in rows]) for field in fields]
+    fig, axis = plt.subplots(figsize=(8, 4.5))
+    axis.boxplot(values, labels=(
+        "fusion-horizon\nEKF error",
+        "delay-compensation\nerror",
+        "horizon-zero\nerror",
+    ), showfliers=False)
+    axis.set_ylabel("position error norm [m]")
+    axis.grid(axis="y", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output / "initial_alignment_decomposition.png", dpi=160)
+    plt.close(fig)
+    return True
+
+
 def add_horizontal_ellipse(axis, center, covariance):
     covariance_2d = 0.5 * (covariance[:2, :2] + covariance[:2, :2].T)
     eigenvalues, eigenvectors = np.linalg.eigh(covariance_2d)
@@ -193,6 +260,8 @@ def main() -> int:
     save_coverage(rows, output_dir)
     save_error(rows, output_dir)
     save_mahalanobis(rows, output_dir)
+    save_trajectory_survival(rows, output_dir)
+    alignment_plot = save_initial_alignment(input_dir, output_dir)
     example = save_example(arrays_path, output_dir)
 
     manifest = {
@@ -203,7 +272,9 @@ def main() -> int:
             "coverage_by_horizon.png",
             "position_error_by_horizon.png",
             "mahalanobis_by_horizon.png",
-        ] + (["trajectory_cone_example.png"] if example else []),
+            "trajectory_survival_by_horizon.png",
+        ] + (["initial_alignment_decomposition.png"] if alignment_plot else []) \
+          + (["trajectory_cone_example.png"] if example else []),
         "representative_cone": example,
     }
     (output_dir / "plot_manifest.json").write_text(
