@@ -52,6 +52,12 @@ TEST_V_CMD=20.0 TEST_ALAT_CMD=2.628 \
 start-aligned 전파 오차를 분리한다. 상세 계약과 smoke 결과는
 `md_file/TRAJECTORY_CONE_ROSBAG_PIPELINE.md`를 따른다.
 
+대표 궤적 그림은 prediction과 ground truth에 동일한 sample index marker를 표시한다.
+회색 점선은 같은 `i`와 같은 `time_offsets_s[i]`의 두 점을 연결하며, 시작·종점은 별도
+marker로 표시한다. 따라서 서로 다른 시각의 가까운 점을 같은 시각의 오차로 오해하지
+않아야 한다. `trajectory_cone_example.png`는 EKF 초기 오차를 포함한 절대좌표 비교이고,
+`trajectory_start_aligned.png`는 각 시작점을 제거한 순수 전파 비교다.
+
 전용 반복 검증 matrix는 다음 명령으로 확인한다.
 
 ```bash

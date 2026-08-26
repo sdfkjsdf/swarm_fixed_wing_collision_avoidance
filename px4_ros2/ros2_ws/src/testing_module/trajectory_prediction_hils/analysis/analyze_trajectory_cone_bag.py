@@ -574,6 +574,7 @@ def analyze(args) -> int:
     npz_point_count = []
     npz_source_timestamp = []
     npz_candidate_inputs = []
+    npz_time_offsets = []
     initial_alignment_rows = []
     cone_evaluation_rows = []
 
@@ -785,6 +786,7 @@ def analyze(args) -> int:
         npz_point_count.append(point_count)
         npz_source_timestamp.append(record["source_timestamp"])
         npz_candidate_inputs.append(record["candidate"])
+        npz_time_offsets.append(offsets)
 
     if rows:
         coverage = float(np.mean([row["inside_95"] for row in rows]))
@@ -1035,6 +1037,7 @@ def analyze(args) -> int:
         causal_point_count=np.asarray(npz_point_count, dtype=np.int32),
         source_timestamp_us=np.asarray(npz_source_timestamp, dtype=np.int64),
         candidate_inputs=np.asarray(npz_candidate_inputs),
+        time_offsets_s=np.asarray(npz_time_offsets),
     )
     (output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8")

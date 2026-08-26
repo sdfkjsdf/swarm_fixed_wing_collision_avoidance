@@ -160,7 +160,7 @@ def save_initial_alignment(input_dir: Path, output: Path):
     )
     values = [np.asarray([float(row[field]) for row in rows]) for field in fields]
     fig, axis = plt.subplots(figsize=(8, 4.5))
-    axis.boxplot(values, labels=(
+    axis.boxplot(values, tick_labels=(
         "fusion-horizon\nEKF error",
         "delay-compensation\nerror",
         "horizon-zero\nerror",
@@ -188,6 +188,29 @@ def add_horizontal_ellipse(axis, center, covariance):
         fill=False, edgecolor="tab:blue", alpha=0.35, linewidth=1.0))
 
 
+def matched_sample_indices(point_count: int):
+    """Return four common array indices spanning the evaluated horizon."""
+    return np.unique(np.rint(np.linspace(0, point_count - 1, 4)).astype(int))
+
+
+def add_same_index_connectors(axis, mean, truth, horizons, indices):
+    """Make it explicit that prediction[i] is compared with truth[i]."""
+    for order, point in enumerate(indices):
+        axis.plot(
+            [mean[point, 1], truth[point, 1]],
+            [mean[point, 0], truth[point, 0]],
+            color="0.35", linestyle=":", linewidth=1.0, alpha=0.85,
+            zorder=2,
+            label="same-index error" if order == 0 else None)
+        midpoint_e = 0.5 * (mean[point, 1] + truth[point, 1])
+        midpoint_n = 0.5 * (mean[point, 0] + truth[point, 0])
+        if point != 0:
+            axis.annotate(
+                f"i={point}, t={horizons[point]:.1f}s",
+                xy=(midpoint_e, midpoint_n), xytext=(4, 4),
+                textcoords="offset points", fontsize=7, color="0.3")
+
+
 def save_example(arrays_path: Path, output: Path):
     arrays = np.load(arrays_path)
     predicted = arrays["predicted_mean"]
@@ -201,6 +224,15 @@ def save_example(arrays_path: Path, output: Path):
         if "candidate_inputs" in arrays else np.zeros((predicted.shape[0], 4))
     timestamps = arrays["source_timestamp_us"] \
         if "source_timestamp_us" in arrays else np.zeros(predicted.shape[0], dtype=np.int64)
+    time_offsets = arrays["time_offsets_s"] \
+        if "time_offsets_s" in arrays else None
+
+    if predicted.shape != ground_truth.shape:
+        raise ValueError(
+            "predicted_mean and ground_truth must have identical shapes")
+    if covariance.shape[:2] != predicted.shape[:2]:
+        raise ValueError(
+            "predicted covariance and trajectory sample dimensions do not match")
 
     # A maneuver case should display a maneuver-time cone, not the arbitrary
     # middle cone. Prefer lateral excitation, then vertical excitation.
@@ -214,24 +246,65 @@ def save_example(arrays_path: Path, output: Path):
         representative = np.arange(predicted.shape[0])
     index = int(representative[len(representative) // 2])
     point_count = int(point_counts[index])
+    if not 1 <= point_count <= predicted.shape[1]:
+        raise ValueError(f"invalid causal_point_count: {point_count}")
     mean = predicted[index, :point_count]
     truth = ground_truth[index, :point_count]
+    horizons = (
+        np.asarray(time_offsets[index, :point_count], dtype=np.float64)
+        if time_offsets is not None
+        else np.arange(point_count, dtype=np.float64) * 0.1
+    )
+    if not np.isfinite(mean).all() or not np.isfinite(truth).all():
+        raise ValueError("representative trajectory contains non-finite samples")
+    if not np.isfinite(horizons).all() or np.any(np.diff(horizons) <= 0.0):
+        raise ValueError("trajectory time offsets must be finite and strictly increasing")
+
+    alignment_error_m = float(np.linalg.norm(truth[0] - mean[0]))
+    terminal_error = truth[-1] - mean[-1]
+    terminal_absolute_error_m = float(np.linalg.norm(terminal_error))
+    terminal_horizontal_absolute_error_m = float(
+        np.linalg.norm(terminal_error[:2]))
+    relative_mean = mean - mean[0]
+    relative_truth = truth - truth[0]
+    terminal_propagation_error = relative_truth[-1] - relative_mean[-1]
+    terminal_propagation_error_m = float(
+        np.linalg.norm(terminal_propagation_error))
+    terminal_horizontal_propagation_error_m = float(
+        np.linalg.norm(terminal_propagation_error[:2]))
+    matched_indices = matched_sample_indices(point_count)
+
     fig, axis = plt.subplots(figsize=(7, 7))
-    axis.plot(mean[:, 1], mean[:, 0], "o-", markersize=2.5, label="predicted mean")
-    axis.plot(truth[:, 1], truth[:, 0], "-", color="tab:orange", label="ground truth")
+    axis.plot(
+        mean[:, 1], mean[:, 0], "-", marker="o", markersize=3.0,
+        color="tab:blue", label=f"predicted mean (i=0..{point_count - 1})")
+    axis.plot(
+        truth[:, 1], truth[:, 0], "-", marker="x", markersize=3.5,
+        markeredgewidth=0.9, color="tab:orange",
+        label="ground truth (same i)")
+    add_same_index_connectors(
+        axis, mean, truth, horizons, matched_indices)
     axis.scatter(
         mean[0, 1], mean[0, 0], marker="s", s=45, color="tab:blue",
         zorder=5, label="predicted t=0")
     axis.scatter(
         truth[0, 1], truth[0, 0], marker="x", s=55, color="tab:orange",
         linewidths=2.0, zorder=6, label="truth t=0")
+    axis.scatter(
+        mean[-1, 1], mean[-1, 0], marker="^", s=65, color="tab:blue",
+        edgecolors="white", linewidths=0.6, zorder=7,
+        label=f"predicted t={horizons[-1]:.1f}s")
+    axis.scatter(
+        truth[-1, 1], truth[-1, 0], marker="v", s=65,
+        color="tab:orange", edgecolors="white", linewidths=0.6, zorder=7,
+        label=f"truth t={horizons[-1]:.1f}s")
     for point in range(0, mean.shape[0], 5):
         # Plot axes are East, North, so reorder both center and covariance.
         reordered_mean = mean[point, [1, 0, 2]]
         reordered_covariance = covariance[index, point][np.ix_([1, 0, 2], [1, 0, 2])]
         add_horizontal_ellipse(axis, reordered_mean, reordered_covariance)
     candidate = candidates[index]
-    horizon_s = max(0.0, (point_count - 1) * 0.1)
+    horizon_s = float(horizons[-1])
     axis.set(
         xlabel="East [m]",
         ylabel="North [m]",
@@ -243,54 +316,82 @@ def save_example(arrays_path: Path, output: Path):
     )
     axis.axis("equal")
     axis.grid(alpha=0.3)
-    axis.legend()
+    axis.text(
+        0.98, 0.02,
+        f"matched samples: {point_count} (prediction[i] ↔ truth[i])\n"
+        f"terminal error: XY={terminal_horizontal_absolute_error_m:.3f} m, "
+        f"3D={terminal_absolute_error_m:.3f} m",
+        transform=axis.transAxes, ha="right", va="bottom", fontsize=8.5,
+        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.85})
+    axis.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(output / "trajectory_cone_example.png", dpi=160)
     plt.close(fig)
-    alignment_error_m = float(np.linalg.norm(truth[0] - mean[0]))
-
-    relative_mean = mean - mean[0]
-    relative_truth = truth - truth[0]
     fig, axis = plt.subplots(figsize=(7, 7))
     axis.plot(
-        relative_mean[:, 1], relative_mean[:, 0], "o-", markersize=2.5,
-        label="predicted displacement")
+        relative_mean[:, 1], relative_mean[:, 0], "-", marker="o",
+        markersize=3.0, color="tab:blue",
+        label=f"predicted displacement (i=0..{point_count - 1})")
     axis.plot(
-        relative_truth[:, 1], relative_truth[:, 0], "-",
-        color="tab:orange", label="ground-truth displacement")
+        relative_truth[:, 1], relative_truth[:, 0], "-", marker="x",
+        markersize=3.5, markeredgewidth=0.9,
+        color="tab:orange", label="ground-truth displacement (same i)")
+    add_same_index_connectors(
+        axis, relative_mean, relative_truth, horizons, matched_indices)
     axis.scatter(0.0, 0.0, marker="s", s=45, color="black", zorder=5)
+    axis.scatter(
+        relative_mean[-1, 1], relative_mean[-1, 0], marker="^", s=65,
+        color="tab:blue", edgecolors="white", linewidths=0.6, zorder=7,
+        label=f"predicted t={horizon_s:.1f}s")
+    axis.scatter(
+        relative_truth[-1, 1], relative_truth[-1, 0], marker="v", s=65,
+        color="tab:orange", edgecolors="white", linewidths=0.6, zorder=7,
+        label=f"truth t={horizon_s:.1f}s")
     axis.set(
         xlabel="relative East [m]",
         ylabel="relative North [m]",
         title=(
             "Start-aligned propagation diagnostic\n"
             f"removed horizon-zero offset={alignment_error_m:.3f}m; "
-            f"evaluated horizon={horizon_s:.1f}s"),
+            f"terminal 3D propagation error={terminal_propagation_error_m:.3f}m"),
     )
     axis.axis("equal")
     axis.grid(alpha=0.3)
-    axis.legend()
+    axis.text(
+        0.98, 0.02,
+        f"matched samples: {point_count} (prediction[i] ↔ truth[i])\n"
+        f"terminal propagation error: "
+        f"XY={terminal_horizontal_propagation_error_m:.3f} m, "
+        f"3D={terminal_propagation_error_m:.3f} m",
+        transform=axis.transAxes, ha="right", va="bottom", fontsize=8.5,
+        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.85})
+    axis.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(output / "trajectory_start_aligned.png", dpi=160)
     plt.close(fig)
 
-    horizons = np.arange(point_count, dtype=np.float64) * 0.1
     relative_mean_altitude = -relative_mean[:, 2]
     relative_truth_altitude = -relative_truth[:, 2]
     fig, axis = plt.subplots(figsize=(8, 4.8))
     axis.plot(
-        horizons, relative_mean_altitude, "o-", markersize=2.5,
-        label="predicted relative altitude")
+        horizons, relative_mean_altitude, "-", marker="o", markersize=3.0,
+        label=f"predicted relative altitude (i=0..{point_count - 1})")
     axis.plot(
-        horizons, relative_truth_altitude, "-", color="tab:orange",
-        label="ground-truth relative altitude")
+        horizons, relative_truth_altitude, "-", marker="x", markersize=3.5,
+        markeredgewidth=0.9, color="tab:orange",
+        label="ground-truth relative altitude (same i)")
+    axis.plot(
+        [horizons[-1], horizons[-1]],
+        [relative_mean_altitude[-1], relative_truth_altitude[-1]],
+        color="0.35", linestyle=":", linewidth=1.0,
+        label="same-index terminal error")
     axis.set(
         xlabel="prediction horizon [s]",
         ylabel="relative altitude [m]",
         title=(
             "Start-aligned vertical propagation diagnostic\n"
             f"ZOH h_dot={candidate[2]:.1f}m/s; "
-            f"evaluated horizon={horizon_s:.1f}s"),
+            f"terminal truth−prediction={terminal_propagation_error[2] * -1.0:.3f}m"),
     )
     axis.grid(alpha=0.3)
     axis.legend()
@@ -303,9 +404,15 @@ def save_example(arrays_path: Path, output: Path):
         "causal_point_count": point_count,
         "evaluated_horizon_s": horizon_s,
         "horizon_zero_alignment_error_m": alignment_error_m,
-        "terminal_absolute_error_m": float(np.linalg.norm(truth[-1] - mean[-1])),
-        "terminal_propagation_error_m": float(np.linalg.norm(
-            (truth[-1] - truth[0]) - (mean[-1] - mean[0]))),
+        "sample_index_contract": (
+            f"prediction[i] and ground_truth[i] share time_offsets_s[i]; "
+            f"i=0..{point_count - 1}"),
+        "terminal_horizontal_absolute_error_m": (
+            terminal_horizontal_absolute_error_m),
+        "terminal_absolute_error_m": terminal_absolute_error_m,
+        "terminal_horizontal_propagation_error_m": (
+            terminal_horizontal_propagation_error_m),
+        "terminal_propagation_error_m": terminal_propagation_error_m,
         "terminal_vertical_propagation_error_m": float(
             relative_truth_altitude[-1] - relative_mean_altitude[-1]),
         "candidate_input": {
