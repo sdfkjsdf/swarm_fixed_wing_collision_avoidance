@@ -47,6 +47,7 @@
 #include <px4_ros2/vehicle_state/vtol_status.hpp>
 
 #include <px4_msgs/msg/vehicle_odometry.hpp>
+#include <px4_msgs/msg/vehicle_air_data.hpp>
 #include <px4_msgs/msg/wind.hpp>
 
 #include <collision_avoidance/common/GlobalTypes.hpp>
@@ -82,6 +83,8 @@ private:
     std::shared_ptr<px4_ros2::FwLateralLongitudinalSetpointType> _fw_setpoint;
     std::shared_ptr<px4_ros2::VtolStatus> _vtol_status;
     rclcpp::Subscription<px4_msgs::msg::Wind>::SharedPtr _wind_sub;
+    rclcpp::Subscription<px4_msgs::msg::VehicleAirData>::SharedPtr
+        _vehicle_air_data_sub;
     std::vector<rclcpp::Subscription<
         px4_msgs::msg::VehicleOdometry>::SharedPtr> _trans_odom_subs;
 
@@ -92,6 +95,7 @@ private:
     /* ── mt → rt: 바람 값 (콜백 쓰기, rt_loop 읽기) ── */
     std::atomic<float> m_wind_n_mt2rt{0.f};
     std::atomic<float> m_wind_e_mt2rt{0.f};
+    float m_air_density_mt{1.225F};
 
     /* ── mt: 콜백이 채우는 누적 상태 ── */
     std::array<collision_avoidance::types::ControlState,

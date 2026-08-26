@@ -1,5 +1,7 @@
 #include <collision_avoidance/modes/FormationMode.hpp>
 
+#include <collision_avoidance/control/GroundToEasAdapter.hpp>
+
 using namespace px4_msgs::msg;
 
 
@@ -23,6 +25,13 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
         [this](const Wind::UniquePtr msg) {
             m_wind_n_mt2rt.store(msg->windspeed_north, std::memory_order_relaxed);
             m_wind_e_mt2rt.store(msg->windspeed_east,  std::memory_order_relaxed);
+        });
+    _vehicle_air_data_sub = _node.create_subscription<VehicleAirData>(
+        "/px4_" + std::to_string(m_vehicle_id) + "/fmu/out/vehicle_air_data", qos,
+        [this](const VehicleAirData::UniquePtr msg) {
+            if (std::isfinite(msg->rho) && msg->rho > 0.0F) {
+                m_air_density_mt = msg->rho;
+            }
         });
 
     /* 공통 좌표계 odometry 구독 (모든 기체) */
@@ -190,11 +199,25 @@ void FormationMode::onDeactivate()
 }
 
 /* ──────────────────────────────────────────────────────────────
-   updateSetpoint — output_queue 에서 pop 해서 PX4 에 인가만.
-   산수는 전혀 없음 (전부 rt_thread 가 수행).
+   updateSetpoint — output_queue 에서 pop 하고 PX4 경계의 EAS 변환 후 인가.
+   guidance 계산은 rt_thread 가 수행.
    ────────────────────────────────────────────────────────────── */
 void FormationMode::updateSetpoint(float /*dt_s*/)
 {
+    const float wind_n = m_wind_n_mt2rt.load(std::memory_order_relaxed);
+    const float wind_e = m_wind_e_mt2rt.load(std::memory_order_relaxed);
+    const auto to_eas = [wind_n, wind_e, this](
+                            float v_cmd, float course, float height_rate) {
+        return collision_avoidance::control::computeRequiredEquivalentAirspeed(
+            v_cmd,
+            course,
+            height_rate,
+            wind_n,
+            wind_e,
+            0.0F,
+            m_air_density_mt);
+    };
+
     /* (0) VTOL 고정익 모드 확인 — FW 가 아니면 TECS 미작동 가능 */
     if (!_vtol_status->isFwMode()) {
         RCLCPP_ERROR_THROTTLE(_node.get_logger(), *_node.get_clock(), 1000,
@@ -205,7 +228,7 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
     /* 10초마다 현재 상태 출력 */
     RCLCPP_INFO_THROTTLE(_node.get_logger(), *_node.get_clock(), 10000,
         "[Formation] vehicle=%d | vtol_state=%d(%s) | has_output=%d | fallback=%d | "
-        "course=%.2f airspeed=%.1f alt_sp=%.1f",
+        "ground_course=%.2f v_cmd_ground=%.1f alt_sp=%.1f",
         m_vehicle_id,
         static_cast<int>(_vtol_status->last().vehicle_vtol_state),
         _vtol_status->isFwMode() ? "FW" :
@@ -230,31 +253,45 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
             "[Formation] output_queue 비어있음 → hold last (ZOH)");
     } else {
         /* (3) 활성화 직후 rt_thread 가 아직 첫 결과를 push 못함 → cruise fallback */
+        const float v_cmd_eas = to_eas(
+            m_initial_ground_speed, m_initial_course, 0.0F);
         if (std::isfinite(m_cruise_altitude_amsl)) {
             _fw_setpoint->updateWithAltitude(
-                m_cruise_altitude_amsl, m_initial_course, m_initial_ground_speed);
+                m_cruise_altitude_amsl, m_initial_course, v_cmd_eas);
         } else {
-            _fw_setpoint->updateWithHeightRate(0.f, m_initial_course, m_initial_ground_speed);
+            _fw_setpoint->updateWithHeightRate(
+                0.f, m_initial_course, v_cmd_eas);
         }
         return;
     }
 
     /* (4) m_last_output_mt 값 인가. is_fallback 이면 cruise. */
     if (m_last_output_mt.is_fallback) {
+        const float v_cmd_eas = to_eas(
+            m_initial_ground_speed, m_initial_course, 0.0F);
         if (std::isfinite(m_cruise_altitude_amsl)) {
             _fw_setpoint->updateWithAltitude(
-                m_cruise_altitude_amsl, m_initial_course, m_initial_ground_speed);
+                m_cruise_altitude_amsl, m_initial_course, v_cmd_eas);
         } else {
-            _fw_setpoint->updateWithHeightRate(0.f, m_initial_course, m_initial_ground_speed);
+            _fw_setpoint->updateWithHeightRate(
+                0.f, m_initial_course, v_cmd_eas);
         }
     } else {
-        /* 2D flocking → lateral_acceleration + airspeed 사용 (모드 2: 직접 가속도 제어)
+        /* 2D flocking → lateral_acceleration + ground-speed command.
+           현재 ground course로 EAS feed-forward만 계산하며 ground-speed 추종을
+           보장하는 별도 제어기는 아니다.
            course 를 설정하지 않으면(NAN) lateral_acceleration 이 직접 제어 입력이 됨.
-           수직 채널(height_rate) 은 FlockingGuidance 가 height_setpoint 를 활용해
-           산출한 m_height_rate_setpoint_rt 로 처리. */
+           현재 이 경로는 수직 채널을 PX4에 보내지 않으므로 EAS 변환에도
+           height_rate=0 을 사용한다. */
+        const float horizontal_ground_speed = std::sqrt(std::fmax(
+            0.0F,
+            m_last_output_mt.airspeed * m_last_output_mt.airspeed
+                - m_last_output_mt.height_rate * m_last_output_mt.height_rate));
+        const float v_cmd_eas = to_eas(
+            horizontal_ground_speed, m_last_output_mt.course, 0.0F);
         px4_ros2::FwLateralLongitudinalSetpoint sp;
         sp.withLateralAcceleration(m_last_output_mt.lateral_acceleration)
-          .withEquivalentAirspeed(m_last_output_mt.airspeed);
+          .withEquivalentAirspeed(v_cmd_eas);
         _fw_setpoint->update(sp);
     }
 }
@@ -351,7 +388,8 @@ void FormationMode::rt_loop()
         if (!first_push_done) {
             first_push_done = true;
             RCLCPP_INFO(_node.get_logger(),
-                "[Formation] 첫 결과 push: course=%.2f airspeed=%.2f hr=%.2f fallback=%d",
+                "[Formation] 첫 결과 push: ground_course=%.2f "
+                "v_cmd_ground=%.2f hr=%.2f fallback=%d",
                 out.course, out.airspeed, out.height_rate, out.is_fallback);
         }
 

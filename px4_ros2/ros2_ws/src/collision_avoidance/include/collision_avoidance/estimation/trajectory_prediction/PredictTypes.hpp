@@ -29,8 +29,8 @@ struct PredictState {
     double p_n;     /* [m]    NED north                                */
     double p_e;     /* [m]    NED east                                 */
     double h;       /* [m]    altitude (up positive)                   */
-    double V;       /* [m/s]  airspeed magnitude                       */
-    double psi;     /* [rad]  heading, wrapped to [-pi, pi]            */
+    double V;       /* [m/s]  ground-speed magnitude                   */
+    double psi;     /* [rad]  ground course, wrapped to [-pi, pi]      */
     double h_dot;   /* [m/s]  current climb rate (autopilot tracking)  */
     double phi;     /* [rad]  current roll angle (autopilot tracking)  */
 };
@@ -39,7 +39,7 @@ static_assert(sizeof(PredictState) == 56,
 
 /* §2.2 — 4-input (★ 본 작업: h_cmd 추가, Beard-McLain (9.19) PD 형태). */
 struct PredictInput {
-    double V_cmd;       /* [m/s]   airspeed setpoint                                  */
+    double V_cmd;       /* [m/s]   commanded ground-speed magnitude                  */
     double h_cmd;       /* [m]     altitude setpoint (목표 고도). NaN 이면 evaluateODE
                                      에서 P-term 0 으로 자동 fallback */
     double h_dot_cmd;   /* [m/s]   climb-rate setpoint                                */
@@ -123,8 +123,8 @@ struct Vec3 {
      - vel.y = V_h · sin(ψ) = ve  (NED east velocity)
      - vel.z = -h_dot              (NED down velocity)
      여기서 V_h = √(V² - h_dot²)   (수평 속도)
-     course-angle 패치 (2026-05-13) 후 ψ = atan2(ve, vn) 이고 V = |v_ground|
-     이므로 *재구성된 (vn, ve, vd) 가 EKF 의 ground velocity 와 정확히 일치*. */
+     ψ = atan2(ve, vn) 이고 V = |v_ground| 이므로 재구성된
+     (vn, ve, vd) 는 predictor 의 ground-kinematic 상태와 일치한다. */
 struct TrajectorySample {
     /* t = 0.0 s */
     Vec3 pos_t0;

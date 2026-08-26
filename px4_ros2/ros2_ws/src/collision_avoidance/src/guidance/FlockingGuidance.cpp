@@ -158,6 +158,8 @@ collision_avoidance::types::FwSetpoint FlockingGuidance::computeFwSetpoint(
 
     /* (9) Output */
     collision_avoidance::types::FwSetpoint out;
+    out.course               = self.psi;
+    /* Legacy field name: this value is the ground-speed command. */
     out.airspeed             = m_speed_setpoint_rt;
     out.height_rate          = m_height_rate_setpoint_rt;
     out.height_setpoint      = height_setpoint;          /* ★ 신규 — 입력 그대로 전파.

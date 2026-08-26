@@ -2,14 +2,14 @@
 
 /* ────────────────────────────────────────────────────────────
    SetpointSequencer
-   책임: yaml 시간-값 테이블 → t_sec → (V_air, h_dot, a_lat) lookup
+   책임: yaml 시간-값 테이블 → t_sec → (V_ground_cmd, h_dot, a_lat) lookup
 
    생성자에서 yaml 1회 적재 → segments 정렬되어 std::vector 보관.
    lookup() 는 rt_thread 에서 단독 호출 — m_cursor_rt 캐시로 amortized O(1).
    시퀀스 종료 시 EndPolicy 정책에 따라 (HoldLast | Cruise | Stop).
 
-   사전 clamp: a_lat 가 tan(roll_max)*g 초과 시, V 가 [airspeed_min, airspeed_max]
-   범위 밖일 때 자동 clamp + 적재 시점 1회 WARN.
+   사전 clamp: a_lat 가 tan(roll_max)*g 초과 시, V_ground_cmd 가 설정된
+   legacy speed limits 범위 밖일 때 자동 clamp + 적재 시점 1회 WARN.
    ──────────────────────────────────────────────────────────── */
 
 #include <string>
@@ -25,13 +25,14 @@ public:
     enum class EndPolicy { HoldLast, Cruise, Stop };
 
     struct Setpoint {
-        float V;           /* equivalent airspeed [m/s] */
+        float V;           /* commanded ground-speed magnitude [m/s] */
         float h_dot;       /* height rate (ENU) [m/s] */
         float a_lat;       /* lateral acceleration [m/s^2] */
         bool  is_fallback; /* true → main thread cruise fallback */
     };
 
     struct SafetyLimits {
+        /* Legacy field names; these limits now bound the ground-speed command. */
         float airspeed_min   = 12.0f;
         float airspeed_max   = 25.0f;
         float max_roll_rad   = 0.873f;  /* 50° */

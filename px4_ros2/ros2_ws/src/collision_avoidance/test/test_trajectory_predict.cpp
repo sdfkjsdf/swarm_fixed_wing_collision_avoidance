@@ -193,7 +193,7 @@ TEST(Accuracy, StraightLineCruise)
 }
 
 /* 5. Saturation — V_cmd > V_max → V 가 V_max 로 수렴 */
-TEST(Accuracy, InputSaturationOnAirspeed)
+TEST(Accuracy, InputSaturationOnGroundSpeed)
 {
     auto params = defaultParams();   /* V_max = 25 */
     TrajectoryPredict pred(params);

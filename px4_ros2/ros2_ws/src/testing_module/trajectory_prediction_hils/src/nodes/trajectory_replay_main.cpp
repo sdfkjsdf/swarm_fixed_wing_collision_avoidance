@@ -294,7 +294,9 @@ int main(int argc, char * argv[])
                NaN 인 경우에만 안전 default 로 치환. CSV 는 logger 가 진실 그대로 기록. */
             const float a_lat_safe = std::isfinite(sp.a_lat) ? sp.a_lat : 0.0f;
             const float V_safe     = std::isfinite(sp.V)
-                ? sp.V : static_cast<float>(m.true_airspeed);
+                ? sp.V
+                : static_cast<float>(
+                    std::sqrt(m.vn * m.vn + m.ve * m.ve + m.vd * m.vd));
             const float h_dot_safe = std::isfinite(sp.h_dot) ? sp.h_dot : 0.0f;
 
             /* 6-state 측정 → 7-state PredictState 변환.
@@ -316,9 +318,8 @@ int main(int argc, char * argv[])
                  hdot = -vd                        ← climb rate
                이전 V = m.true_airspeed (airspeed_validated 토픽) 는 *다른 EKF 출력*
                이라 vn/ve/vd 와 시점·정밀도 inconsistency (0.03 m/s) 발생.
-               7-state kinematic 모델은 외란 (풍) 을 *명시적으로 무시* 하므로
-               V_air ≡ V_g 가정이 모델 일관성에 정합. trajectory_error = (모델 오차)
-               + (외란) 의 *깨끗한 decomposition* 을 위한 *EKF principle* — *x0 = 추정값*. */
+               7-state predictor 는 ground kinematics 를 사용하고 wind 는 PX4 경계의
+               EAS feed-forward 에만 반영한다. 따라서 x0 는 EKF ground state 로 둔다. */
             const double V_mag = std::sqrt(
                 static_cast<double>(m.vn) * m.vn +
                 static_cast<double>(m.ve) * m.ve +

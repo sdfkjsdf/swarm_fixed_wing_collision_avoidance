@@ -32,6 +32,7 @@
 #include <px4_ros2/odometry/global_position.hpp>
 
 #include <px4_msgs/msg/wind.hpp>
+#include <px4_msgs/msg/vehicle_air_data.hpp>
 #include <px4_msgs/msg/vtol_vehicle_status.hpp>
 
 #include <collision_avoidance/common/GlobalTypes.hpp>
@@ -61,7 +62,6 @@ private:
     void runTransitionToFw();
     void sendFwCruiseSetpoint();
     bool allAgentsInFw() const;
-    float computeRequiredAirspeed(float desired_gs, float course) const;
 
     /* ── ROS2 / PX4 핸들 (외부 라이브러리 — _ prefix 그대로) ── */
     rclcpp::Node & _node;
@@ -70,6 +70,8 @@ private:
     std::shared_ptr<px4_ros2::VTOL>                              _vtol;
     std::shared_ptr<px4_ros2::OdometryGlobalPosition>            _global_position;
     rclcpp::Subscription<px4_msgs::msg::Wind>::SharedPtr         _wind_sub;
+    rclcpp::Subscription<px4_msgs::msg::VehicleAirData>::SharedPtr
+        _vehicle_air_data_sub;
     std::vector<rclcpp::Subscription<
         px4_msgs::msg::VtolVehicleStatus>::SharedPtr>            _vtol_status_subs;
     rclcpp::Time _phase_start_time{};
@@ -77,6 +79,7 @@ private:
     /* ── 우리 데이터 (m_ prefix) ── */
     float m_wind_n{0.f};
     float m_wind_e{0.f};
+    float m_air_density{1.225F};
     std::array<std::atomic<bool>, collision_avoidance::types::kMaxAgents>
         m_agent_in_fw{};
     Phase m_phase{Phase::TransitionToFw};

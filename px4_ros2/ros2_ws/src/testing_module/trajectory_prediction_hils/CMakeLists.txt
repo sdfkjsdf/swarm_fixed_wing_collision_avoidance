@@ -39,6 +39,7 @@ target_link_libraries(trajectory_replay_node
     rclcpp::rclcpp
     px4_ros2_cpp::px4_ros2_cpp
     yaml-cpp
+    collision_avoidance::ground_to_eas_adapter
     collision_avoidance::trajectory_prediction_core
     collision_avoidance::trajectory_reconstruction
 )
@@ -59,6 +60,7 @@ ament_target_dependencies(trajectory_prediction_sils_test_node
 target_link_libraries(trajectory_prediction_sils_test_node
     rclcpp::rclcpp
     px4_ros2_cpp::px4_ros2_cpp
+    collision_avoidance::ground_to_eas_adapter
     collision_avoidance::trajectory_prediction_core
 )
 rosidl_get_typesupport_target(

@@ -62,7 +62,11 @@ SetpointSequencer::SetpointSequencer(const std::string & yaml_path,
         Segment seg;
         seg.t_start = node["t_start"].as<double>();
         seg.t_end   = node["t_end"].as<double>();
-        seg.V       = node["airspeed"].as<float>();
+        /* `airspeed` is retained as a legacy YAML alias. Both keys represent
+           the ground-speed command consumed by the predictor. */
+        seg.V       = node["ground_speed"]
+            ? node["ground_speed"].as<float>()
+            : node["airspeed"].as<float>();
         seg.h_dot   = node["height_rate"].as<float>();
         seg.a_lat   = node["lateral_acceleration"].as<float>();
 

@@ -43,6 +43,8 @@
 
 #include <trajectory_prediction_hils/replay/TrajectoryReplayMode.hpp>
 
+#include <collision_avoidance/control/GroundToEasAdapter.hpp>
+
 using namespace std::chrono_literals;
 using namespace px4_msgs::msg;
 
@@ -60,6 +62,21 @@ TrajectoryReplayMode::TrajectoryReplayMode(rclcpp::Node & node,
 {
     _fw_setpoint = std::make_shared<px4_ros2::FwLateralLongitudinalSetpointType>(*this);
     _vtol_status = std::make_shared<px4_ros2::VtolStatus>(*this);
+    _wind_sub = _node.create_subscription<Wind>(
+        "/px4_" + std::to_string(m_vehicle_id) + "/fmu/out/wind",
+        rclcpp::SensorDataQoS(),
+        [this](const Wind::UniquePtr message) {
+            m_wind_n = message->windspeed_north;
+            m_wind_e = message->windspeed_east;
+        });
+    _vehicle_air_data_sub = _node.create_subscription<VehicleAirData>(
+        "/px4_" + std::to_string(m_vehicle_id) + "/fmu/out/vehicle_air_data",
+        rclcpp::SensorDataQoS(),
+        [this](const VehicleAirData::UniquePtr message) {
+            if (std::isfinite(message->rho) && message->rho > 0.0F) {
+                m_air_density = message->rho;
+            }
+        });
 
     /* rt_thread 는 노드 생성 시점부터 항상 돌도록 시작.
        비활성 시에는 m_active_mt2rt=false 로 idle (push 안 함). */
@@ -129,11 +146,33 @@ void TrajectoryReplayMode::onDeactivate()
 }
 
 /* ──────────────────────────────────────────────────────────────
-   updateSetpoint — output_queue 에서 pop 해서 PX4 에 인가.
-   산수는 전혀 없음 (모두 rt_thread 가 수행). FormationMode.cpp:171-233 패턴.
+   updateSetpoint — output_queue 에서 pop 하고 PX4 경계의 EAS 변환 후 인가.
+   guidance 계산은 rt_thread 가 수행. FormationMode 패턴.
    ────────────────────────────────────────────────────────────── */
 void TrajectoryReplayMode::updateSetpoint(float /*dt_s*/)
 {
+    float ground_course = m_initial_course;
+    if (m_logger) {
+        const auto measured = m_logger->getCurrentMeasurements();
+        if (std::isfinite(measured.vn) && std::isfinite(measured.ve)
+            && std::hypot(measured.vn, measured.ve) > 1.0e-3F) {
+            ground_course = std::atan2(measured.ve, measured.vn);
+        }
+    }
+    const auto to_eas = [this](
+                            float v_cmd_ground,
+                            float command_course,
+                            float height_rate) {
+        return collision_avoidance::control::computeRequiredEquivalentAirspeed(
+            v_cmd_ground,
+            command_course,
+            height_rate,
+            m_wind_n,
+            m_wind_e,
+            0.0F,
+            m_air_density);
+    };
+
     if (!_vtol_status->isFwMode()) {
         RCLCPP_ERROR_THROTTLE(_node.get_logger(), *_node.get_clock(), 1000,
             "[Replay] VTOL 이 고정익 모드가 아님! (state=%d) → TECS 미작동 위험",
@@ -152,11 +191,14 @@ void TrajectoryReplayMode::updateSetpoint(float /*dt_s*/)
             "[Replay] output_queue 비어있음 → hold last (ZOH)");
     } else {
         /* 활성화 직후 rt_thread 가 아직 첫 결과 못 push → cruise fallback */
+        const float v_cmd_eas = to_eas(
+            m_initial_ground_speed, m_initial_course, 0.0F);
         if (std::isfinite(m_cruise_altitude_amsl)) {
             _fw_setpoint->updateWithAltitude(
-                m_cruise_altitude_amsl, m_initial_course, m_initial_ground_speed);
+                m_cruise_altitude_amsl, m_initial_course, v_cmd_eas);
         } else {
-            _fw_setpoint->updateWithHeightRate(0.f, m_initial_course, m_initial_ground_speed);
+            _fw_setpoint->updateWithHeightRate(
+                0.f, m_initial_course, v_cmd_eas);
         }
         /* logger 슬롯을 cruise hold 로 정확히 기록 — 라이프사이클 갭 메움.
            이 push 없으면 슬롯이 atomic 초기값 NaN 으로 남아, wall_timer (10Hz)
@@ -170,18 +212,26 @@ void TrajectoryReplayMode::updateSetpoint(float /*dt_s*/)
 
     /* (2) is_fallback → cruise 인가 */
     if (m_last_output_mt.is_fallback) {
+        const float v_cmd_eas = to_eas(
+            m_initial_ground_speed, m_initial_course, 0.0F);
         if (std::isfinite(m_cruise_altitude_amsl)) {
             _fw_setpoint->updateWithAltitude(
-                m_cruise_altitude_amsl, m_initial_course, m_initial_ground_speed);
+                m_cruise_altitude_amsl, m_initial_course, v_cmd_eas);
         } else {
-            _fw_setpoint->updateWithHeightRate(0.f, m_initial_course, m_initial_ground_speed);
+            _fw_setpoint->updateWithHeightRate(
+                0.f, m_initial_course, v_cmd_eas);
         }
     } else {
         /* (3) 시퀀스 setpoint 직접 인가 — height_rate 도 같이.
-               course 는 NAN → lateral_acceleration 이 단독 횡 제어 입력. */
+               current ground course는 EAS feed-forward 계산에만 사용하고
+               PX4 course는 설정하지 않아 lateral_acceleration을 직접 입력한다. */
+        const float v_cmd_eas = to_eas(
+            m_last_output_mt.airspeed,
+            ground_course,
+            m_last_output_mt.height_rate);
         px4_ros2::FwLateralLongitudinalSetpoint sp;
         sp.withLateralAcceleration(m_last_output_mt.lateral_acceleration)
-          .withEquivalentAirspeed(m_last_output_mt.airspeed)
+          .withEquivalentAirspeed(v_cmd_eas)
           .withHeightRate(m_last_output_mt.height_rate);
         _fw_setpoint->update(sp);
     }
@@ -218,7 +268,7 @@ void TrajectoryReplayMode::updateSetpoint(float /*dt_s*/)
 
     /* 10초마다 상태 출력 */
     RCLCPP_INFO_THROTTLE(_node.get_logger(), *_node.get_clock(), 10000,
-        "[Replay] vehicle=%d | sp_v=%.2f sp_h=%.2f sp_a=%.2f | fallback=%d",
+        "[Replay] vehicle=%d | v_cmd_ground=%.2f sp_h=%.2f sp_a=%.2f | fallback=%d",
         m_vehicle_id,
         m_last_output_mt.airspeed,
         m_last_output_mt.height_rate,

@@ -7,7 +7,7 @@
 
    상태 공간: spherical (v, ψ, γ)
      v     : 속력 [m/s]
-     ψ     : 코스각 [rad] = PX4 course 와 직접 매핑
+     ψ     : ground course [rad] (EAS 경계 변환의 방향 입력)
      γ     : 비행 경로각 [rad] (위가 양)
 
      V_NED = ( v·cos(ψ)·cos(γ),  v·sin(ψ)·cos(γ),  -v·sin(γ) )
@@ -20,9 +20,10 @@
      5. dv/dt 클램프: 0.5 × STE_rate / TAS (ArduPilot TECS 방식, AirframeLimits)
      5. 적분: v, ψ, γ 갱신
      6. 상태 클램프: v ∈ [vmin,vmax], γ ∈ [-γmax,γmax], ψ wrap to [-π,π]
-     7. 출력: course = ψ
+     7. 출력: course = ground course ψ
               height_rate = +v·sin(γ)         (ENU 위가 양)
-              airspeed    = |v_ground - wind|
+              airspeed    = ground-speed command (legacy field name)
+        PX4 경계에서 공통 computeRequiredEquivalentAirspeed()로 EAS 명령을 계산한다.
 
    장점:
    - 상태 = setpoint (변환 불필요)
@@ -56,8 +57,10 @@ public:
         float integration_dt{0.0333f}; /* 일차 적분 sample period [s] (ZOH) */
 
         /* ── Airframe spec / safety limit (airframe_spec.yaml) ── */
-        float airspeed_min{10.0f};                /* stall 방지 [m/s] */
-        float airspeed_max{25.0f};                /* overspeed 방지 [m/s] */
+        /* Legacy parameter names: ground-speed command bounds. The minimal
+           adapter does not claim converted-EAS stall/overspeed enforcement. */
+        float airspeed_min{10.0f};
+        float airspeed_max{25.0f};
         float height_rate_max_climb{8.0f};        /* height_rate climb 한계 [m/s] — PX4 FW_T_CLMB_MAX */
         float height_rate_max_sink{2.7f};         /* height_rate sink  한계 [m/s] — PX4 FW_T_SINK_MAX */
         float max_roll_deg{50.0f};                /* FW_R_LIM — coordinated turn */

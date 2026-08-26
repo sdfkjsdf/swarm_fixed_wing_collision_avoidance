@@ -65,6 +65,8 @@ using AgentStateArray = std::array<AgentState, kMaxAgents>;
 struct FwSetpoint
 {
     float course{0.0f};
+    /* Legacy field name: carries the ground-speed command until the PX4
+       boundary converts it to an EAS command. */
     float airspeed{0.0f};
     float height_rate{0.0f};
     float height_setpoint{std::numeric_limits<float>::quiet_NaN()};

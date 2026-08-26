@@ -31,11 +31,11 @@ int main(int argc, char * argv[])
     node->declare_parameter<int>("vehicle_ID", 0);
     node->declare_parameter<std::string>("topic_namespace_prefix", "/px4_0");
     node->declare_parameter<std::string>("test.case_id", "ZOH_V20_STRAIGHT");
-    node->declare_parameter<double>("test.equivalent_airspeed", 20.0);
+    node->declare_parameter<double>("test.ground_speed", 20.0);
     node->declare_parameter<double>("test.lateral_acceleration", 0.0);
     node->declare_parameter<double>("test.trim_timeout_s", 45.0);
     node->declare_parameter<double>("test.trim_hold_s", 2.0);
-    node->declare_parameter<double>("test.trim_airspeed_tolerance_mps", 1.0);
+    node->declare_parameter<double>("test.trim_ground_speed_tolerance_mps", 1.0);
     node->declare_parameter<double>(
         "test.trim_vertical_speed_tolerance_mps", 0.5);
     node->declare_parameter<double>("test.trim_roll_tolerance_deg", 5.0);
@@ -115,8 +115,8 @@ int main(int argc, char * argv[])
         node->get_parameter("uncertainty.estimator_output_delay_s").as_double());
 
     PropagationTestMode::CandidateInput candidate;
-    candidate.equivalent_airspeed = static_cast<float>(
-        node->get_parameter("test.equivalent_airspeed").as_double());
+    candidate.ground_speed = static_cast<float>(
+        node->get_parameter("test.ground_speed").as_double());
     candidate.lateral_acceleration = static_cast<float>(
         node->get_parameter("test.lateral_acceleration").as_double());
     PropagationTestMode::TrimGateParams trim_gate;
@@ -124,8 +124,8 @@ int main(int argc, char * argv[])
         node->get_parameter("test.trim_timeout_s").as_double();
     trim_gate.stable_hold_s =
         node->get_parameter("test.trim_hold_s").as_double();
-    trim_gate.airspeed_tolerance_mps =
-        node->get_parameter("test.trim_airspeed_tolerance_mps").as_double();
+    trim_gate.ground_speed_tolerance_mps = node->get_parameter(
+        "test.trim_ground_speed_tolerance_mps").as_double();
     trim_gate.vertical_speed_tolerance_mps = node->get_parameter(
         "test.trim_vertical_speed_tolerance_mps").as_double();
     trim_gate.roll_tolerance_rad =
@@ -158,7 +158,7 @@ int main(int argc, char * argv[])
             }
             const auto & candidate = test_mode->candidate();
             const PredictInput input{
-                candidate.equivalent_airspeed,
+                candidate.ground_speed,
                 test_mode->baselineAltitude(),
                 0.0,
                 candidate.lateral_acceleration};

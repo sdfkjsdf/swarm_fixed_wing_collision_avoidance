@@ -1,11 +1,11 @@
 "/**":
   ros__parameters:
     test.case_id: "ZOH_V20_STRAIGHT"
-    test.equivalent_airspeed: 20.0
+    test.ground_speed: 20.0
     test.lateral_acceleration: 0.0
     test.trim_timeout_s: 45.0
     test.trim_hold_s: 2.0
-    test.trim_airspeed_tolerance_mps: 1.0
+    test.trim_ground_speed_tolerance_mps: 1.0
     test.trim_vertical_speed_tolerance_mps: 0.5
     test.trim_roll_tolerance_deg: 5.0
     test.trim_max_sample_age_s: 0.5

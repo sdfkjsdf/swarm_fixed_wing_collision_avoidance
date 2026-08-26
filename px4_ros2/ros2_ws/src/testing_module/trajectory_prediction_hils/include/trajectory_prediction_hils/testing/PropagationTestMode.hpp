@@ -11,7 +11,9 @@
 
 #include <px4_msgs/msg/airspeed_validated.hpp>
 #include <px4_msgs/msg/vehicle_attitude.hpp>
+#include <px4_msgs/msg/vehicle_air_data.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
+#include <px4_msgs/msg/wind.hpp>
 #include <px4_ros2/components/mode.hpp>
 #include <px4_ros2/control/setpoint_types/fixedwing/lateral_longitudinal.hpp>
 #include <px4_ros2/vehicle_state/vtol_status.hpp>
@@ -21,7 +23,7 @@ class PropagationTestMode : public px4_ros2::ModeBase
 public:
     struct CandidateInput
     {
-        float equivalent_airspeed{20.0F};
+        float ground_speed{20.0F};
         float lateral_acceleration{0.0F};
     };
 
@@ -29,7 +31,7 @@ public:
     {
         double timeout_s{45.0};
         double stable_hold_s{2.0};
-        double airspeed_tolerance_mps{1.0};
+        double ground_speed_tolerance_mps{1.0};
         double vertical_speed_tolerance_mps{0.5};
         double roll_tolerance_rad{5.0 * 3.14159265358979323846 / 180.0};
         double max_sample_age_s{0.5};
@@ -58,6 +60,7 @@ private:
 
     bool trimConditionsSatisfied() const;
     void startManeuver();
+    float equivalentAirspeedCommand() const;
 
     rclcpp::Node & m_node;
     std::shared_ptr<px4_ros2::FwLateralLongitudinalSetpointType> m_fw_setpoint;
@@ -68,6 +71,9 @@ private:
         m_airspeed_sub;
     rclcpp::Subscription<px4_msgs::msg::VehicleAttitude>::SharedPtr
         m_attitude_sub;
+    rclcpp::Subscription<px4_msgs::msg::Wind>::SharedPtr m_wind_sub;
+    rclcpp::Subscription<px4_msgs::msg::VehicleAirData>::SharedPtr
+        m_vehicle_air_data_sub;
 
     CandidateInput m_candidate;
     TrimGateParams m_trim_gate;
@@ -83,12 +89,16 @@ private:
     std::atomic<bool> m_input_applied{false};
     std::atomic<std::uint64_t> m_applied_input_timestamp{0};
     std::atomic<double> m_latest_local_z{0.0};
+    std::atomic<double> m_latest_ground_speed{NAN};
+    std::atomic<double> m_latest_ground_course{0.0};
     std::atomic<double> m_latest_vertical_speed{NAN};
     std::atomic<double> m_latest_calibrated_airspeed{NAN};
     std::atomic<double> m_latest_roll{NAN};
     std::atomic<std::uint64_t> m_local_position_timestamp{0};
-    std::atomic<std::uint64_t> m_airspeed_timestamp{0};
     std::atomic<std::uint64_t> m_attitude_timestamp{0};
+    std::atomic<float> m_wind_north{0.0F};
+    std::atomic<float> m_wind_east{0.0F};
+    std::atomic<float> m_air_density{1.225F};
     std::atomic<bool> m_has_local_z{false};
     double m_baseline_altitude{NAN};
 };

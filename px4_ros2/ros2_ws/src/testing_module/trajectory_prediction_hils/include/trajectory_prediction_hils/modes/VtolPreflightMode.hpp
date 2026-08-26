@@ -22,7 +22,7 @@
 #include <px4_ros2/odometry/global_position.hpp>
 
 #include <px4_msgs/msg/wind.hpp>
-
+#include <px4_msgs/msg/vehicle_air_data.hpp>
 
 class VtolPreflightMode : public px4_ros2::ModeBase
 {
@@ -45,7 +45,6 @@ private:
 
     void runTransitionToFw();
     void sendFwCruiseSetpoint();
-    float computeRequiredAirspeed(float desired_gs, float course) const;
 
     /* ── ROS2 / PX4 핸들 ── */
     rclcpp::Node & _node;
@@ -54,11 +53,14 @@ private:
     std::shared_ptr<px4_ros2::VTOL>                              _vtol;
     std::shared_ptr<px4_ros2::OdometryGlobalPosition>            _global_position;
     rclcpp::Subscription<px4_msgs::msg::Wind>::SharedPtr         _wind_sub;
+    rclcpp::Subscription<px4_msgs::msg::VehicleAirData>::SharedPtr
+        _vehicle_air_data_sub;
     rclcpp::Time _phase_start_time{};
 
     /* ── 우리 데이터 ── */
     float m_wind_n{0.f};
     float m_wind_e{0.f};
+    float m_air_density{1.225F};
     Phase m_phase{Phase::TransitionToFw};
 
     float m_cruise_altitude_amsl{NAN};

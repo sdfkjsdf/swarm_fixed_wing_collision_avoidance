@@ -30,6 +30,7 @@ TOPICS=(
     "${TOPIC_NS}/fmu/out/vehicle_status_v3"
     "${TOPIC_NS}/fmu/out/airspeed_validated_v1"
     "${TOPIC_NS}/fmu/out/wind"
+    "${TOPIC_NS}/fmu/out/vehicle_air_data"
     "${TOPIC_NS}/collision_estimation/trajectory_cone"
     "${TOPIC_NS}/collision_estimation/key_samples"
     "${TOPIC_NS}/testing/trajectory_prediction_debug"

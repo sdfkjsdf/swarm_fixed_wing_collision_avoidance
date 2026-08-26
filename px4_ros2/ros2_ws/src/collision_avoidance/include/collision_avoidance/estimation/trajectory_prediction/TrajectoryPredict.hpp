@@ -99,7 +99,7 @@ public:
          k=30 (t=3.0s) : 3D 위치
          k=45 (t=4.5s) : 3D 위치 + 3D 속도
 
-       속도 재구성 (NED frame, course-angle 패치 후):
+       속도 재구성 (NED ground-relative frame):
          vel.x (vn) = sqrt(V² - h_dot²) * cos(psi)
          vel.y (ve) = sqrt(V² - h_dot²) * sin(psi)
          vel.z (vd) = -h_dot

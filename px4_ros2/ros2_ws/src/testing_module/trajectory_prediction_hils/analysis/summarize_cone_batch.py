@@ -21,7 +21,7 @@ FIELDS = (
     "ground_truth_sample_time_valid", "common_contract_failures",
     "invalid_cones", "non_zoh_cones",
     "propagation_test_contract_present", "propagation_test_contract_pass",
-    "trim_gate_required", "trim_gate_pass", "trim_max_airspeed_error_mps",
+    "trim_gate_required", "trim_gate_pass", "trim_max_ground_speed_error_mps",
     "trim_max_abs_vertical_speed_mps", "trim_max_abs_roll_deg",
     "alignment_gate_required", "alignment_gate_pass",
     "complete_ground_truth_cones", "partial_horizon_cones",
@@ -93,8 +93,10 @@ def read_runs(raw_root: Path):
                 if propagation_contract_present else ""),
             "trim_gate_required": int(trim_required),
             "trim_gate_pass": int(trim_pass) if trim_required else "",
-            "trim_max_airspeed_error_mps": nullable_float(
-                trim_gate.get("max_airspeed_error_mps")),
+            "trim_max_ground_speed_error_mps": nullable_float(
+                trim_gate.get(
+                    "max_ground_speed_error_mps",
+                    trim_gate.get("max_airspeed_error_mps"))),
             "trim_max_abs_vertical_speed_mps": nullable_float(
                 trim_gate.get("max_abs_vertical_speed_mps")),
             "trim_max_abs_roll_deg": nullable_float(

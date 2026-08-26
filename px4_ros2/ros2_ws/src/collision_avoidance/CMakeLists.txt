@@ -30,6 +30,18 @@ target_include_directories(common_coordinate_transform PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
+# Existing ground-speed/course/wind conversion shared by PX4-facing modes.
+add_library(ground_to_eas_adapter STATIC
+    src/control/GroundToEasAdapter.cpp
+)
+add_library(collision_avoidance::ground_to_eas_adapter ALIAS
+    ground_to_eas_adapter
+)
+target_include_directories(ground_to_eas_adapter PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
 # Pure C++ trajectory predictor. This is the production source of truth used by
 # both the onboard runtime and the HILS verification packages.
 add_library(trajectory_prediction_core STATIC
@@ -63,6 +75,7 @@ target_link_libraries(trajectory_reconstruction PUBLIC
 
 install(TARGETS
     common_coordinate_transform
+    ground_to_eas_adapter
     trajectory_prediction_core
     trajectory_reconstruction
     EXPORT collision_avoidance_targets
@@ -97,6 +110,7 @@ target_link_libraries(vtol_guidance_node
     Eigen3::Eigen
     rclcpp::rclcpp
     px4_ros2_cpp::px4_ros2_cpp
+    ground_to_eas_adapter
 )
 
 add_executable(coordinate_transformer_node
@@ -151,6 +165,14 @@ if(BUILD_TESTING)
         common_coordinate_transform
     )
     target_include_directories(test_common_ned_transform PRIVATE include)
+
+    ament_add_gtest(test_ground_to_eas_adapter
+        test/test_ground_to_eas_adapter.cpp
+    )
+    target_link_libraries(test_ground_to_eas_adapter
+        ground_to_eas_adapter
+    )
+    target_include_directories(test_ground_to_eas_adapter PRIVATE include)
 endif()
 
 ament_package()

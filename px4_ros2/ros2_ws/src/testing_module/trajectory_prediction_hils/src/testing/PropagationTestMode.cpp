@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include <collision_avoidance/control/GroundToEasAdapter.hpp>
+
 PropagationTestMode::PropagationTestMode(
     rclcpp::Node & node,
     int vehicle_id,
@@ -36,6 +38,21 @@ PropagationTestMode::PropagationTestMode(
                     m_latest_vertical_speed.store(
                         message->vz, std::memory_order_relaxed);
                 }
+                if (std::isfinite(message->vx)
+                    && std::isfinite(message->vy)
+                    && std::isfinite(message->vz)) {
+                    m_latest_ground_speed.store(
+                        std::sqrt(
+                            static_cast<double>(message->vx) * message->vx
+                            + static_cast<double>(message->vy) * message->vy
+                            + static_cast<double>(message->vz) * message->vz),
+                        std::memory_order_relaxed);
+                    if (std::hypot(message->vx, message->vy) > 1.0e-3) {
+                        m_latest_ground_course.store(
+                            std::atan2(message->vy, message->vx),
+                            std::memory_order_relaxed);
+                    }
+                }
                 if (std::isfinite(message->z)) {
                     m_latest_local_z.store(message->z, std::memory_order_relaxed);
                     m_has_local_z.store(true, std::memory_order_release);
@@ -46,8 +63,6 @@ PropagationTestMode::PropagationTestMode(
             topic_namespace_prefix + "/fmu/out/airspeed_validated_v1",
             rclcpp::SensorDataQoS(),
             [this](px4_msgs::msg::AirspeedValidated::UniquePtr message) {
-                m_airspeed_timestamp.store(
-                    message->timestamp, std::memory_order_relaxed);
                 if (std::isfinite(message->calibrated_airspeed_m_s)) {
                     m_latest_calibrated_airspeed.store(
                         message->calibrated_airspeed_m_s,
@@ -73,6 +88,25 @@ PropagationTestMode::PropagationTestMode(
                     m_latest_roll.store(roll, std::memory_order_relaxed);
                 }
             });
+    m_wind_sub = m_node.create_subscription<px4_msgs::msg::Wind>(
+        topic_namespace_prefix + "/fmu/out/wind",
+        rclcpp::SensorDataQoS(),
+        [this](px4_msgs::msg::Wind::UniquePtr message) {
+            m_wind_north.store(
+                message->windspeed_north, std::memory_order_relaxed);
+            m_wind_east.store(
+                message->windspeed_east, std::memory_order_relaxed);
+        });
+    m_vehicle_air_data_sub =
+        m_node.create_subscription<px4_msgs::msg::VehicleAirData>(
+            topic_namespace_prefix + "/fmu/out/vehicle_air_data",
+            rclcpp::SensorDataQoS(),
+            [this](px4_msgs::msg::VehicleAirData::UniquePtr message) {
+                if (std::isfinite(message->rho) && message->rho > 0.0F) {
+                    m_air_density.store(
+                        message->rho, std::memory_order_relaxed);
+                }
+            });
 }
 
 void PropagationTestMode::onActivate()
@@ -88,10 +122,10 @@ void PropagationTestMode::onActivate()
     RCLCPP_INFO(
         m_node.get_logger(),
         "[propagation-test] trim started: V=%.2f, hdot=0, alat=0; "
-        "gate=(dV<=%.2f, |vz|<=%.2f, |roll|<=%.1fdeg for %.1fs), "
+        "gate=(ground dV<=%.2f, |vz|<=%.2f, |roll|<=%.1fdeg for %.1fs), "
         "timeout=%.1fs; maneuver alat=%.3f, cone=%.1fs tail=%.1fs",
-        m_candidate.equivalent_airspeed,
-        m_trim_gate.airspeed_tolerance_mps,
+        m_candidate.ground_speed,
+        m_trim_gate.ground_speed_tolerance_mps,
         m_trim_gate.vertical_speed_tolerance_mps,
         m_trim_gate.roll_tolerance_rad * 180.0 / M_PI,
         m_trim_gate.stable_hold_s, m_trim_gate.timeout_s,
@@ -104,6 +138,19 @@ void PropagationTestMode::onDeactivate()
     m_active.store(false, std::memory_order_release);
 }
 
+float PropagationTestMode::equivalentAirspeedCommand() const
+{
+    return collision_avoidance::control::computeRequiredEquivalentAirspeed(
+        m_candidate.ground_speed,
+        static_cast<float>(
+            m_latest_ground_course.load(std::memory_order_relaxed)),
+        0.0F,
+        m_wind_north.load(std::memory_order_relaxed),
+        m_wind_east.load(std::memory_order_relaxed),
+        0.0F,
+        m_air_density.load(std::memory_order_relaxed));
+}
+
 void PropagationTestMode::updateSetpoint(float)
 {
     if (!m_vtol_status->isFwMode()) {
@@ -113,10 +160,12 @@ void PropagationTestMode::updateSetpoint(float)
         return;
     }
 
+    const float v_cmd_eas = equivalentAirspeedCommand();
+
     if (m_phase == Phase::Trim) {
         px4_ros2::FwLateralLongitudinalSetpoint trim_setpoint;
         trim_setpoint.withLateralAcceleration(0.0F)
-            .withEquivalentAirspeed(m_candidate.equivalent_airspeed)
+            .withEquivalentAirspeed(v_cmd_eas)
             .withHeightRate(0.0F);
         m_fw_setpoint->update(trim_setpoint);
 
@@ -136,9 +185,12 @@ void PropagationTestMode::updateSetpoint(float)
 
         RCLCPP_INFO_THROTTLE(
             m_node.get_logger(), *m_node.get_clock(), 2000,
-            "[propagation-test] trim: CAS=%.2f/%.2f vz=%.3f roll=%.2fdeg stable=%s",
+            "[propagation-test] trim: GS=%.2f/%.2f CAS=%.2f EAScmd=%.2f "
+            "vz=%.3f roll=%.2fdeg stable=%s",
+            m_latest_ground_speed.load(std::memory_order_relaxed),
+            m_candidate.ground_speed,
             m_latest_calibrated_airspeed.load(std::memory_order_relaxed),
-            m_candidate.equivalent_airspeed,
+            v_cmd_eas,
             m_latest_vertical_speed.load(std::memory_order_relaxed),
             m_latest_roll.load(std::memory_order_relaxed) * 180.0 / M_PI,
             m_trim_stable_timer_active ? "yes" : "no");
@@ -160,7 +212,7 @@ void PropagationTestMode::updateSetpoint(float)
 
     px4_ros2::FwLateralLongitudinalSetpoint maneuver_setpoint;
     maneuver_setpoint.withLateralAcceleration(m_candidate.lateral_acceleration)
-        .withEquivalentAirspeed(m_candidate.equivalent_airspeed)
+        .withEquivalentAirspeed(v_cmd_eas)
         .withHeightRate(0.0F);
     m_fw_setpoint->update(maneuver_setpoint);
 
@@ -224,24 +276,21 @@ bool PropagationTestMode::trimConditionsSatisfied() const
     };
     const std::uint64_t local_timestamp =
         m_local_position_timestamp.load(std::memory_order_relaxed);
-    const std::uint64_t airspeed_timestamp =
-        m_airspeed_timestamp.load(std::memory_order_relaxed);
     const std::uint64_t attitude_timestamp =
         m_attitude_timestamp.load(std::memory_order_relaxed);
-    if (!fresh(local_timestamp) || !fresh(airspeed_timestamp)
-        || !fresh(attitude_timestamp)) {
+    if (!fresh(local_timestamp) || !fresh(attitude_timestamp)) {
         return false;
     }
 
-    const double airspeed =
-        m_latest_calibrated_airspeed.load(std::memory_order_relaxed);
+    const double ground_speed =
+        m_latest_ground_speed.load(std::memory_order_relaxed);
     const double vertical_speed =
         m_latest_vertical_speed.load(std::memory_order_relaxed);
     const double roll = m_latest_roll.load(std::memory_order_relaxed);
-    return std::isfinite(airspeed) && std::isfinite(vertical_speed)
+    return std::isfinite(ground_speed) && std::isfinite(vertical_speed)
         && std::isfinite(roll)
-        && std::abs(airspeed - m_candidate.equivalent_airspeed)
-            <= m_trim_gate.airspeed_tolerance_mps
+        && std::abs(ground_speed - m_candidate.ground_speed)
+            <= m_trim_gate.ground_speed_tolerance_mps
         && std::abs(vertical_speed)
             <= m_trim_gate.vertical_speed_tolerance_mps
         && std::abs(roll) <= m_trim_gate.roll_tolerance_rad;
@@ -257,8 +306,9 @@ void PropagationTestMode::startManeuver()
     m_trim_stable_timer_active = false;
     RCLCPP_INFO(
         m_node.get_logger(),
-        "[propagation-test] trim gate passed: CAS=%.2f vz=%.3f "
+        "[propagation-test] trim gate passed: GS=%.2f CAS=%.2f vz=%.3f "
         "roll=%.2fdeg baseline_h=%.2fm; applying alat=%.3f",
+        m_latest_ground_speed.load(std::memory_order_relaxed),
         m_latest_calibrated_airspeed.load(std::memory_order_relaxed),
         m_latest_vertical_speed.load(std::memory_order_relaxed),
         m_latest_roll.load(std::memory_order_relaxed) * 180.0 / M_PI,

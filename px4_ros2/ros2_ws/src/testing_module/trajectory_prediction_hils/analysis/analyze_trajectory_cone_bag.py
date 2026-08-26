@@ -294,11 +294,15 @@ def analyze(args) -> int:
         if applied_timestamps:
             applied_us = applied_timestamps[0]
             window_start_us = applied_us - int(args.trim_hold_s * 1.0e6)
-            airspeed_samples = [
-                (int(item.timestamp), float(item.calibrated_airspeed_m_s))
-                for _, item in messages.get(topics["airspeed"], [])
+            ground_speed_samples = [
+                (int(item.timestamp), math.sqrt(
+                    float(item.vx) ** 2
+                    + float(item.vy) ** 2
+                    + float(item.vz) ** 2))
+                for _, item in messages.get(topics["local_position"], [])
                 if window_start_us <= int(item.timestamp) <= applied_us
-                and math.isfinite(float(item.calibrated_airspeed_m_s))
+                and all(math.isfinite(float(value))
+                        for value in (item.vx, item.vy, item.vz))
             ]
             vertical_speed_samples = [
                 (int(item.timestamp), float(item.vz))
@@ -319,11 +323,11 @@ def analyze(args) -> int:
                     and samples[0][0] <= window_start_us + max_age_us
                     and samples[-1][0] >= applied_us - max_age_us)
 
-            target_airspeed = float(first_inputs[0])
-            max_airspeed_error = (
-                max(abs(value - target_airspeed)
-                    for _, value in airspeed_samples)
-                if airspeed_samples else None)
+            target_ground_speed = float(first_inputs[0])
+            max_ground_speed_error = (
+                max(abs(value - target_ground_speed)
+                    for _, value in ground_speed_samples)
+                if ground_speed_samples else None)
             max_vertical_speed = (
                 max(abs(value) for _, value in vertical_speed_samples)
                 if vertical_speed_samples else None)
@@ -331,14 +335,15 @@ def analyze(args) -> int:
                 max(abs(value) for _, value in roll_samples)
                 if roll_samples else None)
             window_coverage_valid = bool(
-                window_valid(airspeed_samples)
+                window_valid(ground_speed_samples)
                 and window_valid(vertical_speed_samples)
                 and window_valid(roll_samples))
             trim_pass = bool(
                 len(applied_timestamps) == 1
                 and window_coverage_valid
-                and max_airspeed_error is not None
-                and max_airspeed_error <= args.trim_airspeed_tolerance_mps
+                and max_ground_speed_error is not None
+                and max_ground_speed_error
+                    <= args.trim_ground_speed_tolerance_mps
                 and max_vertical_speed is not None
                 and max_vertical_speed
                     <= args.trim_vertical_speed_tolerance_mps
@@ -352,10 +357,10 @@ def analyze(args) -> int:
                 "unique_applied_input_timestamp_count": len(applied_timestamps),
                 "hold_s": float(args.trim_hold_s),
                 "window_coverage_valid": window_coverage_valid,
-                "target_calibrated_airspeed_mps": target_airspeed,
-                "max_airspeed_error_mps": max_airspeed_error,
-                "airspeed_tolerance_mps": float(
-                    args.trim_airspeed_tolerance_mps),
+                "target_ground_speed_mps": target_ground_speed,
+                "max_ground_speed_error_mps": max_ground_speed_error,
+                "ground_speed_tolerance_mps": float(
+                    args.trim_ground_speed_tolerance_mps),
                 "max_abs_vertical_speed_mps": max_vertical_speed,
                 "vertical_speed_tolerance_mps": float(
                     args.trim_vertical_speed_tolerance_mps),
@@ -364,7 +369,7 @@ def analyze(args) -> int:
                     if max_roll_rad is not None else None),
                 "roll_tolerance_deg": float(args.trim_roll_tolerance_deg),
                 "sample_counts": {
-                    "airspeed": len(airspeed_samples),
+                    "ground_speed": len(ground_speed_samples),
                     "vertical_speed": len(vertical_speed_samples),
                     "roll": len(roll_samples),
                 },
@@ -1091,7 +1096,11 @@ def main() -> int:
             "input/epoch/ZOH contract"))
     parser.add_argument("--trim-hold-s", type=float, default=2.0)
     parser.add_argument(
-        "--trim-airspeed-tolerance-mps", type=float, default=1.0)
+        "--trim-ground-speed-tolerance-mps",
+        "--trim-airspeed-tolerance-mps",
+        dest="trim_ground_speed_tolerance_mps",
+        type=float,
+        default=1.0)
     parser.add_argument(
         "--trim-vertical-speed-tolerance-mps", type=float, default=0.5)
     parser.add_argument("--trim-roll-tolerance-deg", type=float, default=5.0)

@@ -25,6 +25,8 @@
 #include <cmath>
 
 #include <px4_msgs/msg/vehicle_attitude.hpp>  
+#include <px4_msgs/msg/vehicle_air_data.hpp>
+#include <px4_msgs/msg/wind.hpp>
 
 #include <px4_ros2/components/mode.hpp>
 #include <px4_ros2/control/setpoint_types/fixedwing/lateral_longitudinal.hpp>
@@ -66,9 +68,15 @@ private:
     rclcpp::Node & _node;
     std::shared_ptr<px4_ros2::FwLateralLongitudinalSetpointType> _fw_setpoint;
     std::shared_ptr<px4_ros2::VtolStatus> _vtol_status;
+    rclcpp::Subscription<px4_msgs::msg::Wind>::SharedPtr _wind_sub;
+    rclcpp::Subscription<px4_msgs::msg::VehicleAirData>::SharedPtr
+        _vehicle_air_data_sub;
 
     /* ── 우리 데이터 ── */
     int m_vehicle_id{0};
+    float m_wind_n{0.0F};
+    float m_wind_e{0.0F};
+    float m_air_density{1.225F};
 
     std::unique_ptr<SetpointSequencer> m_sequencer;   /* rt_thread 단독 접근 */
     std::shared_ptr<TrajectoryLogger>  m_logger;      /* main thread 만 호출 */

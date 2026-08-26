@@ -307,7 +307,7 @@ if [[ "${LAUNCH_NODE}" == "1" ]]; then
     if [[ "${HILS_NODE_EXECUTABLE}" == "trajectory_prediction_sils_test_node" ]]; then
         TEST_PARAMS=()
         [[ -n "${TEST_CASE_ID:-}" ]] && TEST_PARAMS+=(-p "test.case_id:=${TEST_CASE_ID}")
-        [[ -n "${TEST_V_CMD:-}" ]] && TEST_PARAMS+=(-p "test.equivalent_airspeed:=${TEST_V_CMD}")
+        [[ -n "${TEST_V_CMD:-}" ]] && TEST_PARAMS+=(-p "test.ground_speed:=${TEST_V_CMD}")
         [[ -n "${TEST_ALAT_CMD:-}" ]] && TEST_PARAMS+=(-p "test.lateral_acceleration:=${TEST_ALAT_CMD}")
         ros2 run trajectory_prediction_hils "${HILS_NODE_EXECUTABLE}" --ros-args \
             -p topic_namespace_prefix:=/px4_${INSTANCE} \

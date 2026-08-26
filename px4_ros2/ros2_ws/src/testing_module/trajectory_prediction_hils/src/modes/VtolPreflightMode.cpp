@@ -17,6 +17,8 @@
 
 #include <algorithm>
 
+#include <collision_avoidance/control/GroundToEasAdapter.hpp>
+
 using namespace px4_msgs::msg;
 
 
@@ -53,6 +55,13 @@ VtolPreflightMode::VtolPreflightMode(
         [this](const Wind::UniquePtr msg) {
             m_wind_n = msg->windspeed_north;
             m_wind_e = msg->windspeed_east;
+        });
+    _vehicle_air_data_sub = _node.create_subscription<VehicleAirData>(
+        "/px4_" + std::to_string(m_vehicle_id) + "/fmu/out/vehicle_air_data", qos,
+        [this](const VehicleAirData::UniquePtr msg) {
+            if (std::isfinite(msg->rho) && msg->rho > 0.0F) {
+                m_air_density = msg->rho;
+            }
         });
 }
 
@@ -142,7 +151,14 @@ void VtolPreflightMode::runTransitionToFw()
 void VtolPreflightMode::sendFwCruiseSetpoint()
 {
     const float required_airspeed =
-        computeRequiredAirspeed(m_desired_ground_speed, m_desired_course);
+        collision_avoidance::control::computeRequiredEquivalentAirspeed(
+            m_desired_ground_speed,
+            m_desired_course,
+            0.0F,
+            m_wind_n,
+            m_wind_e,
+            0.0F,
+            m_air_density);
 
     if (!std::isfinite(m_cruise_altitude_amsl)) {
         _fw_setpoint->updateWithHeightRate(0.f, m_desired_course, required_airspeed);
@@ -153,13 +169,4 @@ void VtolPreflightMode::sendFwCruiseSetpoint()
         m_cruise_altitude_amsl,
         m_desired_course,
         required_airspeed);
-}
-
-float VtolPreflightMode::computeRequiredAirspeed(float desired_gs, float course) const
-{
-    const float gs_n = desired_gs * std::cos(course);
-    const float gs_e = desired_gs * std::sin(course);
-    const float as_n = gs_n - m_wind_n;
-    const float as_e = gs_e - m_wind_e;
-    return std::sqrt(as_n * as_n + as_e * as_e);
 }
