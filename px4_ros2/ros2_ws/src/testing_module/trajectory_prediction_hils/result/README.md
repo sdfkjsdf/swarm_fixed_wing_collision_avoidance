@@ -54,9 +54,19 @@ start-aligned 전파 오차를 분리한다. 상세 계약과 smoke 결과는
 
 대표 궤적 그림은 prediction과 ground truth에 동일한 sample index marker를 표시한다.
 회색 점선은 같은 `i`와 같은 `time_offsets_s[i]`의 두 점을 연결하며, 시작·종점은 별도
-marker로 표시한다. 따라서 서로 다른 시각의 가까운 점을 같은 시각의 오차로 오해하지
-않아야 한다. `trajectory_cone_example.png`는 EKF 초기 오차를 포함한 절대좌표 비교이고,
-`trajectory_start_aligned.png`는 각 시작점을 제거한 순수 전파 비교다.
+marker로 표시한다. `i, t` 표기는 궤적 선과 겹치지 않도록 같은-index 연결점 아래에
+고정된 화면 offset으로 배치한다. 따라서 서로 다른 시각의 가까운 점을 같은 시각의
+오차로 오해하지 않아야 한다. `trajectory_cone_example.png`는 EKF 초기 오차를 포함한
+절대좌표 비교이고, `trajectory_start_aligned.png`는 각 시작점을 제거한 순수 전파
+비교다. `trajectory_vertical_error.png`는 절대 및 start-aligned 고도 오차를 별도로
+표시한다.
+
+`trajectory_cone_3d.png`는 예측 평균에 수직인 95% 위치 공분산 단면들을 연결한 연속
+envelope이다. Auto ACAS 논문의 시간에 따라 성장하는 cone 표현을 참고한 시각화이며,
+논문 내부의 전용 cone 형상을 복제한 것은 아니다. East/North/altitude의 물리 축 비율은
+수직 과장 없이 유지한다. `plot_manifest.json`에는 기록된 `time_offsets_s`로 검증한 평균
+궤적·공분산의 공통 적분 주기와 최대 간격 편차를 함께 저장한다. `predict_call_hz`는 새
+cone 생성·발행 주기이므로 horizon 내부 적분 주기와 구분한다.
 
 전용 반복 검증 matrix는 다음 명령으로 확인한다.
 

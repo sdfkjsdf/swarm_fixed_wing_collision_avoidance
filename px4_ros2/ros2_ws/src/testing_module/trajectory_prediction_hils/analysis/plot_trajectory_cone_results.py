@@ -11,10 +11,15 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Ellipse, Patch
 
 
 CHI_SQUARE_95_DF3 = 7.8147279
+NED_TO_EAST_NORTH_ALTITUDE = np.asarray([
+    [0.0, 1.0, 0.0],
+    [1.0, 0.0, 0.0],
+    [0.0, 0.0, -1.0],
+])
 
 
 def load_rows(path: Path):
@@ -207,8 +212,217 @@ def add_same_index_connectors(axis, mean, truth, horizons, indices):
         if point != 0:
             axis.annotate(
                 f"i={point}, t={horizons[point]:.1f}s",
-                xy=(midpoint_e, midpoint_n), xytext=(4, 4),
-                textcoords="offset points", fontsize=7, color="0.3")
+                xy=(midpoint_e, midpoint_n), xytext=(0, -14),
+                textcoords="offset points", ha="center", va="top",
+                fontsize=7, color="0.3", annotation_clip=False,
+                bbox={
+                    "boxstyle": "round,pad=0.15",
+                    "facecolor": "white",
+                    "edgecolor": "none",
+                    "alpha": 0.82,
+                })
+
+
+def validate_integration_contract(time_offsets, point_counts):
+    """Validate the shared mean/covariance horizon time axis in one NPZ."""
+    if time_offsets is None:
+        return {
+            "verified_from_recorded_time_offsets": False,
+            "shared_mean_covariance_time_axis": True,
+            "trajectory_mean_integration_step_s": 0.1,
+            "cone_covariance_integration_step_s": 0.1,
+            "maximum_step_deviation_s": None,
+            "pre_horizon_delay_compensation_is_separate": True,
+            "note": "legacy NPZ without time_offsets_s; 0.1 s fallback used",
+        }
+
+    all_steps = []
+    for row, raw_count in zip(time_offsets, point_counts):
+        count = int(raw_count)
+        if not 1 <= count <= row.shape[0]:
+            raise ValueError(f"invalid causal_point_count: {count}")
+        offsets = np.asarray(row[:count], dtype=np.float64)
+        if not np.isfinite(offsets).all() or abs(offsets[0]) > 1.0e-6:
+            raise ValueError("recorded time offsets must be finite and start at zero")
+        steps = np.diff(offsets)
+        if np.any(steps <= 0.0):
+            raise ValueError("recorded time offsets must be strictly increasing")
+        if steps.size:
+            all_steps.append(steps)
+
+    if not all_steps:
+        raise ValueError("recorded trajectories do not contain an integration interval")
+    steps = np.concatenate(all_steps)
+    integration_step_s = float(np.median(steps))
+    maximum_deviation_s = float(np.max(np.abs(steps - integration_step_s)))
+    tolerance_s = max(1.0e-6, abs(integration_step_s) * 1.0e-5)
+    if maximum_deviation_s > tolerance_s:
+        raise ValueError(
+            "non-uniform mean/covariance horizon time axis: "
+            f"median={integration_step_s:.9f}s, "
+            f"maximum deviation={maximum_deviation_s:.9f}s")
+
+    return {
+        "verified_from_recorded_time_offsets": True,
+        "shared_mean_covariance_time_axis": True,
+        "trajectory_mean_integration_step_s": integration_step_s,
+        "cone_covariance_integration_step_s": integration_step_s,
+        "maximum_step_deviation_s": maximum_deviation_s,
+        "recorded_interval_count": int(steps.size),
+        "pre_horizon_delay_compensation_is_separate": True,
+        "note": (
+            "predicted_mean and predicted_position_covariance share each "
+            "time_offsets_s index; cone publication rate and pre-horizon "
+            "fusion-delay compensation are separate from the horizon step"),
+    }
+
+
+def covariance_envelope_rings(mean_ned, covariance_ned, angular_samples=37):
+    """Build connected 95% covariance sections normal to the mean path."""
+    centers = mean_ned @ NED_TO_EAST_NORTH_ALTITUDE.T
+    covariance_plot = np.einsum(
+        "ab,nbc,dc->nad",
+        NED_TO_EAST_NORTH_ALTITUDE,
+        covariance_ned,
+        NED_TO_EAST_NORTH_ALTITUDE,
+    )
+    angles = np.linspace(0.0, 2.0 * np.pi, angular_samples)
+    unit_circle = np.vstack((np.cos(angles), np.sin(angles)))
+    scale = np.sqrt(CHI_SQUARE_95_DF3)
+    rings = []
+    previous_u = None
+
+    for point, center in enumerate(centers):
+        if centers.shape[0] == 1:
+            tangent = np.asarray([1.0, 0.0, 0.0])
+        elif point == 0:
+            tangent = centers[1] - centers[0]
+        elif point == centers.shape[0] - 1:
+            tangent = centers[-1] - centers[-2]
+        else:
+            tangent = centers[point + 1] - centers[point - 1]
+        tangent_norm = np.linalg.norm(tangent)
+        if tangent_norm < 1.0e-9:
+            tangent = np.asarray([1.0, 0.0, 0.0])
+        else:
+            tangent = tangent / tangent_norm
+
+        if previous_u is None:
+            reference = (
+                np.asarray([0.0, 0.0, 1.0])
+                if abs(tangent[2]) < 0.9
+                else np.asarray([0.0, 1.0, 0.0])
+            )
+            u_axis = np.cross(tangent, reference)
+        else:
+            # Parallel-transport the previous normal into the new tangent plane.
+            u_axis = previous_u - np.dot(previous_u, tangent) * tangent
+            if np.linalg.norm(u_axis) < 1.0e-9:
+                reference = (
+                    np.asarray([0.0, 0.0, 1.0])
+                    if abs(tangent[2]) < 0.9
+                    else np.asarray([0.0, 1.0, 0.0])
+                )
+                u_axis = np.cross(tangent, reference)
+        u_axis /= np.linalg.norm(u_axis)
+        v_axis = np.cross(tangent, u_axis)
+        v_axis /= np.linalg.norm(v_axis)
+        previous_u = u_axis
+
+        plane_basis = np.column_stack((u_axis, v_axis))
+        planar_covariance = plane_basis.T @ (
+            0.5 * (covariance_plot[point] + covariance_plot[point].T)
+        ) @ plane_basis
+        eigenvalues, eigenvectors = np.linalg.eigh(planar_covariance)
+        if np.min(eigenvalues) < -1.0e-6:
+            raise ValueError("position covariance is not positive semidefinite")
+        eigenvalues = np.maximum(eigenvalues, 0.0)
+        covariance_root = (
+            eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T)
+        offsets = scale * plane_basis @ covariance_root @ unit_circle
+        rings.append(center[np.newaxis, :] + offsets.T)
+
+    return centers, np.asarray(rings)
+
+
+def set_3d_data_aspect(axis, points):
+    """Use physical data ranges without silently exaggerating altitude."""
+    minima = np.min(points, axis=0)
+    maxima = np.max(points, axis=0)
+    ranges = np.maximum(maxima - minima, 1.0e-3)
+    padding = np.maximum(0.05 * ranges, 0.1)
+    axis.set_xlim(minima[0] - padding[0], maxima[0] + padding[0])
+    axis.set_ylim(minima[1] - padding[1], maxima[1] + padding[1])
+    axis.set_zlim(minima[2] - padding[2], maxima[2] + padding[2])
+    axis.set_box_aspect(ranges)
+
+
+def save_connected_3d_envelope(
+        mean, truth, covariance, horizons, matched_indices,
+        integration_contract, output):
+    """Render a connected covariance tube inspired by Auto ACAS cone figures."""
+    mean_plot, rings = covariance_envelope_rings(mean, covariance)
+    truth_plot = truth @ NED_TO_EAST_NORTH_ALTITUDE.T
+
+    fig = plt.figure(figsize=(10, 8))
+    axis = fig.add_subplot(111, projection="3d")
+    axis.plot_surface(
+        rings[:, :, 0], rings[:, :, 1], rings[:, :, 2],
+        color="lightskyblue", alpha=0.22, linewidth=0.0,
+        antialiased=True, shade=False)
+    section_indices = np.unique(np.append(
+        np.arange(0, mean.shape[0], 5), mean.shape[0] - 1))
+    for point in section_indices:
+        axis.plot(
+            rings[point, :, 0], rings[point, :, 1], rings[point, :, 2],
+            color="tab:blue", alpha=0.42, linewidth=0.8)
+
+    axis.plot(
+        mean_plot[:, 0], mean_plot[:, 1], mean_plot[:, 2],
+        "-o", color="tab:blue", markersize=2.8, linewidth=1.8,
+        label="predicted mean")
+    axis.plot(
+        truth_plot[:, 0], truth_plot[:, 1], truth_plot[:, 2],
+        "-x", color="tab:orange", markersize=3.2, linewidth=1.6,
+        label="ground truth (same i)")
+    for order, point in enumerate(matched_indices):
+        axis.plot(
+            [mean_plot[point, 0], truth_plot[point, 0]],
+            [mean_plot[point, 1], truth_plot[point, 1]],
+            [mean_plot[point, 2], truth_plot[point, 2]],
+            color="0.3", linestyle=":", linewidth=1.0,
+            label="same-index error" if order == 0 else None)
+    axis.scatter(*mean_plot[0], marker="s", s=42, color="tab:blue")
+    axis.scatter(*truth_plot[0], marker="x", s=55, color="tab:orange")
+    axis.scatter(*mean_plot[-1], marker="^", s=58, color="tab:blue")
+    axis.scatter(*truth_plot[-1], marker="v", s=58, color="tab:orange")
+
+    dt = integration_contract["trajectory_mean_integration_step_s"]
+    axis.set(
+        xlabel="East [m]", ylabel="North [m]", zlabel="Altitude [m]",
+        title=(
+            "Connected 95% trajectory uncertainty envelope\n"
+            "covariance sections joined along predicted mean; "
+            f"shared mean/cov dt={dt:.3f}s"),
+    )
+    axis.view_init(elev=27, azim=-58)
+    set_3d_data_aspect(
+        axis,
+        np.vstack((rings.reshape(-1, 3), mean_plot, truth_plot)),
+    )
+    handles, labels = axis.get_legend_handles_labels()
+    handles.append(Patch(
+        facecolor="lightskyblue", edgecolor="tab:blue", alpha=0.3,
+        label="connected 95% covariance envelope"))
+    labels.append("connected 95% covariance envelope")
+    axis.legend(handles, labels, loc="upper left", fontsize=8)
+    fig.text(
+        0.5, 0.015,
+        "Physical East/North/altitude ranges are preserved (no vertical exaggeration).",
+        ha="center", fontsize=8, color="0.35")
+    fig.tight_layout(rect=(0.0, 0.035, 1.0, 1.0))
+    fig.savefig(output / "trajectory_cone_3d.png", dpi=180)
+    plt.close(fig)
 
 
 def save_example(arrays_path: Path, output: Path):
@@ -233,6 +447,13 @@ def save_example(arrays_path: Path, output: Path):
     if covariance.shape[:2] != predicted.shape[:2]:
         raise ValueError(
             "predicted covariance and trajectory sample dimensions do not match")
+    if np.asarray(point_counts).shape != (predicted.shape[0],):
+        raise ValueError("causal_point_count must contain one value per cone")
+    if time_offsets is not None and time_offsets.shape != predicted.shape[:2]:
+        raise ValueError(
+            "time_offsets_s and mean/covariance sample dimensions do not match")
+    integration_contract = validate_integration_contract(
+        time_offsets, point_counts)
 
     # A maneuver case should display a maneuver-time cone, not the arbitrary
     # middle cone. Prefer lateral excitation, then vertical excitation.
@@ -259,6 +480,9 @@ def save_example(arrays_path: Path, output: Path):
         raise ValueError("representative trajectory contains non-finite samples")
     if not np.isfinite(horizons).all() or np.any(np.diff(horizons) <= 0.0):
         raise ValueError("trajectory time offsets must be finite and strictly increasing")
+    covariance_for_example = covariance[index, :point_count]
+    if not np.isfinite(covariance_for_example).all():
+        raise ValueError("representative covariance contains non-finite samples")
 
     alignment_error_m = float(np.linalg.norm(truth[0] - mean[0]))
     terminal_error = truth[-1] - mean[-1]
@@ -398,6 +622,48 @@ def save_example(arrays_path: Path, output: Path):
     fig.tight_layout()
     fig.savefig(output / "trajectory_vertical_start_aligned.png", dpi=160)
     plt.close(fig)
+
+    predicted_altitude = -mean[:, 2]
+    truth_altitude = -truth[:, 2]
+    absolute_vertical_error = truth_altitude - predicted_altitude
+    propagation_vertical_error = (
+        relative_truth_altitude - relative_mean_altitude)
+    fig, axis = plt.subplots(figsize=(8, 4.8))
+    axis.axhline(0.0, color="0.35", linestyle="--", linewidth=0.9)
+    axis.plot(
+        horizons, absolute_vertical_error, "-o", markersize=3.0,
+        color="tab:purple", label="absolute altitude error")
+    axis.plot(
+        horizons, propagation_vertical_error, "-x", markersize=3.5,
+        color="tab:green", label="start-aligned propagation error")
+    axis.scatter(
+        horizons[-1], absolute_vertical_error[-1], marker="o", s=48,
+        color="tab:purple", zorder=5)
+    axis.scatter(
+        horizons[-1], propagation_vertical_error[-1], marker="x", s=55,
+        color="tab:green", linewidths=1.8, zorder=5)
+    axis.set(
+        xlabel="prediction horizon [s]",
+        ylabel="truth − prediction altitude error [m]",
+        title=(
+            "Vertical (NED-Z / altitude) error at matched sample indices\n"
+            "positive value means ground truth is higher than prediction"),
+    )
+    axis.text(
+        0.98, 0.03,
+        f"terminal absolute={absolute_vertical_error[-1]:.3f} m\n"
+        f"terminal start-aligned={propagation_vertical_error[-1]:.3f} m",
+        transform=axis.transAxes, ha="right", va="bottom", fontsize=8.5,
+        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.85})
+    axis.grid(alpha=0.3)
+    axis.legend()
+    fig.tight_layout()
+    fig.savefig(output / "trajectory_vertical_error.png", dpi=160)
+    plt.close(fig)
+
+    save_connected_3d_envelope(
+        mean, truth, covariance_for_example, horizons, matched_indices,
+        integration_contract, output)
     return {
         "array_index": index,
         "source_timestamp_us": int(timestamps[index]),
@@ -407,6 +673,19 @@ def save_example(arrays_path: Path, output: Path):
         "sample_index_contract": (
             f"prediction[i] and ground_truth[i] share time_offsets_s[i]; "
             f"i=0..{point_count - 1}"),
+        "integration_contract": integration_contract,
+        "connected_3d_envelope_contract": {
+            "geometry": (
+                "normal-plane full-position-covariance sections connected "
+                "along the predicted mean"),
+            "confidence_level": 0.95,
+            "chi_square_quantile_df3": CHI_SQUARE_95_DF3,
+            "coordinate_axes": "East, North, altitude",
+            "covariance_transform": "P_plot = T * P_NED * T^T",
+            "vertical_exaggeration": False,
+        },
+        "vertical_error_sign_contract": (
+            "truth_altitude - prediction_altitude; positive means truth higher"),
         "terminal_horizontal_absolute_error_m": (
             terminal_horizontal_absolute_error_m),
         "terminal_absolute_error_m": terminal_absolute_error_m,
@@ -415,6 +694,8 @@ def save_example(arrays_path: Path, output: Path):
         "terminal_propagation_error_m": terminal_propagation_error_m,
         "terminal_vertical_propagation_error_m": float(
             relative_truth_altitude[-1] - relative_mean_altitude[-1]),
+        "terminal_vertical_absolute_error_m": float(
+            absolute_vertical_error[-1]),
         "candidate_input": {
             "V_cmd": float(candidate[0]),
             "h_cmd": float(candidate[1]),
@@ -466,7 +747,8 @@ def main() -> int:
             "trajectory_survival_by_horizon.png",
         ] + (["initial_alignment_decomposition.png"] if alignment_plot else []) \
           + (["trajectory_cone_example.png", "trajectory_start_aligned.png",
-              "trajectory_vertical_start_aligned.png"]
+              "trajectory_vertical_start_aligned.png",
+              "trajectory_vertical_error.png", "trajectory_cone_3d.png"]
              if example else []),
         "representative_cone": example,
     }
