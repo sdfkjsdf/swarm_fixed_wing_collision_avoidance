@@ -61,12 +61,44 @@ marker로 표시한다. `i, t` 표기는 궤적 선과 겹치지 않도록 같�
 비교다. `trajectory_vertical_error.png`는 절대 및 start-aligned 고도 오차를 별도로
 표시한다.
 
-`trajectory_cone_3d.png`는 예측 평균에 수직인 95% 위치 공분산 단면들을 연결한 연속
-envelope이다. Auto ACAS 논문의 시간에 따라 성장하는 cone 표현을 참고한 시각화이며,
-논문 내부의 전용 cone 형상을 복제한 것은 아니다. East/North/altitude의 물리 축 비율은
-수직 과장 없이 유지한다. `plot_manifest.json`에는 기록된 `time_offsets_s`로 검증한 평균
-궤적·공분산의 공통 적분 주기와 최대 간격 편차를 함께 저장한다. `predict_call_hz`는 새
+`trajectory_cone_3d.png`는 선택한 시간 단면마다 full 3x3 위치 공분산을 고유분해하고
+principal symmetric square root로 재구성하여 실제 nominal 95% 3D covariance ellipsoid
+표면을 그린다. `trajectory_cone_mesh.png`는 동일한 3D ellipsoid mesh를 East/North 평면에서 본
+직교투영이다. 더 이상 예측 궤적에 수직인 평면을 임의로 선택하지 않는다. 시간 방향
+generator는 모든 시점에 동일한 unit-sphere direction을 적용한 표면점들을 연결하는
+렌더링 선일 뿐이다. 따라서 전체 궤적이 동시에 95% 확률로 머무는 confidence tube를
+뜻하지 않으며, holdout calibration을 그림 자체가 입증하지도 않는다. Auto ACAS Figure
+8의 시간에 따라 성장하는 uncertainty-envelope 개념에서 시각적 영감을 얻었지만, 해당
+출처가 단면 형상이나 mesh topology를 정의한 것은 아니다. 실제 형상은 이 프로젝트가
+propagation한 full position covariance로 계산하며 논문 내부의 전용 cone 수학을 복제한
+것은 아니다. 특히 Auto ACAS의 MASD나 Figure 8에 열거된 전체 uncertainty source를
+재구성한 결과가 아니다. 3D 그림은 East/North/altitude의 물리 축 비율을 수직 과장 없이
+유지한다.
+`plot_manifest.json`에는 ellipsoid의 polar/azimuth 표본, 시간 단면·generator 개수와
+기록된 `time_offsets_s`로 검증한 평균
+궤적·공분산의 공통 적분 주기 및 최대 간격 편차를 함께 저장한다. `predict_call_hz`는 새
 cone 생성·발행 주기이므로 horizon 내부 적분 주기와 구분한다.
+
+회전 가능한 3D HTML은 전체 batch에 자동 생성하지 않는다. 검토할 run 하나를 선택한 뒤
+다음 명령으로만 명시적으로 생성한다.
+
+```bash
+python3 analysis/plot_selected_trajectory_cone_html.py \
+  --input result/raw/<batch_id>/<run_id> \
+  --output result/plot/<batch_id>/<run_id>/trajectory_cone_interactive.html \
+  --title "<run_id>"
+```
+
+이 그림은 각 horizon의 full 3x3 위치 공분산에서 경로 횡단 방향의 ellipsoid support
+point를 구하고, 인접 horizon의 support ring을 연결한 표시용 swept shell이다. 마지막
+ring은 최종 pointwise ellipsoid의 전방-normal half cap과 동일한 vertex를 공유한다.
+내부 pointwise ellipsoid surface는 반복해서 그리지 않는다. 이는 정확한 연속시간
+ellipsoid 합집합 경계나 전체 궤적에 대한 simultaneous 95% confidence tube가 아니다.
+Auto ACAS Figure 8의 시간 성장 envelope에서 시각적 아이디어만 차용했으며 MASD나
+논문 고유 uncertainty roll-up을 재구성한 결과가 아니다. Plotly를 고정 버전 CDN에서
+읽으므로 생성 자체는 오프라인이지만 결과 HTML을 처음 열 때는 네트워크 연결이 필요하다.
+HTML 생성기는 `process_cone_batch.sh`에서 호출하지 않으므로 선택하지 않은 run에는
+추가 결과를 만들지 않는다. 특정 cone sample을 직접 보려면 `--array-index N`을 사용한다.
 
 전용 반복 검증 matrix는 다음 명령으로 확인한다.
 

@@ -11,7 +11,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Ellipse, Patch
+from matplotlib.lines import Line2D
+from matplotlib.patches import Ellipse
 
 
 CHI_SQUARE_95_DF3 = 7.8147279
@@ -277,8 +278,23 @@ def validate_integration_contract(time_offsets, point_counts):
     }
 
 
-def covariance_envelope_rings(mean_ned, covariance_ned, angular_samples=37):
-    """Build connected 95% covariance sections normal to the mean path."""
+def covariance_ellipsoid_geometry(
+        mean_ned, covariance_ned, polar_samples=13, azimuth_samples=25,
+        temporal_generator_count=12):
+    """Build exact pointwise 3-D covariance ellipsoids in the plot frame."""
+    if polar_samples < 3:
+        raise ValueError("ellipsoid mesh requires at least three polar samples")
+    if azimuth_samples < 4:
+        raise ValueError("ellipsoid mesh requires at least four azimuth samples")
+    if temporal_generator_count < 1:
+        raise ValueError("ellipsoid mesh requires at least one generator")
+    if mean_ned.ndim != 2 or mean_ned.shape[1] != 3:
+        raise ValueError("ellipsoid means must have shape (sample, 3)")
+    if covariance_ned.shape != (mean_ned.shape[0], 3, 3):
+        raise ValueError("ellipsoid covariances must have shape (sample, 3, 3)")
+    if not np.isfinite(mean_ned).all() or not np.isfinite(covariance_ned).all():
+        raise ValueError("ellipsoid means and covariances must be finite")
+
     centers = mean_ned @ NED_TO_EAST_NORTH_ALTITUDE.T
     covariance_plot = np.einsum(
         "ab,nbc,dc->nad",
@@ -286,63 +302,179 @@ def covariance_envelope_rings(mean_ned, covariance_ned, angular_samples=37):
         covariance_ned,
         NED_TO_EAST_NORTH_ALTITUDE,
     )
-    angles = np.linspace(0.0, 2.0 * np.pi, angular_samples)
-    unit_circle = np.vstack((np.cos(angles), np.sin(angles)))
+
+    polar = np.linspace(0.0, np.pi, polar_samples)
+    azimuth = np.linspace(0.0, 2.0 * np.pi, azimuth_samples)
+    sin_polar = np.sin(polar)[:, np.newaxis]
+    unit_surface = np.stack((
+        sin_polar * np.cos(azimuth)[np.newaxis, :],
+        sin_polar * np.sin(azimuth)[np.newaxis, :],
+        np.cos(polar)[:, np.newaxis] * np.ones_like(azimuth)[np.newaxis, :],
+    ), axis=-1)
+
+    # Fixed global unit-sphere directions make the temporal rendering lines
+    # deterministic. The symmetric PSD square root below avoids eigenvector
+    # sign/swap discontinuities while preserving each exact ellipsoid surface.
+    generator_order = np.arange(temporal_generator_count, dtype=np.float64) + 0.5
+    generator_z = 1.0 - 2.0 * generator_order / temporal_generator_count
+    generator_radius = np.sqrt(np.maximum(1.0 - generator_z ** 2, 0.0))
+    golden_angle = np.pi * (3.0 - np.sqrt(5.0))
+    generator_azimuth = golden_angle * generator_order
+    unit_generators = np.column_stack((
+        generator_radius * np.cos(generator_azimuth),
+        generator_radius * np.sin(generator_azimuth),
+        generator_z,
+    ))
+
     scale = np.sqrt(CHI_SQUARE_95_DF3)
-    rings = []
-    previous_u = None
-
+    surfaces = []
+    temporal_generators = []
     for point, center in enumerate(centers):
-        if centers.shape[0] == 1:
-            tangent = np.asarray([1.0, 0.0, 0.0])
-        elif point == 0:
-            tangent = centers[1] - centers[0]
-        elif point == centers.shape[0] - 1:
-            tangent = centers[-1] - centers[-2]
-        else:
-            tangent = centers[point + 1] - centers[point - 1]
-        tangent_norm = np.linalg.norm(tangent)
-        if tangent_norm < 1.0e-9:
-            tangent = np.asarray([1.0, 0.0, 0.0])
-        else:
-            tangent = tangent / tangent_norm
-
-        if previous_u is None:
-            reference = (
-                np.asarray([0.0, 0.0, 1.0])
-                if abs(tangent[2]) < 0.9
-                else np.asarray([0.0, 1.0, 0.0])
-            )
-            u_axis = np.cross(tangent, reference)
-        else:
-            # Parallel-transport the previous normal into the new tangent plane.
-            u_axis = previous_u - np.dot(previous_u, tangent) * tangent
-            if np.linalg.norm(u_axis) < 1.0e-9:
-                reference = (
-                    np.asarray([0.0, 0.0, 1.0])
-                    if abs(tangent[2]) < 0.9
-                    else np.asarray([0.0, 1.0, 0.0])
-                )
-                u_axis = np.cross(tangent, reference)
-        u_axis /= np.linalg.norm(u_axis)
-        v_axis = np.cross(tangent, u_axis)
-        v_axis /= np.linalg.norm(v_axis)
-        previous_u = u_axis
-
-        plane_basis = np.column_stack((u_axis, v_axis))
-        planar_covariance = plane_basis.T @ (
-            0.5 * (covariance_plot[point] + covariance_plot[point].T)
-        ) @ plane_basis
-        eigenvalues, eigenvectors = np.linalg.eigh(planar_covariance)
-        if np.min(eigenvalues) < -1.0e-6:
+        symmetric_covariance = 0.5 * (
+            covariance_plot[point] + covariance_plot[point].T)
+        eigenvalues, eigenvectors = np.linalg.eigh(symmetric_covariance)
+        psd_tolerance = max(
+            1.0e-9, 1.0e-8 * max(float(np.max(np.abs(eigenvalues))), 1.0))
+        if np.min(eigenvalues) < -psd_tolerance:
             raise ValueError("position covariance is not positive semidefinite")
         eigenvalues = np.maximum(eigenvalues, 0.0)
-        covariance_root = (
+        symmetric_covariance_root = (
             eigenvectors @ np.diag(np.sqrt(eigenvalues)) @ eigenvectors.T)
-        offsets = scale * plane_basis @ covariance_root @ unit_circle
-        rings.append(center[np.newaxis, :] + offsets.T)
+        surface_offsets = scale * np.einsum(
+            "ij,abj->abi", symmetric_covariance_root, unit_surface)
+        generator_offsets = scale * np.einsum(
+            "ij,nj->ni", symmetric_covariance_root, unit_generators)
+        surfaces.append(center[np.newaxis, np.newaxis, :] + surface_offsets)
+        temporal_generators.append(center[np.newaxis, :] + generator_offsets)
 
-    return centers, np.asarray(rings)
+    return centers, np.asarray(surfaces), np.asarray(temporal_generators)
+
+
+def covariance_ellipsoid_mesh_indices(
+        sample_count, polar_sample_count, azimuth_sample_count,
+        target_time_sections=10, target_latitudes=6, target_meridians=12):
+    """Choose deterministic time sections and ellipsoid wireframe lines."""
+    if sample_count < 1:
+        raise ValueError("trajectory mesh requires at least one time section")
+    if polar_sample_count < 3:
+        raise ValueError("ellipsoid mesh requires at least three polar samples")
+    unique_azimuth_count = azimuth_sample_count - 1
+    if unique_azimuth_count < 3:
+        raise ValueError("ellipsoid mesh requires at least three azimuths")
+
+    section_count = min(target_time_sections, sample_count)
+    section_indices = np.unique(np.rint(
+        np.linspace(0, sample_count - 1, section_count)).astype(int))
+    latitude_count = min(target_latitudes, polar_sample_count - 2)
+    latitude_indices = np.unique(np.rint(np.linspace(
+        1, polar_sample_count - 2, latitude_count)).astype(int))
+    meridian_count = min(target_meridians, unique_azimuth_count)
+    meridian_indices = np.unique(np.floor(np.linspace(
+        0, unique_azimuth_count, meridian_count,
+        endpoint=False)).astype(int))
+    return section_indices, latitude_indices, meridian_indices
+
+
+def add_covariance_ellipsoid_wireframes(
+        axis, surfaces, section_indices, latitude_indices,
+        meridian_indices, dimensions):
+    """Draw latitude and meridian lines on selected full ellipsoid surfaces."""
+    for point in section_indices:
+        for latitude in latitude_indices:
+            coordinates = [
+                surfaces[point, latitude, :, dimension]
+                for dimension in dimensions]
+            axis.plot(
+                *coordinates, color="tab:blue", alpha=0.34, linewidth=0.65)
+        for meridian in meridian_indices:
+            coordinates = [
+                surfaces[point, :, meridian, dimension]
+                for dimension in dimensions]
+            axis.plot(
+                *coordinates, color="tab:blue", alpha=0.34, linewidth=0.65)
+
+
+def add_covariance_temporal_generators(axis, generators, dimensions):
+    """Connect identical unit-sphere directions across prediction times."""
+    if generators.shape[0] < 2:
+        return 0
+    for generator in range(generators.shape[1]):
+        coordinates = [
+            generators[:, generator, dimension] for dimension in dimensions]
+        axis.plot(
+            *coordinates, color="tab:blue", alpha=0.48, linewidth=0.75)
+    return generators.shape[1]
+
+
+def save_plan_view_ellipsoid_mesh(
+        mean_plot, truth_plot, surfaces, temporal_generators, horizons,
+        matched_indices, section_indices, latitude_indices,
+        meridian_indices, output):
+    """Render the plan-view projection of the full 3-D ellipsoid wireframe."""
+    fig, axis = plt.subplots(figsize=(8.5, 7.0))
+    add_covariance_ellipsoid_wireframes(
+        axis, surfaces, section_indices, latitude_indices,
+        meridian_indices, dimensions=(0, 1))
+    temporal_generator_count = add_covariance_temporal_generators(
+        axis, temporal_generators, dimensions=(0, 1))
+    axis.plot(
+        mean_plot[:, 0], mean_plot[:, 1], "-o", color="navy",
+        markersize=2.8, linewidth=1.9, label="predicted mean")
+    axis.plot(
+        truth_plot[:, 0], truth_plot[:, 1], "-x", color="tab:orange",
+        markersize=3.2, linewidth=1.5, label="ground truth (same i)")
+    axis.scatter(
+        mean_plot[0, 0], mean_plot[0, 1], marker="s", s=42,
+        color="navy", zorder=5)
+    axis.scatter(
+        truth_plot[0, 0], truth_plot[0, 1], marker="x", s=55,
+        color="tab:orange", zorder=6)
+    axis.scatter(
+        mean_plot[-1, 0], mean_plot[-1, 1], marker="^", s=58,
+        color="navy", zorder=5)
+    axis.scatter(
+        truth_plot[-1, 0], truth_plot[-1, 1], marker="v", s=58,
+        color="tab:orange", zorder=6)
+    for point in matched_indices[1:]:
+        axis.annotate(
+            f"t={horizons[point]:.1f}s",
+            (mean_plot[point, 0], mean_plot[point, 1]),
+            xytext=(0, -13), textcoords="offset points",
+            ha="center", va="top", fontsize=7, color="0.3",
+            bbox={
+                "boxstyle": "round,pad=0.15", "facecolor": "white",
+                "edgecolor": "none", "alpha": 0.80,
+            })
+
+    handles, labels = axis.get_legend_handles_labels()
+    handles.append(Line2D(
+        [0], [0], color="tab:blue", alpha=0.55, linewidth=1.0,
+        label="full pointwise nominal 95% covariance ellipsoids"))
+    labels.append("full pointwise nominal 95% covariance ellipsoids")
+    if temporal_generator_count:
+        handles.append(Line2D(
+            [0], [0], color="tab:blue", alpha=0.48, linewidth=0.75,
+            label="same sphere-direction rendering lines"))
+        labels.append("same sphere-direction rendering lines")
+    axis.legend(handles, labels, loc="upper left", fontsize=8)
+    axis.set(
+        xlabel="East [m]", ylabel="North [m]",
+        title=(
+            "Plan-view projection of the full 3-D covariance-ellipsoid mesh\n"
+            "Ellipsoid orientation and radii come from each full 3x3 covariance"),
+    )
+    axis.axis("equal")
+    axis.grid(alpha=0.25)
+    fig.text(
+        0.5, 0.015,
+        "Every grid lies on its pointwise 3-D covariance ellipsoid; temporal "
+        "connectors are rendering lines, not a simultaneous confidence tube.",
+        ha="center", fontsize=8, color="0.35")
+    # A near-vertical plan-view path can otherwise push the two-line title
+    # outside the canvas when equal data aspect is enforced.
+    fig.tight_layout(rect=(0.0, 0.035, 1.0, 0.90))
+    fig.savefig(output / "trajectory_cone_mesh.png", dpi=180)
+    plt.close(fig)
 
 
 def set_3d_data_aspect(axis, points):
@@ -354,32 +486,35 @@ def set_3d_data_aspect(axis, points):
     axis.set_xlim(minima[0] - padding[0], maxima[0] + padding[0])
     axis.set_ylim(minima[1] - padding[1], maxima[1] + padding[1])
     axis.set_zlim(minima[2] - padding[2], maxima[2] + padding[2])
-    axis.set_box_aspect(ranges)
+    axis.set_box_aspect(ranges + 2.0 * padding)
 
 
 def save_connected_3d_envelope(
         mean, truth, covariance, horizons, matched_indices,
         integration_contract, output):
-    """Render a connected covariance tube inspired by Auto ACAS cone figures."""
-    mean_plot, rings = covariance_envelope_rings(mean, covariance)
+    """Render full pointwise 3-D covariance ellipsoids as a wireframe mesh."""
+    mean_plot, surfaces, temporal_generators = covariance_ellipsoid_geometry(
+        mean, covariance)
     truth_plot = truth @ NED_TO_EAST_NORTH_ALTITUDE.T
+    section_indices, latitude_indices, meridian_indices = (
+        covariance_ellipsoid_mesh_indices(
+            surfaces.shape[0], surfaces.shape[1], surfaces.shape[2]))
+    save_plan_view_ellipsoid_mesh(
+        mean_plot, truth_plot, surfaces, temporal_generators, horizons,
+        matched_indices, section_indices, latitude_indices,
+        meridian_indices, output)
 
     fig = plt.figure(figsize=(10, 8))
     axis = fig.add_subplot(111, projection="3d")
-    axis.plot_surface(
-        rings[:, :, 0], rings[:, :, 1], rings[:, :, 2],
-        color="lightskyblue", alpha=0.22, linewidth=0.0,
-        antialiased=True, shade=False)
-    section_indices = np.unique(np.append(
-        np.arange(0, mean.shape[0], 5), mean.shape[0] - 1))
-    for point in section_indices:
-        axis.plot(
-            rings[point, :, 0], rings[point, :, 1], rings[point, :, 2],
-            color="tab:blue", alpha=0.42, linewidth=0.8)
+    add_covariance_ellipsoid_wireframes(
+        axis, surfaces, section_indices, latitude_indices,
+        meridian_indices, dimensions=(0, 1, 2))
+    temporal_generator_count = add_covariance_temporal_generators(
+        axis, temporal_generators, dimensions=(0, 1, 2))
 
     axis.plot(
         mean_plot[:, 0], mean_plot[:, 1], mean_plot[:, 2],
-        "-o", color="tab:blue", markersize=2.8, linewidth=1.8,
+        "-o", color="navy", markersize=2.8, linewidth=1.9,
         label="predicted mean")
     axis.plot(
         truth_plot[:, 0], truth_plot[:, 1], truth_plot[:, 2],
@@ -392,37 +527,99 @@ def save_connected_3d_envelope(
             [mean_plot[point, 2], truth_plot[point, 2]],
             color="0.3", linestyle=":", linewidth=1.0,
             label="same-index error" if order == 0 else None)
-    axis.scatter(*mean_plot[0], marker="s", s=42, color="tab:blue")
+    axis.scatter(*mean_plot[0], marker="s", s=42, color="navy")
     axis.scatter(*truth_plot[0], marker="x", s=55, color="tab:orange")
-    axis.scatter(*mean_plot[-1], marker="^", s=58, color="tab:blue")
+    axis.scatter(*mean_plot[-1], marker="^", s=58, color="navy")
     axis.scatter(*truth_plot[-1], marker="v", s=58, color="tab:orange")
 
     dt = integration_contract["trajectory_mean_integration_step_s"]
     axis.set(
         xlabel="East [m]", ylabel="North [m]", zlabel="Altitude [m]",
-        title=(
-            "Connected 95% trajectory uncertainty envelope\n"
-            "covariance sections joined along predicted mean; "
-            f"shared mean/cov dt={dt:.3f}s"),
     )
+    fig.suptitle(
+        "Full 3-D covariance-ellipsoid trajectory mesh\n"
+        "Pointwise nominal 95% ellipsoids from each full covariance; "
+        f"shared mean/cov dt={dt:.3f}s",
+        y=0.965)
     axis.view_init(elev=27, azim=-58)
     set_3d_data_aspect(
         axis,
-        np.vstack((rings.reshape(-1, 3), mean_plot, truth_plot)),
+        np.vstack((surfaces.reshape(-1, 3), mean_plot, truth_plot)),
     )
     handles, labels = axis.get_legend_handles_labels()
-    handles.append(Patch(
-        facecolor="lightskyblue", edgecolor="tab:blue", alpha=0.3,
-        label="connected 95% covariance envelope"))
-    labels.append("connected 95% covariance envelope")
-    axis.legend(handles, labels, loc="upper left", fontsize=8)
+    handles.append(Line2D(
+        [0], [0], color="tab:blue", alpha=0.55, linewidth=1.0,
+        label="full pointwise nominal 95% covariance ellipsoids"))
+    labels.append("full pointwise nominal 95% covariance ellipsoids")
+    if temporal_generator_count:
+        handles.append(Line2D(
+            [0], [0], color="tab:blue", alpha=0.48, linewidth=0.75,
+            label="same sphere-direction rendering lines"))
+        labels.append("same sphere-direction rendering lines")
+    fig.legend(
+        handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.89),
+        ncol=2, fontsize=8)
     fig.text(
         0.5, 0.015,
-        "Physical East/North/altitude ranges are preserved (no vertical exaggeration).",
+        "Full covariance determines every ellipsoid surface; temporal "
+        "connectors are rendering lines and physical axes are not exaggerated.",
         ha="center", fontsize=8, color="0.35")
-    fig.tight_layout(rect=(0.0, 0.035, 1.0, 1.0))
+    # Keep the figure-owned title and legend independent of the 3-D axes box;
+    # equal physical scaling changes that box substantially across track shapes.
+    fig.tight_layout(rect=(0.0, 0.035, 1.0, 0.78))
     fig.savefig(output / "trajectory_cone_3d.png", dpi=180)
     plt.close(fig)
+    return {
+        "geometry": (
+            "sampled wireframe surfaces of full nominal pointwise 3-D "
+            "position-covariance ellipsoids centered on the predicted mean"),
+        "render_style": "wireframe mesh",
+        "time_section_count": int(section_indices.size),
+        "generator_line_count": int(temporal_generator_count),
+        "temporal_generator_line_count": int(temporal_generator_count),
+        "time_section_indices": section_indices.tolist(),
+        "rendered_latitude_indices": latitude_indices.tolist(),
+        "rendered_meridian_indices": meridian_indices.tolist(),
+        "section_selection_policy": (
+            "uniform rounded indices including the first and last causal "
+            "sample"),
+        "ellipsoid_surface_definition": (
+            "p = mean + sqrt(chi2_3(0.95)) * "
+            "principal_symmetric_sqrt(P_plot) * u, ||u|| = 1"),
+        "parameterization": (
+            "fixed East-North-altitude unit-sphere grid reused at every "
+            "horizon; eigenvector signs and ordering do not define mesh "
+            "correspondence"),
+        "polar_samples_including_poles": int(surfaces.shape[1]),
+        "azimuth_samples_including_closed_seam": int(surfaces.shape[2]),
+        "pointwise_position_ellipsoid_nominal_confidence_level": 0.95,
+        "chi_square_degrees_of_freedom": 3,
+        "chi_square_quantile_df3": CHI_SQUARE_95_DF3,
+        "full_rank_required_for_exact_95_percent_probability": True,
+        "path_normal_projection": False,
+        "plan_view_semantics": (
+            "East-North orthogonal projection of the pointwise 3-D df=3 "
+            "ellipsoid mesh; not a 95% 2-D marginal contour"),
+        "temporal_connector_semantics": (
+            "fixed global unit-sphere directions mapped by each symmetric "
+            "covariance square root and connected for visualization only; "
+            "no inter-time probability coupling is implied"),
+        "confidence_calibration_status": (
+            "nominal covariance confidence; rendering alone does not "
+            "demonstrate holdout calibration"),
+        "simultaneous_trajectory_confidence_tube": False,
+        "auto_acas_masd_reconstruction": False,
+        "uncertainty_scope": (
+            "project EKF position covariance plus propagated model/process "
+            "uncertainty; not the complete Figure 8 uncertainty roll-up"),
+        "coordinate_axes": "East, North, altitude",
+        "covariance_transform": "P_plot = T * P_NED * T^T",
+        "vertical_exaggeration": False,
+        "visual_reference": (
+            "project-owned wireframe inspired by Figure 8's time-growing "
+            "uncertainty-envelope concept; ellipsoid geometry and mesh "
+            "topology are not source-defined"),
+    }
 
 
 def save_example(arrays_path: Path, output: Path):
@@ -661,7 +858,7 @@ def save_example(arrays_path: Path, output: Path):
     fig.savefig(output / "trajectory_vertical_error.png", dpi=160)
     plt.close(fig)
 
-    save_connected_3d_envelope(
+    mesh_contract = save_connected_3d_envelope(
         mean, truth, covariance_for_example, horizons, matched_indices,
         integration_contract, output)
     return {
@@ -674,16 +871,7 @@ def save_example(arrays_path: Path, output: Path):
             f"prediction[i] and ground_truth[i] share time_offsets_s[i]; "
             f"i=0..{point_count - 1}"),
         "integration_contract": integration_contract,
-        "connected_3d_envelope_contract": {
-            "geometry": (
-                "normal-plane full-position-covariance sections connected "
-                "along the predicted mean"),
-            "confidence_level": 0.95,
-            "chi_square_quantile_df3": CHI_SQUARE_95_DF3,
-            "coordinate_axes": "East, North, altitude",
-            "covariance_transform": "P_plot = T * P_NED * T^T",
-            "vertical_exaggeration": False,
-        },
+        "connected_3d_envelope_contract": mesh_contract,
         "vertical_error_sign_contract": (
             "truth_altitude - prediction_altitude; positive means truth higher"),
         "terminal_horizontal_absolute_error_m": (
@@ -748,7 +936,8 @@ def main() -> int:
         ] + (["initial_alignment_decomposition.png"] if alignment_plot else []) \
           + (["trajectory_cone_example.png", "trajectory_start_aligned.png",
               "trajectory_vertical_start_aligned.png",
-              "trajectory_vertical_error.png", "trajectory_cone_3d.png"]
+              "trajectory_vertical_error.png", "trajectory_cone_mesh.png",
+              "trajectory_cone_3d.png"]
              if example else []),
         "representative_cone": example,
     }

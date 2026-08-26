@@ -90,6 +90,7 @@ install(PROGRAMS
     analysis/expand_cone_scenarios.py
     analysis/expand_propagation_scenarios.py
     analysis/plot_trajectory_cone_results.py
+    analysis/plot_selected_trajectory_cone_html.py
     analysis/summarize_cone_batch.py
     DESTINATION lib/${PROJECT_NAME}
 )
