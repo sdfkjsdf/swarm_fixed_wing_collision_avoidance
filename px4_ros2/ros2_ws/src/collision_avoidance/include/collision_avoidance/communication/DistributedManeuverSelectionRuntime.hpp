@@ -3,12 +3,14 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <rclcpp/rclcpp.hpp>
 
 #include <px4_msgs/msg/estimator_trajectory_belief.hpp>
 
 #include <collision_avoidance/communication/TrajectoryIntentTransport.hpp>
+#include <collision_avoidance/msg/maneuver_selection_decision.hpp>
 #include <collision_avoidance/selection/ManeuverSelectionWorker.hpp>
 
 namespace collision_avoidance::communication
@@ -34,6 +36,7 @@ public:
         const DistributedManeuverSelectionRuntime &) = delete;
 
     bool enabled() const noexcept;
+    void setActivationEnabled(bool enabled) noexcept;
 
 private:
     void onBelief(
@@ -42,13 +45,17 @@ private:
 
     rclcpp::Node & m_node;
     int m_vehicle_id{0};
-    int m_remote_vehicle_id{-1};
+    int m_total_agent_count{0};
     bool m_enabled{false};
     DecisionCallback m_decision_callback;
     selection::ManeuverSelectionWorker m_worker;
 
     std::unique_ptr<TrajectoryIntentPublisher> m_intent_publisher;
-    std::unique_ptr<TrajectoryIntentSubscription> m_intent_subscription;
+    rclcpp::Publisher<
+        collision_avoidance::msg::ManeuverSelectionDecision>::SharedPtr
+        m_decision_publisher;
+    std::vector<std::unique_ptr<TrajectoryIntentSubscription>>
+        m_intent_subscriptions;
     rclcpp::Subscription<px4_msgs::msg::EstimatorTrajectoryBelief>::SharedPtr
         m_belief_subscription;
     rclcpp::TimerBase::SharedPtr m_output_timer;

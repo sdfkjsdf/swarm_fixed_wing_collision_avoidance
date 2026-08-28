@@ -39,8 +39,10 @@
 #include <atomic>
 #include <memory>
 #include <thread>
+#include <utility>
 #include <vector>
 #include <cmath>
+#include <functional>
 
 #include <px4_ros2/components/mode.hpp>
 #include <px4_ros2/control/setpoint_types/fixedwing/lateral_longitudinal.hpp>
@@ -52,6 +54,7 @@
 
 #include <collision_avoidance/common/GlobalTypes.hpp>
 #include <collision_avoidance/guidance/FlockingGuidance.hpp>
+#include <collision_avoidance/guidance/PointConvergenceGuidance.hpp>
 #include <collision_avoidance/selection/ManeuverSelectionWorker.hpp>
 
 
@@ -75,6 +78,12 @@ public:
     void setCollisionAvoidanceShadowOnly(bool shadow_only)
     {
         m_collision_avoidance_shadow_only_mt = shadow_only;
+    }
+
+    void setManeuverActivationGateCallback(
+        std::function<void(bool)> callback)
+    {
+        m_maneuver_activation_gate_callback_mt = std::move(callback);
     }
 
     /* Executor 가 Preflight 종료 시점에 캡처한 cruise altitude / 초기 코스를 주입.
@@ -121,6 +130,9 @@ private:
     /* ── immutable: Flocking 모듈 (포인터 자체는 생성 후 불변,
                     dereference 는 rt_loop 만) ── */
     std::unique_ptr<FlockingGuidance> m_flocking;
+    std::unique_ptr<collision_avoidance::guidance::PointConvergenceGuidance>
+        m_point_convergence;
+    bool m_point_convergence_test_mode{false};
 
     /* ── mt: rt_thread 핸들 ── */
     std::thread m_rt_thread_mt;
@@ -159,4 +171,5 @@ private:
         m_maneuver_decision_mt{};
     bool m_has_maneuver_decision_mt{false};
     bool m_collision_avoidance_shadow_only_mt{true};
+    std::function<void(bool)> m_maneuver_activation_gate_callback_mt;
 };

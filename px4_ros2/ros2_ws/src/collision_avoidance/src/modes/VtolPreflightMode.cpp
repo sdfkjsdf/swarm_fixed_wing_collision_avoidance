@@ -12,6 +12,20 @@ VtolPreflightMode::VtolPreflightMode(rclcpp::Node & node, int vehicle_id, int to
     m_vehicle_id      = vehicle_id;
     m_total_agent_num = total_agent_num;
 
+    if (!_node.has_parameter("preflight_desired_course_rad")) {
+        _node.declare_parameter<double>(
+            "preflight_desired_course_rad", 0.0);
+    }
+    if (!_node.has_parameter("preflight_desired_ground_speed_mps")) {
+        _node.declare_parameter<double>(
+            "preflight_desired_ground_speed_mps", 15.0);
+    }
+    m_desired_course = static_cast<float>(
+        _node.get_parameter("preflight_desired_course_rad").as_double());
+    m_desired_ground_speed = static_cast<float>(
+        _node.get_parameter(
+            "preflight_desired_ground_speed_mps").as_double());
+
     /* 라이브러리 setpoint / VTOL / GlobalPosition 핸들 */
     _fw_setpoint    = std::make_shared<px4_ros2::FwLateralLongitudinalSetpointType>(*this);
     _mc_trajectory  = std::make_shared<px4_ros2::TrajectorySetpointType>(*this);

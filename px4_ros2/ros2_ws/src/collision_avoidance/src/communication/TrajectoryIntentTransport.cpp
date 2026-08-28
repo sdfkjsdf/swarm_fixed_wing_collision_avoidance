@@ -12,6 +12,13 @@ namespace
 using estimation::TrajectorySample;
 using estimation::Vec3;
 
+rclcpp::SensorDataQoS intentQos(std::size_t history_depth)
+{
+    rclcpp::SensorDataQoS qos;
+    qos.keep_last(history_depth);
+    return qos;
+}
+
 std::array<float, 18> encodeCompressedMean(
     const TrajectorySample & sample) noexcept
 {
@@ -87,9 +94,10 @@ estimation::TrajectoryIntentPacket fromRosMessage(
 
 TrajectoryIntentPublisher::TrajectoryIntentPublisher(
     rclcpp::Node & node,
-    const std::string & topic_name)
+    const std::string & topic_name,
+    std::size_t history_depth)
 : m_publisher(node.create_publisher<collision_avoidance::msg::TrajectoryIntent>(
-      topic_name, rclcpp::SensorDataQoS()))
+      topic_name, intentQos(history_depth)))
 {
 }
 
@@ -102,12 +110,13 @@ void TrajectoryIntentPublisher::publish(
 TrajectoryIntentSubscription::TrajectoryIntentSubscription(
     rclcpp::Node & node,
     const std::string & topic_name,
-    PacketCallback callback)
+    PacketCallback callback,
+    std::size_t history_depth)
 {
     m_subscription =
         node.create_subscription<collision_avoidance::msg::TrajectoryIntent>(
             topic_name,
-            rclcpp::SensorDataQoS(),
+            intentQos(history_depth),
             [callback = std::move(callback)](
                 collision_avoidance::msg::TrajectoryIntent::ConstSharedPtr message) {
                 if (callback) {

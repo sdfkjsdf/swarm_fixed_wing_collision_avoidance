@@ -67,6 +67,26 @@ cs::CandidateIntentSet parallelCandidates(
     return candidates;
 }
 
+cs::ExhaustiveCandidateIntentSet exhaustiveParallelCandidates(
+    std::uint64_t timestamp_us,
+    double base_east,
+    double candidate_spacing_m)
+{
+    cs::ExhaustiveCandidateIntentSet candidates{};
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+        candidates[index] = linearIntent(
+            timestamp_us,
+            static_cast<std::uint8_t>(index),
+            0.0,
+            base_east + candidate_spacing_m * static_cast<double>(index),
+            100.0,
+            10.0,
+            0.0,
+            0.0);
+    }
+    return candidates;
+}
+
 }  // namespace
 
 TEST(ManeuverCombinationEvaluator, EvaluatesAllNineAndKeepsWindowPmrValues)
@@ -234,4 +254,114 @@ TEST(ManeuverCombinationEvaluator, FormatsCompleteNineRowTable)
         row_count += value == '\n' ? 1U : 0U;
     }
     EXPECT_EQ(row_count, 11U);
+}
+
+TEST(JointManeuverCombinationEvaluator, EvaluatesAllFiveAircraftCombinations)
+{
+    constexpr std::uint64_t timestamp_us = 7'000'000ULL;
+    cs::MultiAircraftCandidateIntentSets candidate_sets{};
+    for (std::size_t aircraft = 0;
+         aircraft < cs::kMaximumSelectionAircraft; ++aircraft) {
+        const double base_east = static_cast<double>(aircraft) * 100.0;
+        candidate_sets[aircraft] = parallelCandidates(
+            timestamp_us,
+            {base_east, base_east + 5.0, base_east + 10.0});
+    }
+
+    cs::JointManeuverCombinationEvaluator evaluator;
+    cs::JointManeuverEvaluation evaluation;
+    ASSERT_TRUE(evaluator.evaluate(
+        timestamp_us,
+        candidate_sets,
+        cs::kMaximumSelectionAircraft,
+        evaluation));
+    EXPECT_EQ(evaluation.aircraft_count, 5U);
+    EXPECT_EQ(evaluation.combination_count, 243U);
+    ASSERT_TRUE(evaluation.has_best);
+    const auto & best = evaluation.combinations[
+        evaluation.best_combination_index];
+    EXPECT_TRUE(best.valid);
+    EXPECT_TRUE(best.all_pairs_feasible);
+    EXPECT_TRUE(best.selected_best);
+    EXPECT_EQ(best.evaluated_pair_count, 10U);
+    EXPECT_GT(best.minimum_ad_m, 0.0);
+    for (std::size_t aircraft = 0; aircraft < 5; ++aircraft) {
+        EXPECT_LT(best.candidate_slots[aircraft], 3U);
+    }
+}
+
+TEST(JointManeuverCombinationEvaluator, UsesMaximinFallbackWhenAllAreUnsafe)
+{
+    constexpr std::uint64_t timestamp_us = 8'000'000ULL;
+    cs::MultiAircraftCandidateIntentSets candidate_sets{};
+    for (std::size_t aircraft = 0;
+         aircraft < cs::kMaximumSelectionAircraft; ++aircraft) {
+        const double base_east = static_cast<double>(aircraft);
+        candidate_sets[aircraft] = parallelCandidates(
+            timestamp_us,
+            {base_east, base_east + 1.0, base_east + 2.0});
+    }
+
+    cs::JointManeuverCombinationEvaluator evaluator;
+    cs::JointManeuverEvaluation evaluation;
+    ASSERT_TRUE(evaluator.evaluate(
+        timestamp_us, candidate_sets, 5, evaluation));
+    const auto & best = evaluation.combinations[
+        evaluation.best_combination_index];
+    EXPECT_TRUE(best.valid);
+    EXPECT_FALSE(best.all_pairs_feasible);
+    EXPECT_LE(best.minimum_ad_m, 0.0);
+    for (std::size_t index = 0;
+         index < evaluation.combination_count; ++index) {
+        const auto & combination = evaluation.combinations[index];
+        if (combination.valid) {
+            EXPECT_GE(best.minimum_ad_m, combination.minimum_ad_m - 1.0e-12);
+        }
+    }
+}
+
+TEST(ExhaustiveManeuverCombinationEvaluator, EvaluatesAllFortyNineTwoAircraftCombinations)
+{
+    constexpr std::uint64_t timestamp_us = 9'000'000ULL;
+    cs::MultiAircraftExhaustiveCandidateIntentSets candidate_sets{};
+    candidate_sets[0] = exhaustiveParallelCandidates(timestamp_us, 0.0, 1.0);
+    candidate_sets[1] = exhaustiveParallelCandidates(timestamp_us, 100.0, 1.0);
+
+    cs::ExhaustiveManeuverCombinationEvaluator evaluator;
+    cs::ExhaustiveManeuverEvaluation evaluation;
+    ASSERT_TRUE(evaluator.evaluate(
+        timestamp_us, candidate_sets, 2U, evaluation));
+    EXPECT_EQ(evaluation.combination_count, 49U);
+    EXPECT_EQ(evaluation.evaluated_unique_pair_count, 49U);
+    EXPECT_EQ(evaluation.best_combination_index, 6U);
+    ASSERT_TRUE(evaluation.has_best);
+    EXPECT_EQ(evaluation.best_combination.candidate_slots[0], 0U);
+    EXPECT_EQ(evaluation.best_combination.candidate_slots[1], 6U);
+    EXPECT_NEAR(evaluation.best_combination.minimum_pmr_m, 106.0, 1.0e-12);
+    EXPECT_NEAR(evaluation.best_combination.minimum_ad_m, 96.0, 1.0e-12);
+}
+
+TEST(ExhaustiveManeuverCombinationEvaluator, EvaluatesAllFiveAircraftCombinations)
+{
+    constexpr std::uint64_t timestamp_us = 10'000'000ULL;
+    cs::MultiAircraftExhaustiveCandidateIntentSets candidate_sets{};
+    for (std::size_t aircraft = 0;
+         aircraft < cs::kMaximumSelectionAircraft; ++aircraft) {
+        candidate_sets[aircraft] = exhaustiveParallelCandidates(
+            timestamp_us, static_cast<double>(aircraft) * 100.0, 1.0);
+    }
+
+    cs::ExhaustiveManeuverCombinationEvaluator evaluator;
+    cs::ExhaustiveManeuverEvaluation evaluation;
+    ASSERT_TRUE(evaluator.evaluate(
+        timestamp_us,
+        candidate_sets,
+        cs::kMaximumSelectionAircraft,
+        evaluation));
+    EXPECT_EQ(evaluation.combination_count, 16'807U);
+    EXPECT_EQ(evaluation.evaluated_unique_pair_count, 490U);
+    ASSERT_TRUE(evaluation.has_best);
+    EXPECT_TRUE(evaluation.best_combination.valid);
+    EXPECT_TRUE(evaluation.best_combination.all_pairs_feasible);
+    EXPECT_EQ(evaluation.best_combination.evaluated_pair_count, 10U);
 }

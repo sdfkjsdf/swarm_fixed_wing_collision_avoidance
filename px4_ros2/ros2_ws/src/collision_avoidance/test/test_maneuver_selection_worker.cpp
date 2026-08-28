@@ -4,7 +4,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <thread>
+#include <vector>
 
 #include <collision_avoidance/selection/ManeuverSelectionWorker.hpp>
 
@@ -36,9 +38,13 @@ cs::ManeuverSelectionBeliefSnapshot beliefSnapshot(
     return snapshot;
 }
 
-cs::ManeuverSelectionWorkerParams params()
+cs::ManeuverSelectionWorkerParams params(
+    int vehicle_id = 0,
+    int total_agent_count = 2)
 {
     cs::ManeuverSelectionWorkerParams value;
+    value.vehicle_id = vehicle_id;
+    value.total_agent_count = total_agent_count;
     value.predictor_params.V_min = 10.0;
     value.predictor_params.V_max = 25.0;
     value.evaluator_params.desired_separation_distance_m = 10.0;
@@ -66,11 +72,11 @@ void exchangePackets(
 {
     for (std::size_t index = 0;
          index < first_output.intent_packet_count; ++index) {
-        ASSERT_TRUE(second.pushRemoteIntent(first_output.intent_packets[index]));
+        ASSERT_TRUE(second.pushRemoteIntent(0, first_output.intent_packets[index]));
     }
     for (std::size_t index = 0;
          index < second_output.intent_packet_count; ++index) {
-        ASSERT_TRUE(first.pushRemoteIntent(second_output.intent_packets[index]));
+        ASSERT_TRUE(first.pushRemoteIntent(1, second_output.intent_packets[index]));
     }
     EXPECT_TRUE(first.processPendingForTest());
     EXPECT_TRUE(second.processPendingForTest());
@@ -86,11 +92,11 @@ TEST(ManeuverSelectionWorker, ImplementsTwentyAndFourHertzCadenceWithoutSleeps)
     auto output = pushBeliefAndProcess(
         worker, beliefSnapshot(start, 0.0, 0.0, 20.0, 0.0));
     ASSERT_EQ(output.intent_packet_count, 3U);
-    EXPECT_EQ(output.selection_epoch, 1U);
+    EXPECT_EQ(output.selection_epoch, 4U);
     EXPECT_FALSE(output.has_decision);
-    for (const auto & packet : output.intent_packets) {
-        EXPECT_EQ(packet.selection_epoch, 1U);
-        EXPECT_EQ(packet.source_timestamp_us, start);
+    for (std::size_t index = 0; index < output.intent_packet_count; ++index) {
+        EXPECT_EQ(output.intent_packets[index].selection_epoch, 4U);
+        EXPECT_EQ(output.intent_packets[index].source_timestamp_us, start);
     }
 
     EXPECT_TRUE(worker.pushOwnshipBelief(
@@ -102,26 +108,27 @@ TEST(ManeuverSelectionWorker, ImplementsTwentyAndFourHertzCadenceWithoutSleeps)
         worker,
         beliefSnapshot(start + 50'000, 1.0, 0.0, 20.0, 0.0));
     EXPECT_EQ(output.intent_packet_count, 3U);
-    EXPECT_EQ(output.selection_epoch, 1U);
+    EXPECT_EQ(output.selection_epoch, 4U);
 
     for (std::uint64_t offset : {100'000ULL, 150'000ULL, 200'000ULL}) {
         output = pushBeliefAndProcess(
             worker,
             beliefSnapshot(start + offset, 20.0e-6 * offset, 0.0, 20.0, 0.0));
-        EXPECT_EQ(output.selection_epoch, 1U);
+        EXPECT_EQ(output.selection_epoch, 4U);
         EXPECT_FALSE(output.has_decision);
     }
 
     output = pushBeliefAndProcess(
         worker,
-        beliefSnapshot(start + 250'000, 5.0, 0.0, 20.0, 0.0));
+        beliefSnapshot(start + 251'000, 5.0, 0.0, 20.0, 0.0));
     EXPECT_TRUE(output.has_decision);
+    EXPECT_EQ(output.decision.selection_timestamp_us, start + 250'000);
     EXPECT_FALSE(output.decision.coordination_qualified);
     EXPECT_TRUE(output.decision.previous_best_retained);
-    EXPECT_EQ(output.selection_epoch, 2U);
+    EXPECT_EQ(output.selection_epoch, 5U);
     ASSERT_EQ(output.intent_packet_count, 3U);
-    for (const auto & packet : output.intent_packets) {
-        EXPECT_EQ(packet.selection_epoch, 2U);
+    for (std::size_t index = 0; index < output.intent_packet_count; ++index) {
+        EXPECT_EQ(output.intent_packets[index].selection_epoch, 5U);
     }
 }
 
@@ -129,7 +136,7 @@ TEST(ManeuverSelectionWorker, DoesNotMixAdjacentIncompleteRemoteEpochs)
 {
     const auto worker_params = params();
     cs::ManeuverSelectionWorker ownship(worker_params);
-    cs::ManeuverSelectionWorker remote(worker_params);
+    cs::ManeuverSelectionWorker remote(params(1));
     constexpr std::uint64_t start = 2'000'000ULL;
 
     const auto own_output = pushBeliefAndProcess(
@@ -137,11 +144,11 @@ TEST(ManeuverSelectionWorker, DoesNotMixAdjacentIncompleteRemoteEpochs)
     auto remote_output = pushBeliefAndProcess(
         remote, beliefSnapshot(start, 45.0, 0.0, -20.0, 0.0));
 
-    ASSERT_TRUE(ownship.pushRemoteIntent(remote_output.intent_packets[0]));
-    ASSERT_TRUE(ownship.pushRemoteIntent(remote_output.intent_packets[1]));
+    ASSERT_TRUE(ownship.pushRemoteIntent(1, remote_output.intent_packets[0]));
+    ASSERT_TRUE(ownship.pushRemoteIntent(1, remote_output.intent_packets[1]));
     auto future_epoch_packet = remote_output.intent_packets[2];
-    future_epoch_packet.selection_epoch = 2;
-    ASSERT_TRUE(ownship.pushRemoteIntent(future_epoch_packet));
+    future_epoch_packet.selection_epoch += 1;
+    ASSERT_TRUE(ownship.pushRemoteIntent(1, future_epoch_packet));
     EXPECT_TRUE(ownship.processPendingForTest());
 
     for (std::uint64_t offset : {50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
@@ -165,7 +172,7 @@ TEST(ManeuverSelectionWorker, RetainsLastCompleteSetUntilNewRefreshIsComplete)
 {
     const auto worker_params = params();
     cs::ManeuverSelectionWorker ownship(worker_params);
-    cs::ManeuverSelectionWorker remote(worker_params);
+    cs::ManeuverSelectionWorker remote(params(1));
     constexpr std::uint64_t start = 2'500'000ULL;
 
     static_cast<void>(pushBeliefAndProcess(
@@ -173,13 +180,13 @@ TEST(ManeuverSelectionWorker, RetainsLastCompleteSetUntilNewRefreshIsComplete)
     const auto remote_output = pushBeliefAndProcess(
         remote, beliefSnapshot(start, 45.0, 0.0, -20.0, 0.0));
     for (const auto & packet : remote_output.intent_packets) {
-        ASSERT_TRUE(ownship.pushRemoteIntent(packet));
+        ASSERT_TRUE(ownship.pushRemoteIntent(1, packet));
     }
     EXPECT_TRUE(ownship.processPendingForTest());
 
     auto partial_next_refresh = remote_output.intent_packets[0];
     partial_next_refresh.source_timestamp_us = start + 50'000;
-    ASSERT_TRUE(ownship.pushRemoteIntent(partial_next_refresh));
+    ASSERT_TRUE(ownship.pushRemoteIntent(1, partial_next_refresh));
     EXPECT_TRUE(ownship.processPendingForTest());
 
     for (std::uint64_t offset : {50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
@@ -194,14 +201,14 @@ TEST(ManeuverSelectionWorker, RetainsLastCompleteSetUntilNewRefreshIsComplete)
         beliefSnapshot(start + 250'000, -40.0, 0.0, 20.0, 0.0));
     ASSERT_TRUE(decision_output.has_decision);
     EXPECT_TRUE(decision_output.decision.coordination_qualified);
-    EXPECT_EQ(decision_output.decision.remote_selection_epoch, 1U);
+    EXPECT_EQ(decision_output.decision.remote_selection_epoch, 10U);
 }
 
 TEST(ManeuverSelectionWorker, IndependentlySelectsAndRequestsActivation)
 {
     const auto worker_params = params();
     cs::ManeuverSelectionWorker first(worker_params);
-    cs::ManeuverSelectionWorker second(worker_params);
+    cs::ManeuverSelectionWorker second(params(1));
     constexpr std::uint64_t start = 3'000'000ULL;
 
     cs::ManeuverSelectionWorkerOutput first_output;
@@ -237,8 +244,142 @@ TEST(ManeuverSelectionWorker, IndependentlySelectsAndRequestsActivation)
     EXPECT_TRUE(second_output.decision.activation_requested);
     EXPECT_LT(first_output.decision.ad_m, 0.0);
     EXPECT_LT(second_output.decision.ad_m, 0.0);
-    EXPECT_EQ(first_output.decision.local_selection_epoch, 1U);
-    EXPECT_EQ(second_output.decision.local_selection_epoch, 1U);
+    EXPECT_EQ(first_output.decision.local_selection_epoch, 12U);
+    EXPECT_EQ(second_output.decision.local_selection_epoch, 12U);
+}
+
+TEST(ManeuverSelectionWorker, DoesNotActivateWhileCurrentPlanIsSafe)
+{
+    cs::ManeuverSelectionWorker first(params());
+    cs::ManeuverSelectionWorker second(params(1));
+    constexpr std::uint64_t start = 5'000'000ULL;
+
+    cs::ManeuverSelectionWorkerOutput first_output;
+    cs::ManeuverSelectionWorkerOutput second_output;
+    for (std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                start + offset, -200.0 + 20.0 * elapsed_s,
+                0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                start + offset, 200.0 - 20.0 * elapsed_s,
+                0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 250'000, -195.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 250'000, 195.0, 0.0, -20.0, 0.0));
+
+    ASSERT_TRUE(first_output.has_decision);
+    ASSERT_TRUE(second_output.has_decision);
+    EXPECT_TRUE(first_output.decision.coordination_qualified);
+    EXPECT_TRUE(second_output.decision.coordination_qualified);
+    EXPECT_GT(first_output.decision.ad_m, 0.0);
+    EXPECT_GT(second_output.decision.ad_m, 0.0);
+    EXPECT_FALSE(first_output.decision.activation_requested);
+    EXPECT_FALSE(second_output.decision.activation_requested);
+}
+
+TEST(ManeuverSelectionWorker, MonitorsActivationBetweenSelectionEvents)
+{
+    cs::ManeuverSelectionWorker first(params());
+    cs::ManeuverSelectionWorker second(params(1));
+    constexpr std::uint64_t start = 6'000'000ULL;
+
+    cs::ManeuverSelectionWorkerOutput first_output;
+    cs::ManeuverSelectionWorkerOutput second_output;
+    for (std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(start + offset, -200.0, 0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(start + offset, 200.0, 0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 250'000, -200.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 250'000, 200.0, 0.0, -20.0, 0.0));
+    exchangePackets(first, second, first_output, second_output);
+    ASSERT_TRUE(first_output.has_decision);
+    ASSERT_FALSE(first_output.decision.activation_requested);
+    const std::uint64_t selected_epoch =
+        first_output.decision.local_selection_epoch;
+
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 300'000, -20.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 300'000, 20.0, 0.0, -20.0, 0.0));
+    exchangePackets(first, second, first_output, second_output);
+
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 350'000, -19.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 350'000, 19.0, 0.0, -20.0, 0.0));
+    ASSERT_TRUE(first_output.has_decision);
+    ASSERT_TRUE(second_output.has_decision);
+    EXPECT_TRUE(first_output.decision.activation_requested);
+    EXPECT_TRUE(second_output.decision.activation_requested);
+    EXPECT_TRUE(first_output.decision.activation_just_started);
+    EXPECT_TRUE(second_output.decision.activation_just_started);
+    EXPECT_EQ(first_output.decision.local_selection_epoch, selected_epoch);
+    EXPECT_EQ(second_output.decision.local_selection_epoch, selected_epoch);
+}
+
+TEST(ManeuverSelectionWorker, WarmsSelectionButDoesNotActivateBeforeGateOpens)
+{
+    cs::ManeuverSelectionWorker first(params());
+    cs::ManeuverSelectionWorker second(params(1));
+    first.setActivationEnabled(false);
+    second.setActivationEnabled(false);
+    constexpr std::uint64_t start = 7'000'000ULL;
+
+    cs::ManeuverSelectionWorkerOutput first_output;
+    cs::ManeuverSelectionWorkerOutput second_output;
+    for (std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(start + offset, -20.0, 0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(start + offset, 20.0, 0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 250'000, -20.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 250'000, 20.0, 0.0, -20.0, 0.0));
+    ASSERT_TRUE(first_output.has_decision);
+    ASSERT_TRUE(second_output.has_decision);
+    EXPECT_TRUE(first_output.decision.coordination_qualified);
+    EXPECT_TRUE(second_output.decision.coordination_qualified);
+    EXPECT_LT(first_output.decision.ad_m, 0.0);
+    EXPECT_LT(second_output.decision.ad_m, 0.0);
+    EXPECT_FALSE(first_output.decision.activation_requested);
+    EXPECT_FALSE(second_output.decision.activation_requested);
+
+    first.setActivationEnabled(true);
+    second.setActivationEnabled(true);
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 300'000, -19.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 300'000, 19.0, 0.0, -20.0, 0.0));
+    ASSERT_TRUE(first_output.has_decision);
+    ASSERT_TRUE(second_output.has_decision);
+    EXPECT_TRUE(first_output.decision.activation_requested);
+    EXPECT_TRUE(second_output.decision.activation_requested);
+    EXPECT_TRUE(first_output.decision.activation_just_started);
+    EXPECT_TRUE(second_output.decision.activation_just_started);
 }
 
 TEST(ManeuverSelectionWorker, StartsStopsAndKeepsInstancesIndependent)
@@ -280,4 +421,161 @@ TEST(ManeuverSelectionWorker, StartsStopsAndKeepsInstancesIndependent)
     EXPECT_EQ(second_output->generated_timestamp_us, 8'000'000ULL);
     EXPECT_EQ(first.droppedInputCount(), 0U);
     EXPECT_EQ(second.droppedOutputCount(), 0U);
+}
+
+TEST(ManeuverSelectionWorker, FiveAircraftWorkersSelectSameJointTuple)
+{
+    constexpr std::size_t aircraft_count = 5;
+    constexpr std::uint64_t start = 9'000'000ULL;
+    constexpr double radius_m = 45.0;
+    constexpr double speed_mps = 20.0;
+    constexpr double two_pi = 2.0 * M_PI;
+
+    std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, aircraft_count>
+        workers;
+    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+        workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
+            params(static_cast<int>(aircraft), aircraft_count));
+    }
+
+    std::array<cs::ManeuverSelectionWorkerOutput, aircraft_count> outputs{};
+    for (const std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
+        for (std::size_t aircraft = 0;
+             aircraft < aircraft_count; ++aircraft) {
+            const double angle = two_pi * static_cast<double>(aircraft)
+                / static_cast<double>(aircraft_count);
+            const double unit_north = std::cos(angle);
+            const double unit_east = std::sin(angle);
+            outputs[aircraft] = pushBeliefAndProcess(
+                *workers[aircraft],
+                beliefSnapshot(
+                    start + offset,
+                    (radius_m - speed_mps * elapsed_s) * unit_north,
+                    (radius_m - speed_mps * elapsed_s) * unit_east,
+                    -speed_mps * unit_north,
+                    -speed_mps * unit_east));
+        }
+
+        for (std::size_t sender = 0; sender < aircraft_count; ++sender) {
+            for (std::size_t receiver = 0;
+                 receiver < aircraft_count; ++receiver) {
+                if (sender == receiver) {
+                    continue;
+                }
+                for (std::size_t packet_index = 0;
+                     packet_index < outputs[sender].intent_packet_count;
+                     ++packet_index) {
+                    ASSERT_TRUE(workers[receiver]->pushRemoteIntent(
+                        static_cast<int>(sender),
+                        outputs[sender].intent_packets[packet_index]));
+                }
+            }
+        }
+        for (auto & worker : workers) {
+            EXPECT_TRUE(worker->processPendingForTest());
+        }
+    }
+
+    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+        const double angle = two_pi * static_cast<double>(aircraft)
+            / static_cast<double>(aircraft_count);
+        const double unit_north = std::cos(angle);
+        const double unit_east = std::sin(angle);
+        outputs[aircraft] = pushBeliefAndProcess(
+            *workers[aircraft],
+            beliefSnapshot(
+                start + 250'000,
+                (radius_m - 5.0) * unit_north,
+                (radius_m - 5.0) * unit_east,
+                -speed_mps * unit_north,
+                -speed_mps * unit_east));
+    }
+
+    const auto expected_tuple = outputs[0].decision.selected_candidate_ids;
+    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+        const auto & decision = outputs[aircraft].decision;
+        ASSERT_TRUE(outputs[aircraft].has_decision);
+        EXPECT_TRUE(decision.coordination_qualified);
+        EXPECT_EQ(decision.aircraft_count, aircraft_count);
+        EXPECT_EQ(decision.evaluated_combination_count, 243U);
+        EXPECT_EQ(decision.selected_candidate_ids, expected_tuple);
+        EXPECT_EQ(
+            decision.ownship_candidate_id,
+            expected_tuple[aircraft]);
+    }
+}
+
+TEST(ManeuverSelectionWorker, ExhaustiveTestModeEvaluatesAllFiveAircraftRollTuples)
+{
+    constexpr std::size_t aircraft_count = 5;
+    constexpr std::uint64_t start = 11'000'000ULL;
+    constexpr double radius_m = 45.0;
+    constexpr double speed_mps = 20.0;
+
+    std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, aircraft_count>
+        workers;
+    std::array<cs::ManeuverSelectionWorkerOutput, aircraft_count> outputs{};
+    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+        auto worker_params = params(static_cast<int>(aircraft), aircraft_count);
+        worker_params.exhaustive_test_mode = true;
+        workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
+            worker_params);
+        const double angle = 2.0 * M_PI * static_cast<double>(aircraft)
+            / static_cast<double>(aircraft_count);
+        const double unit_north = std::cos(angle);
+        const double unit_east = std::sin(angle);
+        outputs[aircraft] = pushBeliefAndProcess(
+            *workers[aircraft],
+            beliefSnapshot(
+                start,
+                radius_m * unit_north,
+                radius_m * unit_east,
+                -speed_mps * unit_north,
+                -speed_mps * unit_east));
+        EXPECT_EQ(outputs[aircraft].intent_packet_count, 7U);
+    }
+
+    for (std::size_t sender = 0; sender < aircraft_count; ++sender) {
+        for (std::size_t receiver = 0; receiver < aircraft_count; ++receiver) {
+            if (sender == receiver) {
+                continue;
+            }
+            for (std::size_t packet_index = 0;
+                 packet_index < outputs[sender].intent_packet_count;
+                 ++packet_index) {
+                ASSERT_TRUE(workers[receiver]->pushRemoteIntent(
+                    static_cast<int>(sender),
+                    outputs[sender].intent_packets[packet_index]));
+            }
+        }
+    }
+    for (auto & worker : workers) {
+        EXPECT_TRUE(worker->processPendingForTest());
+    }
+
+    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+        const double angle = 2.0 * M_PI * static_cast<double>(aircraft)
+            / static_cast<double>(aircraft_count);
+        const double unit_north = std::cos(angle);
+        const double unit_east = std::sin(angle);
+        outputs[aircraft] = pushBeliefAndProcess(
+            *workers[aircraft],
+            beliefSnapshot(
+                start + 250'000,
+                (radius_m - 5.0) * unit_north,
+                (radius_m - 5.0) * unit_east,
+                -speed_mps * unit_north,
+                -speed_mps * unit_east));
+    }
+
+    const auto expected_tuple = outputs[0].decision.selected_candidate_ids;
+    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+        const auto & decision = outputs[aircraft].decision;
+        ASSERT_TRUE(outputs[aircraft].has_decision);
+        EXPECT_TRUE(decision.coordination_qualified);
+        EXPECT_EQ(decision.evaluated_combination_count, 16'807U);
+        EXPECT_EQ(decision.selected_candidate_ids, expected_tuple);
+    }
 }

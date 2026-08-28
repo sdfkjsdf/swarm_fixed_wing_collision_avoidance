@@ -1,0 +1,12 @@
+coordinate_transformer_node:
+  ros__parameters:
+    total_agent_num: 5
+    spawn_offset_x: [300.000, 537.764, 446.946, 153.054, 62.236]
+    spawn_offset_y: [550.000, 377.254, 97.746, 97.746, 377.254]
+    spawn_offset_z: [0.83, 0.83, 0.83, 0.83, 0.83]
+    transform_mode: spawn_offset
+    apply_spawn_z_offset: false
+    common_origin_lat: 47.397742
+    common_origin_lon: 8.545594
+    common_origin_alt: 488.0
+    propagation_time: 0.01

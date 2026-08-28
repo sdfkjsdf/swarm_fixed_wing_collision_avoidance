@@ -24,6 +24,16 @@ struct AlignedConeSample
     estimation::PositionCovariance position_covariance_ned{};
 };
 
+struct ExhaustivePairCache
+{
+    std::size_t first_aircraft{0};
+    std::size_t second_aircraft{0};
+    std::array<
+        CombinationEvaluation,
+        kExhaustiveCandidatesPerAircraft
+            * kExhaustiveCandidatesPerAircraft> evaluations{};
+};
+
 bool finiteParams(const ManeuverCombinationEvaluatorParams & params) noexcept
 {
     return std::isfinite(params.desired_separation_distance_m)
@@ -184,7 +194,7 @@ bool uncertaintyMargin(
     return std::isfinite(margin_m);
 }
 
-CombinationValidity evaluatePair(
+CombinationValidity evaluatePairImpl(
     std::uint64_t evaluation_timestamp_us,
     const estimation::ReceivedTrajectoryIntent & ownship_intent,
     const estimation::ReceivedTrajectoryIntent & threat_intent,
@@ -322,6 +332,25 @@ ManeuverCombinationEvaluator::ManeuverCombinationEvaluator(
 {
 }
 
+bool ManeuverCombinationEvaluator::evaluatePair(
+    std::uint64_t evaluation_timestamp_us,
+    const estimation::ReceivedTrajectoryIntent & ownship_intent,
+    const estimation::ReceivedTrajectoryIntent & threat_intent,
+    CombinationEvaluation & evaluation) const
+{
+    CombinationEvaluation candidate{};
+    candidate.ownship_candidate_id = ownship_intent.candidate_id;
+    candidate.threat_candidate_id = threat_intent.candidate_id;
+    candidate.validity = evaluatePairImpl(
+        evaluation_timestamp_us,
+        ownship_intent,
+        threat_intent,
+        m_params,
+        candidate);
+    evaluation = candidate;
+    return evaluation.validity == CombinationValidity::Valid;
+}
+
 bool ManeuverCombinationEvaluator::evaluate(
     std::uint64_t evaluation_timestamp_us,
     const CandidateIntentSet & ownship_candidates,
@@ -349,12 +378,12 @@ bool ManeuverCombinationEvaluator::evaluate(
                 ownship_candidates[ownship_index].candidate_id;
             combination.threat_candidate_id =
                 threat_candidates[threat_index].candidate_id;
-            combination.validity = evaluatePair(
+            static_cast<void>(evaluatePair(
                 evaluation_timestamp_us,
                 ownship_candidates[ownship_index],
                 threat_candidates[threat_index],
-                m_params,
-                combination);
+                combination));
+            combination.combination_index = combination_index;
 
             if (combination.validity == CombinationValidity::Valid
                 && (!candidate_evaluation.has_best
@@ -369,6 +398,276 @@ bool ManeuverCombinationEvaluator::evaluate(
     if (candidate_evaluation.has_best) {
         candidate_evaluation.combinations[
             candidate_evaluation.best_combination_index].selected_best = true;
+    }
+    evaluation = candidate_evaluation;
+    return evaluation.has_best;
+}
+
+JointManeuverCombinationEvaluator::JointManeuverCombinationEvaluator(
+    const ManeuverCombinationEvaluatorParams & params)
+: m_pair_evaluator(params)
+{
+}
+
+bool JointManeuverCombinationEvaluator::evaluate(
+    std::uint64_t evaluation_timestamp_us,
+    const MultiAircraftCandidateIntentSets & candidate_sets,
+    std::size_t aircraft_count,
+    JointManeuverEvaluation & evaluation) const
+{
+    JointManeuverEvaluation candidate_evaluation{};
+    candidate_evaluation.evaluation_timestamp_us = evaluation_timestamp_us;
+    candidate_evaluation.aircraft_count = aircraft_count;
+    if (aircraft_count < 2 || aircraft_count > kMaximumSelectionAircraft) {
+        evaluation = candidate_evaluation;
+        return false;
+    }
+
+    std::size_t combination_count = 1;
+    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+        combination_count *= kCandidatesPerAircraft;
+    }
+    candidate_evaluation.combination_count = combination_count;
+
+    bool has_safe_combination = false;
+    double best_safe_cost = std::numeric_limits<double>::infinity();
+    double best_unsafe_minimum_ad = -std::numeric_limits<double>::infinity();
+    constexpr double comparison_tolerance = 1.0e-12;
+
+    for (std::size_t combination_index = 0;
+         combination_index < combination_count; ++combination_index) {
+        JointCombinationEvaluation & combination =
+            candidate_evaluation.combinations[combination_index];
+        combination.combination_index = combination_index;
+        combination.aircraft_count = aircraft_count;
+
+        std::size_t encoded = combination_index;
+        for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+            const std::size_t reverse_aircraft = aircraft_count - 1 - aircraft;
+            combination.candidate_slots[reverse_aircraft] =
+                static_cast<std::uint8_t>(encoded % kCandidatesPerAircraft);
+            encoded /= kCandidatesPerAircraft;
+        }
+
+        combination.valid = true;
+        combination.all_pairs_feasible = true;
+        combination.minimum_ad_m = std::numeric_limits<double>::infinity();
+        combination.minimum_pmr_m = std::numeric_limits<double>::infinity();
+        combination.minimum_masd_m = std::numeric_limits<double>::quiet_NaN();
+        combination.reciprocal_cost_sum = 0.0;
+
+        for (std::size_t first = 0; first < aircraft_count; ++first) {
+            for (std::size_t second = first + 1;
+                 second < aircraft_count; ++second) {
+                const auto & first_intent = candidate_sets[first][
+                    combination.candidate_slots[first]];
+                const auto & second_intent = candidate_sets[second][
+                    combination.candidate_slots[second]];
+                CombinationEvaluation pair;
+                if (!m_pair_evaluator.evaluatePair(
+                        evaluation_timestamp_us,
+                        first_intent,
+                        second_intent,
+                        pair)) {
+                    combination.valid = false;
+                    combination.all_pairs_feasible = false;
+                    break;
+                }
+                ++combination.evaluated_pair_count;
+                if (pair.ad_m < combination.minimum_ad_m) {
+                    combination.minimum_ad_m = pair.ad_m;
+                    combination.minimum_pmr_m = pair.pmr_m;
+                    combination.minimum_masd_m = pair.masd_m;
+                }
+                if (!pair.feasible || !pair.reciprocal_cost_defined) {
+                    combination.all_pairs_feasible = false;
+                } else {
+                    combination.reciprocal_cost_sum += pair.reciprocal_cost;
+                }
+            }
+            if (!combination.valid) {
+                break;
+            }
+        }
+
+        if (!combination.valid) {
+            combination.reciprocal_cost_sum =
+                std::numeric_limits<double>::quiet_NaN();
+            continue;
+        }
+
+        bool select = false;
+        if (combination.all_pairs_feasible) {
+            if (!has_safe_combination
+                || combination.reciprocal_cost_sum
+                    < best_safe_cost - comparison_tolerance) {
+                select = true;
+                has_safe_combination = true;
+                best_safe_cost = combination.reciprocal_cost_sum;
+            }
+        } else if (!has_safe_combination
+            && (!candidate_evaluation.has_best
+                || combination.minimum_ad_m
+                    > best_unsafe_minimum_ad + comparison_tolerance)) {
+            select = true;
+            best_unsafe_minimum_ad = combination.minimum_ad_m;
+        }
+
+        if (select) {
+            if (candidate_evaluation.has_best) {
+                candidate_evaluation.combinations[
+                    candidate_evaluation.best_combination_index].selected_best = false;
+            }
+            candidate_evaluation.has_best = true;
+            candidate_evaluation.best_combination_index = combination_index;
+            combination.selected_best = true;
+        }
+    }
+
+    evaluation = candidate_evaluation;
+    return evaluation.has_best;
+}
+
+ExhaustiveManeuverCombinationEvaluator::
+ExhaustiveManeuverCombinationEvaluator(
+    const ManeuverCombinationEvaluatorParams & params)
+: m_pair_evaluator(params)
+{
+}
+
+bool ExhaustiveManeuverCombinationEvaluator::evaluate(
+    std::uint64_t evaluation_timestamp_us,
+    const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
+    std::size_t aircraft_count,
+    ExhaustiveManeuverEvaluation & evaluation) const
+{
+    ExhaustiveManeuverEvaluation candidate_evaluation{};
+    candidate_evaluation.evaluation_timestamp_us = evaluation_timestamp_us;
+    candidate_evaluation.aircraft_count = aircraft_count;
+    if (aircraft_count < 2 || aircraft_count > kMaximumSelectionAircraft) {
+        evaluation = candidate_evaluation;
+        return false;
+    }
+
+    std::array<ExhaustivePairCache, kMaximumSelectionPairCount> pair_caches{};
+    std::size_t pair_cache_count = 0;
+    for (std::size_t first = 0; first < aircraft_count; ++first) {
+        for (std::size_t second = first + 1;
+             second < aircraft_count; ++second) {
+            ExhaustivePairCache & cache = pair_caches[pair_cache_count++];
+            cache.first_aircraft = first;
+            cache.second_aircraft = second;
+            for (std::size_t first_candidate = 0;
+                 first_candidate < kExhaustiveCandidatesPerAircraft;
+                 ++first_candidate) {
+                for (std::size_t second_candidate = 0;
+                     second_candidate < kExhaustiveCandidatesPerAircraft;
+                     ++second_candidate) {
+                    const std::size_t cache_index =
+                        first_candidate * kExhaustiveCandidatesPerAircraft
+                        + second_candidate;
+                    static_cast<void>(m_pair_evaluator.evaluatePair(
+                        evaluation_timestamp_us,
+                        candidate_sets[first][first_candidate],
+                        candidate_sets[second][second_candidate],
+                        cache.evaluations[cache_index]));
+                    ++candidate_evaluation.evaluated_unique_pair_count;
+                }
+            }
+        }
+    }
+
+    std::size_t combination_count = 1;
+    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+        combination_count *= kExhaustiveCandidatesPerAircraft;
+    }
+    candidate_evaluation.combination_count = combination_count;
+
+    bool has_safe_combination = false;
+    double best_safe_cost = std::numeric_limits<double>::infinity();
+    double best_unsafe_minimum_ad = -std::numeric_limits<double>::infinity();
+    constexpr double comparison_tolerance = 1.0e-12;
+
+    for (std::size_t combination_index = 0;
+         combination_index < combination_count; ++combination_index) {
+        JointCombinationEvaluation combination{};
+        combination.combination_index = combination_index;
+        combination.aircraft_count = aircraft_count;
+        combination.valid = true;
+        combination.all_pairs_feasible = true;
+        combination.minimum_ad_m = std::numeric_limits<double>::infinity();
+        combination.minimum_pmr_m = std::numeric_limits<double>::infinity();
+        combination.minimum_masd_m =
+            std::numeric_limits<double>::quiet_NaN();
+        combination.reciprocal_cost_sum = 0.0;
+
+        std::size_t encoded = combination_index;
+        for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+            const std::size_t reverse_aircraft = aircraft_count - 1 - aircraft;
+            combination.candidate_slots[reverse_aircraft] =
+                static_cast<std::uint8_t>(
+                    encoded % kExhaustiveCandidatesPerAircraft);
+            encoded /= kExhaustiveCandidatesPerAircraft;
+        }
+
+        for (std::size_t pair_index = 0;
+             pair_index < pair_cache_count; ++pair_index) {
+            const ExhaustivePairCache & cache = pair_caches[pair_index];
+            const std::size_t first_candidate =
+                combination.candidate_slots[cache.first_aircraft];
+            const std::size_t second_candidate =
+                combination.candidate_slots[cache.second_aircraft];
+            const CombinationEvaluation & pair = cache.evaluations[
+                first_candidate * kExhaustiveCandidatesPerAircraft
+                + second_candidate];
+            if (pair.validity != CombinationValidity::Valid) {
+                combination.valid = false;
+                combination.all_pairs_feasible = false;
+                break;
+            }
+            ++combination.evaluated_pair_count;
+            if (pair.ad_m < combination.minimum_ad_m) {
+                combination.minimum_ad_m = pair.ad_m;
+                combination.minimum_pmr_m = pair.pmr_m;
+                combination.minimum_masd_m = pair.masd_m;
+            }
+            if (!pair.feasible || !pair.reciprocal_cost_defined) {
+                combination.all_pairs_feasible = false;
+            } else {
+                combination.reciprocal_cost_sum += pair.reciprocal_cost;
+            }
+        }
+
+        if (!combination.valid) {
+            continue;
+        }
+
+        bool select = false;
+        if (combination.all_pairs_feasible) {
+            if (!has_safe_combination
+                || combination.reciprocal_cost_sum
+                    < best_safe_cost - comparison_tolerance) {
+                select = true;
+                has_safe_combination = true;
+                best_safe_cost = combination.reciprocal_cost_sum;
+            }
+        } else if (!has_safe_combination
+            && (!candidate_evaluation.has_best
+                || combination.minimum_ad_m
+                    > best_unsafe_minimum_ad + comparison_tolerance)) {
+            select = true;
+            best_unsafe_minimum_ad = combination.minimum_ad_m;
+        }
+
+        if (select) {
+            candidate_evaluation.has_best = true;
+            candidate_evaluation.best_combination_index = combination_index;
+            candidate_evaluation.best_combination = combination;
+        }
+    }
+
+    if (candidate_evaluation.has_best) {
+        candidate_evaluation.best_combination.selected_best = true;
     }
     evaluation = candidate_evaluation;
     return evaluation.has_best;

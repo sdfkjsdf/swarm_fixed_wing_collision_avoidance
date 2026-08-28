@@ -130,6 +130,25 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
 
     m_flocking = std::make_unique<FlockingGuidance>(flocking_params, airframe_limits);
 
+    if (!_node.has_parameter("test_guidance_mode")) {
+        _node.declare_parameter<std::string>("test_guidance_mode", "flocking");
+    }
+    m_point_convergence_test_mode =
+        _node.get_parameter("test_guidance_mode").as_string()
+        == "point_convergence";
+    collision_avoidance::guidance::PointConvergenceGuidance::Parameters
+        point_params;
+    point_params.target_north_m = declare_or_get("point_target_north_m", 300.0F);
+    point_params.target_east_m = declare_or_get("point_target_east_m", 300.0F);
+    point_params.ground_speed_command_mps = declare_or_get(
+        "point_ground_speed_command_mps", 20.0F);
+    point_params.course_error_gain_per_s = declare_or_get(
+        "point_course_error_gain_per_s", 1.2F);
+    point_params.maximum_roll_degrees = flocking_params.max_roll_deg;
+    point_params.gravity_mps2 = airframe_limits.gravity;
+    m_point_convergence = std::make_unique<
+        collision_avoidance::guidance::PointConvergenceGuidance>(point_params);
+
     /* ── 고도 P-제어 파라미터 (airframe_spec.yaml) ── */
     m_alt_hold_p_gain = declare_or_get("alt_hold_p_gain", 0.5f);
     m_alt_hold_hr_max = declare_or_get("alt_hold_hr_max", 2.7f);
@@ -189,6 +208,10 @@ void FormationMode::onActivate()
     /* main thread 의 hold-last 상태 초기화 — 새 활성화 사이클에서는 처음부터 다시 */
     m_has_last_output_mt = false;
     m_last_output_mt = collision_avoidance::types::FwSetpoint{};
+    m_has_maneuver_decision_mt = false;
+    if (m_maneuver_activation_gate_callback_mt) {
+        m_maneuver_activation_gate_callback_mt(true);
+    }
 
     /* 고도 P-제어 기준점 초기화 — 첫 유효 odometry 수신 시 캡처 */
     m_ref_pos_d_valid_mt = false;
@@ -197,6 +220,9 @@ void FormationMode::onActivate()
 void FormationMode::onDeactivate()
 {
     RCLCPP_INFO(_node.get_logger(), "[Formation] 비활성화");
+    if (m_maneuver_activation_gate_callback_mt) {
+        m_maneuver_activation_gate_callback_mt(false);
+    }
     /* rt_thread 는 소멸자에서 정지. 비활성화 시에는 안 멈춤
        (재활성화 시점에 다시 시작하느라 워밍업 갭 생기는 것 방지) */
 }
@@ -420,9 +446,11 @@ void FormationMode::rt_loop()
                                           : std::nanf("");
 
         const collision_avoidance::types::FwSetpoint out =
-            m_flocking->computeFwSetpoint(self, m_others_buf_rt, num_others,
-                                          wind_n, wind_e,
-                                          height_setpoint);
+            m_point_convergence_test_mode && m_point_convergence
+            ? m_point_convergence->computeFwSetpoint(self, height_setpoint)
+            : m_flocking->computeFwSetpoint(
+                self, m_others_buf_rt, num_others,
+                wind_n, wind_e, height_setpoint);
 
 
 

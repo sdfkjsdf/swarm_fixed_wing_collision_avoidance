@@ -4,10 +4,32 @@
 
 GUI_MODE=${1:-noshow}
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/../config/spawn_config.yaml"
+CONFIG_FILE=${SPAWN_CONFIG_FILE:-${SCRIPT_DIR}/../config/spawn_config.yaml}
 PX4_DIR=${PX4_DIR:-/home/hmcl/workspace/swarm-fixed-wing/firmware/PX4-Autopilot}
 ROS2_WS=${ROS2_WS:-/home/hmcl/workspace/swarm-fixed-wing/ros2_ws}
-PX4_PYTHON_BIN=${PX4_PYTHON:-python3}
+PX4_PYTHON_BIN=${PX4_PYTHON_BIN:-${PX4_PYTHON:-}}
+if [ -z "${PX4_PYTHON_BIN}" ]; then
+    if [ -x /home/hmcl/workspace/swarm-fixed-wing/.envs/px4/bin/python3 ]; then
+        PX4_PYTHON_BIN=/home/hmcl/workspace/swarm-fixed-wing/.envs/px4/bin/python3
+    else
+        PX4_PYTHON_BIN=python3
+    fi
+fi
+COORD_PID=""
+CLEANED=0
+
+cleanup() {
+    [ "${CLEANED}" = "1" ] && return
+    CLEANED=1
+    if [ -n "${COORD_PID}" ]; then
+        kill -TERM "${COORD_PID}" 2>/dev/null || true
+    fi
+    pkill -TERM -x px4 2>/dev/null || true
+    pkill -TERM -x gzserver 2>/dev/null || true
+    pkill -TERM -x gzclient 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'cleanup; exit 0' SIGINT SIGTERM
 
 source /opt/ros/humble/setup.bash
 source "${ROS2_WS}/install/setup.bash"
@@ -116,10 +138,10 @@ for i in $(seq 0 $((NUM_VEHICLES-1))); do
 done
 
 # ROS2 좌표 변환 노드 실행
-ros2 run collision_avoidance coordinate_transformer_node \
-    --ros-args --params-file "${ROS_PARAMS_FILE}" &
+COORD_BIN=$(ros2 pkg prefix collision_avoidance)/lib/collision_avoidance/coordinate_transformer_node
+"${COORD_BIN}" --ros-args --params-file "${ROS_PARAMS_FILE}" &
+COORD_PID=$!
 sleep 1
 
 echo "${NUM_VEHICLES} VTOLs spawned (GUI: $GUI_MODE). Press Ctrl+C to stop."
-trap "pkill -x px4; pkill gzserver; pkill gzclient" SIGINT SIGTERM
 wait

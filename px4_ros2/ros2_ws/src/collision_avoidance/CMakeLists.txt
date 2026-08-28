@@ -17,6 +17,7 @@ find_package(Threads REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
     "msg/TrajectoryCone.msg"
     "msg/TrajectoryIntent.msg"
+    "msg/ManeuverSelectionDecision.msg"
 )
 rosidl_get_typesupport_target(collision_avoidance_typesupport_target
     ${PROJECT_NAME} rosidl_typesupport_cpp)
@@ -113,6 +114,8 @@ target_link_libraries(maneuver_combination_evaluator PUBLIC
 # node; this target owns only deterministic prediction/selection state and one
 # SPSC-fed computation thread.
 add_library(maneuver_selection_worker STATIC
+    src/selection/ManeuverActivationController.cpp
+    src/selection/HeuristicCandidateSelector.cpp
     src/selection/ManeuverSelectionWorker.cpp
 )
 add_library(collision_avoidance::maneuver_selection_worker ALIAS
@@ -157,6 +160,7 @@ ament_target_dependencies(distributed_maneuver_selection_runtime rclcpp px4_msgs
 target_link_libraries(distributed_maneuver_selection_runtime
     maneuver_selection_worker
     trajectory_intent_transport
+    "${collision_avoidance_typesupport_target}"
 )
 
 install(TARGETS
@@ -197,6 +201,7 @@ add_executable(vtol_guidance_node
     src/modes/FormationMode.cpp
     src/modes/VtolGuidanceExecutor.cpp
     src/guidance/FlockingGuidance.cpp
+    src/guidance/PointConvergenceGuidance.cpp
 )
 target_include_directories(vtol_guidance_node PRIVATE include)
 ament_target_dependencies(vtol_guidance_node px4_msgs std_msgs)
@@ -281,6 +286,29 @@ if(BUILD_TESTING)
         maneuver_selection_worker
     )
     target_include_directories(test_maneuver_selection_worker PRIVATE include)
+
+    ament_add_gtest(test_maneuver_activation_controller
+        test/test_maneuver_activation_controller.cpp
+    )
+    target_link_libraries(test_maneuver_activation_controller
+        maneuver_selection_worker
+    )
+    target_include_directories(
+        test_maneuver_activation_controller PRIVATE include)
+
+    ament_add_gtest(test_heuristic_candidate_selector
+        test/test_heuristic_candidate_selector.cpp
+    )
+    target_link_libraries(test_heuristic_candidate_selector
+        maneuver_selection_worker
+    )
+    target_include_directories(test_heuristic_candidate_selector PRIVATE include)
+
+    ament_add_gtest(test_point_convergence_guidance
+        test/test_point_convergence_guidance.cpp
+        src/guidance/PointConvergenceGuidance.cpp
+    )
+    target_include_directories(test_point_convergence_guidance PRIVATE include)
 
     ament_add_gtest(test_distributed_maneuver_selection_runtime
         test/test_distributed_maneuver_selection_runtime.cpp

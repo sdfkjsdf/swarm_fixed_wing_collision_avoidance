@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -23,7 +24,8 @@ class TrajectoryIntentPublisher
 public:
     TrajectoryIntentPublisher(
         rclcpp::Node & node,
-        const std::string & topic_name);
+        const std::string & topic_name,
+        std::size_t history_depth = 5);
 
     void publish(const estimation::TrajectoryIntentPacket & packet);
 
@@ -41,7 +43,8 @@ public:
     TrajectoryIntentSubscription(
         rclcpp::Node & node,
         const std::string & topic_name,
-        PacketCallback callback);
+        PacketCallback callback,
+        std::size_t history_depth = 5);
 
 private:
     rclcpp::Subscription<collision_avoidance::msg::TrajectoryIntent>::SharedPtr

@@ -1,0 +1,10 @@
+total_agent_num: 5
+
+# A 250 m-radius pentagon around common-NED target (N=300, E=300).
+# Gazebo x maps to common East and Gazebo y maps to common North.
+spawn_positions:
+  px4_0: {x: 300.000, y: 550.000, z: 0.83}
+  px4_1: {x: 537.764, y: 377.254, z: 0.83}
+  px4_2: {x: 446.946, y: 97.746,  z: 0.83}
+  px4_3: {x: 153.054, y: 97.746,  z: 0.83}
+  px4_4: {x: 62.236,  y: 377.254, z: 0.83}

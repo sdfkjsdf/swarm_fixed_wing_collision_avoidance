@@ -25,6 +25,8 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("maneuver_ground_speed_command", 20.0);
     node->declare_parameter<double>("desired_separation_distance", 10.0);
     node->declare_parameter<double>("aircraft_half_wingspan", 1.072);
+    node->declare_parameter<bool>(
+        "maneuver_selection_exhaustive_test_mode", false);
 
     /* [3] 두 개의 Mode 인스턴스 생성
            - VtolPreflightMode: 천이 + 순항 안정화 (안정 코드)
@@ -52,6 +54,8 @@ int main(int argc, char * argv[])
             node->get_parameter("aircraft_half_wingspan").as_double();
         params.evaluator_params.ownship_half_wingspan_m = half_wingspan;
         params.evaluator_params.threat_half_wingspan_m = half_wingspan;
+        params.exhaustive_test_mode = node->get_parameter(
+            "maneuver_selection_exhaustive_test_mode").as_bool();
         maneuver_selection_runtime = std::make_shared<
             collision_avoidance::communication::DistributedManeuverSelectionRuntime>(
             *node,
@@ -63,11 +67,22 @@ int main(int argc, char * argv[])
                     decision) {
                 formation->setManeuverSelectionDecision(decision);
             });
+        std::weak_ptr<
+            collision_avoidance::communication::DistributedManeuverSelectionRuntime>
+            weak_runtime = maneuver_selection_runtime;
+        formation->setManeuverActivationGateCallback(
+            [weak_runtime](bool enabled) {
+                if (const auto runtime = weak_runtime.lock()) {
+                    runtime->setActivationEnabled(enabled);
+                }
+            });
         RCLCPP_INFO(
             node->get_logger(),
-            "[main] distributed maneuver selection: enabled=%d shadow_only=%d",
+            "[main] distributed maneuver selection: enabled=%d shadow_only=%d "
+            "exhaustive_test=%d",
             maneuver_selection_runtime->enabled() ? 1 : 0,
-            shadow_only ? 1 : 0);
+            shadow_only ? 1 : 0,
+            params.exhaustive_test_mode ? 1 : 0);
     }
 
     /* [5] PX4에 등록 — Executor 와 Formation 둘 다 doRegister() 필요 */

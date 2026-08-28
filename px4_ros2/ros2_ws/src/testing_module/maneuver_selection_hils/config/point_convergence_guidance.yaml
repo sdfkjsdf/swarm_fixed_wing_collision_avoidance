@@ -1,0 +1,26 @@
+"/**":
+  ros__parameters:
+    test_guidance_mode: point_convergence
+    point_target_north_m: 300.0
+    point_target_east_m: 300.0
+    point_ground_speed_command_mps: 20.0
+    point_course_error_gain_per_s: 1.2
+
+    maneuver_selection_enabled: true
+    maneuver_ground_speed_command: 20.0
+    desired_separation_distance: 10.0
+    aircraft_half_wingspan: 1.072
+
+    airspeed_min: 12.0
+    airspeed_max: 25.0
+    height_rate_max_climb: 8.0
+    height_rate_min_sink: 2.7
+    height_rate_max_sink: 2.7
+    max_roll_deg: 45.0
+    max_pitch_deg: 30.0
+    max_pitch_rate_deg_per_sec: 60.0
+    energy_fraction: 0.5
+    gravity: 9.80665
+    alt_hold_p_gain: 0.1
+    alt_hold_hr_max: 2.7
+    integration_dt: 0.0333

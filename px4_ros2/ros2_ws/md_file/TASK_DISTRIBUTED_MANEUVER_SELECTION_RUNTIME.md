@@ -441,3 +441,12 @@ Verification performed:
 This record is **not** evidence of a completed two-PX4 Gazebo SILS flight. It
 verifies the runtime computation and ROS transport in shadow mode. Phase D bag
 evidence and Phase E closed-loop HILS/SILS acceptance remain open.
+
+## 12. Later Approved Diagnostic Extension — 2026-08-28
+
+The five-aircraft and exhaustive-search items listed above as non-goals applied
+to the original runtime milestone. They were later approved as a separate HILS
+diagnostic and do not change the production default of three candidates per
+aircraft. The extension, its explicit source boundary, and its failed DSD 10 m
+acceptance result are recorded in
+`TASK_EXHAUSTIVE_MANEUVER_DIAGNOSTIC.md`.
