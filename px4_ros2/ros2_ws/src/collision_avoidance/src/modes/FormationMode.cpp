@@ -125,6 +125,9 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
     airframe_limits.energy_fraction = declare_or_get("energy_fraction", 0.5f);
     airframe_limits.gravity         = declare_or_get("gravity", 9.80665f);
 
+    m_minimum_level_eas = flocking_params.airspeed_min;
+    m_gravity = airframe_limits.gravity;
+
     m_flocking = std::make_unique<FlockingGuidance>(flocking_params, airframe_limits);
 
     /* ── 고도 P-제어 파라미터 (airframe_spec.yaml) ── */
@@ -207,8 +210,10 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
     const float wind_n = m_wind_n_mt2rt.load(std::memory_order_relaxed);
     const float wind_e = m_wind_e_mt2rt.load(std::memory_order_relaxed);
     const auto to_eas = [wind_n, wind_e, this](
-                            float v_cmd, float course, float height_rate) {
-        return collision_avoidance::control::computeRequiredEquivalentAirspeed(
+                            float v_cmd, float course, float height_rate,
+                            float lateral_acceleration) {
+        const float raw_eas =
+            collision_avoidance::control::computeRequiredEquivalentAirspeed(
             v_cmd,
             course,
             height_rate,
@@ -216,6 +221,8 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
             wind_e,
             0.0F,
             m_air_density_mt);
+        return collision_avoidance::control::applyTurnMinimumEquivalentAirspeed(
+            raw_eas, m_minimum_level_eas, lateral_acceleration, m_gravity);
     };
 
     /* (0) VTOL 고정익 모드 확인 — FW 가 아니면 TECS 미작동 가능 */
@@ -254,7 +261,7 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
     } else {
         /* (3) 활성화 직후 rt_thread 가 아직 첫 결과를 push 못함 → cruise fallback */
         const float v_cmd_eas = to_eas(
-            m_initial_ground_speed, m_initial_course, 0.0F);
+            m_initial_ground_speed, m_initial_course, 0.0F, 0.0F);
         if (std::isfinite(m_cruise_altitude_amsl)) {
             _fw_setpoint->updateWithAltitude(
                 m_cruise_altitude_amsl, m_initial_course, v_cmd_eas);
@@ -268,7 +275,7 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
     /* (4) m_last_output_mt 값 인가. is_fallback 이면 cruise. */
     if (m_last_output_mt.is_fallback) {
         const float v_cmd_eas = to_eas(
-            m_initial_ground_speed, m_initial_course, 0.0F);
+            m_initial_ground_speed, m_initial_course, 0.0F, 0.0F);
         if (std::isfinite(m_cruise_altitude_amsl)) {
             _fw_setpoint->updateWithAltitude(
                 m_cruise_altitude_amsl, m_initial_course, v_cmd_eas);
@@ -288,7 +295,8 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
             m_last_output_mt.airspeed * m_last_output_mt.airspeed
                 - m_last_output_mt.height_rate * m_last_output_mt.height_rate));
         const float v_cmd_eas = to_eas(
-            horizontal_ground_speed, m_last_output_mt.course, 0.0F);
+            horizontal_ground_speed, m_last_output_mt.course, 0.0F,
+            m_last_output_mt.lateral_acceleration);
         px4_ros2::FwLateralLongitudinalSetpoint sp;
         sp.withLateralAcceleration(m_last_output_mt.lateral_acceleration)
           .withEquivalentAirspeed(v_cmd_eas);

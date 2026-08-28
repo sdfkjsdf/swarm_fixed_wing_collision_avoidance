@@ -31,6 +31,14 @@ public:
         double dt,
         TrajectoryCone & cone) const;
 
+    bool propagateAlongMean(
+        const TrajectoryPredict & predictor,
+        const PredictionMeanTrajectory & mean_trajectory,
+        const PredictStateCovariance & initial_covariance,
+        const PredictionInputTrajectory & inputs,
+        double dt,
+        TrajectoryCone & cone) const;
+
     static bool covarianceIsFiniteAndPsd(
         const PredictStateCovariance & covariance,
         double tolerance = 1.0e-8);
@@ -41,6 +49,14 @@ private:
         const PredictInput & input,
         double dt,
         PredictState & state,
+        PredictStateCovariance & covariance) const;
+
+    bool propagateCovarianceOneStep(
+        const TrajectoryPredict & predictor,
+        const PredictInput & input,
+        double dt,
+        const PredictState & linearization_state,
+        const PredictState & predicted_next_state,
         PredictStateCovariance & covariance) const;
 
     UncertaintyParams m_params;

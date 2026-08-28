@@ -216,8 +216,8 @@ void TrajectoryLogger::publishPredictBundle(
     const MeasuredSnapshot &    m_at_pred)
 {
     /* ★ 2026-05-20 — spline 계수 산출 + 46점 평가 (mutex 밖, 호출자 thread).
-       reconstruct 자체는 *전역 state 없음 + 멤버 함수 read-only* 가 아니라
-       *m_reconstructor_mt 의 detail::segments 갱신* 이 있으므로, *같은 thread*
+       reconstruct 자체는 전역 state를 사용하지 않지만
+       *m_reconstructor_mt 의 instance spline을 갱신*하므로, *같은 thread*
        (main executor) 가 호출함을 *전제*. publishPredictBundle 자체가 main thread 단일. */
     TrajectorySample sample;
     /* 4 시점 인덱스: 0, 15, 30, 45 (PredictTypes.hpp 의 kSampleIdx_t0/t15/t30/t45). */
@@ -246,7 +246,7 @@ void TrajectoryLogger::publishPredictBundle(
     sample.pos_t45 = state_to_ned(traj[45]);
     sample.vel_t45 = state_to_vel_ned(traj[45]);
 
-    /* spline 계수 산출 (m_reconstructor_mt 의 detail::segments 갱신). */
+    /* spline 계수 산출 (m_reconstructor_mt 의 instance storage 갱신). */
     m_reconstructor_mt.calculate_clamp_cubic_spline(sample);
 
     /* 46점 평가 — t = 0.0, 0.1, ..., 4.5 */

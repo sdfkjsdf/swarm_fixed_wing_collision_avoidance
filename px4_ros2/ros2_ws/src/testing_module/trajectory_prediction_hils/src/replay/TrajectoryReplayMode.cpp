@@ -52,11 +52,15 @@ using namespace px4_msgs::msg;
 TrajectoryReplayMode::TrajectoryReplayMode(rclcpp::Node & node,
                                            int vehicle_id,
                                            std::unique_ptr<SetpointSequencer> sequencer,
-                                           std::shared_ptr<TrajectoryLogger> logger)
+                                           std::shared_ptr<TrajectoryLogger> logger,
+                                           float minimum_level_eas,
+                                           float gravity)
 : ModeBase(node, Settings{"VTOL Trajectory Replay"},
            "/px4_" + std::to_string(vehicle_id) + "/")
 , _node(node)
 , m_vehicle_id(vehicle_id)
+, m_minimum_level_eas(minimum_level_eas)
+, m_gravity(gravity)
 , m_sequencer(std::move(sequencer))
 , m_logger(std::move(logger))
 {
@@ -162,8 +166,10 @@ void TrajectoryReplayMode::updateSetpoint(float /*dt_s*/)
     const auto to_eas = [this](
                             float v_cmd_ground,
                             float command_course,
-                            float height_rate) {
-        return collision_avoidance::control::computeRequiredEquivalentAirspeed(
+                            float height_rate,
+                            float lateral_acceleration) {
+        const float raw_eas =
+            collision_avoidance::control::computeRequiredEquivalentAirspeed(
             v_cmd_ground,
             command_course,
             height_rate,
@@ -171,6 +177,8 @@ void TrajectoryReplayMode::updateSetpoint(float /*dt_s*/)
             m_wind_e,
             0.0F,
             m_air_density);
+        return collision_avoidance::control::applyTurnMinimumEquivalentAirspeed(
+            raw_eas, m_minimum_level_eas, lateral_acceleration, m_gravity);
     };
 
     if (!_vtol_status->isFwMode()) {
@@ -192,7 +200,7 @@ void TrajectoryReplayMode::updateSetpoint(float /*dt_s*/)
     } else {
         /* 활성화 직후 rt_thread 가 아직 첫 결과 못 push → cruise fallback */
         const float v_cmd_eas = to_eas(
-            m_initial_ground_speed, m_initial_course, 0.0F);
+            m_initial_ground_speed, m_initial_course, 0.0F, 0.0F);
         if (std::isfinite(m_cruise_altitude_amsl)) {
             _fw_setpoint->updateWithAltitude(
                 m_cruise_altitude_amsl, m_initial_course, v_cmd_eas);
@@ -213,7 +221,7 @@ void TrajectoryReplayMode::updateSetpoint(float /*dt_s*/)
     /* (2) is_fallback → cruise 인가 */
     if (m_last_output_mt.is_fallback) {
         const float v_cmd_eas = to_eas(
-            m_initial_ground_speed, m_initial_course, 0.0F);
+            m_initial_ground_speed, m_initial_course, 0.0F, 0.0F);
         if (std::isfinite(m_cruise_altitude_amsl)) {
             _fw_setpoint->updateWithAltitude(
                 m_cruise_altitude_amsl, m_initial_course, v_cmd_eas);
@@ -228,7 +236,8 @@ void TrajectoryReplayMode::updateSetpoint(float /*dt_s*/)
         const float v_cmd_eas = to_eas(
             m_last_output_mt.airspeed,
             ground_course,
-            m_last_output_mt.height_rate);
+            m_last_output_mt.height_rate,
+            m_last_output_mt.lateral_acceleration);
         px4_ros2::FwLateralLongitudinalSetpoint sp;
         sp.withLateralAcceleration(m_last_output_mt.lateral_acceleration)
           .withEquivalentAirspeed(v_cmd_eas)

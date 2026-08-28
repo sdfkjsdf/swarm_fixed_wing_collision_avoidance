@@ -89,3 +89,37 @@ TEST(GroundToEasAdapter, RejectsPhysicallyInvalidInputs)
             control::kSeaLevelAirDensityKgM3),
         10.0F);
 }
+
+TEST(GroundToEasAdapter, AppliesCoordinatedTurnMinimumEquivalentAirspeed)
+{
+    constexpr float gravity = 9.80665F;
+    constexpr float minimum_level_eas = 12.0F;
+
+    EXPECT_FLOAT_EQ(
+        control::applyTurnMinimumEquivalentAirspeed(
+            20.0F, minimum_level_eas, gravity, gravity),
+        20.0F);
+
+    const float expected_45_degree_minimum =
+        minimum_level_eas * std::sqrt(std::sqrt(2.0F));
+    EXPECT_NEAR(
+        control::applyTurnMinimumEquivalentAirspeed(
+            10.0F, minimum_level_eas, gravity, gravity),
+        expected_45_degree_minimum,
+        1.0e-5F);
+    EXPECT_NEAR(
+        control::applyTurnMinimumEquivalentAirspeed(
+            10.0F, minimum_level_eas, -gravity, gravity),
+        expected_45_degree_minimum,
+        1.0e-5F);
+}
+
+TEST(GroundToEasAdapter, RejectsInvalidTurnMinimumInputs)
+{
+    EXPECT_TRUE(std::isnan(control::applyTurnMinimumEquivalentAirspeed(
+        NAN, 12.0F, 0.0F, 9.80665F)));
+    EXPECT_TRUE(std::isnan(control::applyTurnMinimumEquivalentAirspeed(
+        20.0F, -1.0F, 0.0F, 9.80665F)));
+    EXPECT_TRUE(std::isnan(control::applyTurnMinimumEquivalentAirspeed(
+        20.0F, 12.0F, 0.0F, 0.0F)));
+}

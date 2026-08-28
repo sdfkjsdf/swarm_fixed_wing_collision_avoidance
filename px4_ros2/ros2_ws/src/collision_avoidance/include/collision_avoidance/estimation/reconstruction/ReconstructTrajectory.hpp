@@ -69,22 +69,6 @@ namespace detail {
              -1.f,  2.f,  -7.f,  26.f
         ).finished() / (45.0f * spline_time);
 
-    /* ── 4 시점 위치 sample (NED 3D 벡터) ──────────────────────────
-       P1..P4 = trajectory 의 t=0, 1.5, 3.0, 4.5s 위치.
-       정적 할당 (Vector3f = 3 float = 12 byte stack, static storage duration).
-       inline 으로 ODR 안전. ::Zero() 명시 초기화 — 미초기화 사용 방지. */
-    inline Eigen::Vector3f P1 = Eigen::Vector3f::Zero();   /* t = 0.0 s */
-    inline Eigen::Vector3f P2 = Eigen::Vector3f::Zero();   /* t = 1.5 s */
-    inline Eigen::Vector3f P3 = Eigen::Vector3f::Zero();   /* t = 3.0 s */
-    inline Eigen::Vector3f P4 = Eigen::Vector3f::Zero();   /* t = 4.5 s */
-
-    /* ── 양 끝점 속도 sample (NED 3D 벡터) ─────────────────────────
-       V1 = t=0 의 속도, V4 = t=4.5s 의 속도.
-       ★ 이름 컨벤션: V_i 는 P_i 와 *같은 시점*. 즉 P1↔V1, P4↔V4.
-       (P2/P3 시점의 속도는 clamped spline 에서 *내부 계산 결과* — 별도 변수 불필요.) */
-    inline Eigen::Vector3f V1 = Eigen::Vector3f::Zero();   /* t = 0.0 s (P1 시점) */
-    inline Eigen::Vector3f V4 = Eigen::Vector3f::Zero();   /* t = 4.5 s (P4 시점) */
-
     /* ── CubicSegment — spline 의 *한 구간* 표현 ──────────────────
        2026-05-20 refactor: 기존 b1..b3, c1..c4, d1..d3 (15 분산 변수) 를
        *struct + array* 로 통합. 인덱스 k (0,1,2) 로 *균일 접근* — switch/if
@@ -104,12 +88,6 @@ namespace detail {
         float           t_start = 0.0f;                      /* 구간 시작 시각 [s] */
     };
 
-    /* ── segments — 3 구간 spline 통합 저장소 ────────────────────────
-       segments[0]: t ∈ [0.0, 1.5]  (t_start=0.0,   P=P1)
-       segments[1]: t ∈ [1.5, 3.0]  (t_start=1.5,   P=P2)
-       segments[2]: t ∈ [3.0, 4.5]  (t_start=3.0,   P=P3)
-       std::array — *컴파일 타임 크기 3*, stack 할당, heap 0. */
-    inline std::array<CubicSegment, 3> segments;
 }
 
 
@@ -144,32 +122,33 @@ struct PoseVel {
 /* ════════════════════════════════════════════════════════════════════
    ReconstructTrajectory 클래스 — cubic spline 재구성 알고리즘
 
-   2026-05-13 신설: detail namespace 의 spline 자료 (P1..P4, V1, V2,
-   b/c/d 계수 등) 를 *사용해서* spline 계산을 수행하는 멤버 함수 묶음.
-   현재는 *선언만* — 구현은 다음 단계에서 추가 예정.
+   각 인스턴스가 sample 과 spline 계수를 독립적으로 소유한다. 따라서 B가
+   여러 A의 trajectory를 복원해도 다른 인스턴스의 계수를 덮어쓰지 않는다.
    ════════════════════════════════════════════════════════════════════ */
 class ReconstructTrajectory
 {
 public:
     /* ── set_sample_point ────────────────────────────────────────────
        4 시점 sample (TrajectorySample) 의 위치/속도 값을
-       detail namespace 의 P1..P4, V1, V4 에 *복사 저장*.
+       각 ReconstructTrajectory 인스턴스의 sample storage 에 *복사 저장*.
          P1 ← s.pos_t0   (t=0.0 s)
          P2 ← s.pos_t15  (t=1.5 s)
          P3 ← s.pos_t30  (t=3.0 s)
          P4 ← s.pos_t45  (t=4.5 s)
          V1 ← s.vel_t0   (t=0.0 s, clamp 조건)
          V4 ← s.vel_t45  (t=4.5 s, clamp 조건)
-       반환: void. 부수효과 (detail::P1..P4, V1, V4 mutation).
+       반환: void. 부수효과 (본 인스턴스의 sample storage mutation).
        inline 정의 (header 안) — *지금* 사용자 명시. */
     inline void set_sample_point(const TrajectorySample & s)
     {
-        detail::P1 = Eigen::Vector3f{ s.pos_t0.x,  s.pos_t0.y,  s.pos_t0.z };
-        detail::P2 = Eigen::Vector3f{ s.pos_t15.x, s.pos_t15.y, s.pos_t15.z };
-        detail::P3 = Eigen::Vector3f{ s.pos_t30.x, s.pos_t30.y, s.pos_t30.z };
-        detail::P4 = Eigen::Vector3f{ s.pos_t45.x, s.pos_t45.y, s.pos_t45.z };
-        detail::V1 = Eigen::Vector3f{ s.vel_t0.x,  s.vel_t0.y,  s.vel_t0.z  };
-        detail::V4 = Eigen::Vector3f{ s.vel_t45.x, s.vel_t45.y, s.vel_t45.z };
+        m_points[0] = Eigen::Vector3f{ s.pos_t0.x,  s.pos_t0.y,  s.pos_t0.z };
+        m_points[1] = Eigen::Vector3f{ s.pos_t15.x, s.pos_t15.y, s.pos_t15.z };
+        m_points[2] = Eigen::Vector3f{ s.pos_t30.x, s.pos_t30.y, s.pos_t30.z };
+        m_points[3] = Eigen::Vector3f{ s.pos_t45.x, s.pos_t45.y, s.pos_t45.z };
+        m_start_velocity = Eigen::Vector3f{
+            s.vel_t0.x, s.vel_t0.y, s.vel_t0.z};
+        m_end_velocity = Eigen::Vector3f{
+            s.vel_t45.x, s.vel_t45.y, s.vel_t45.z};
     }
 
     /* ── calculate_clamp_cubic_spline ────────────────────────────────
@@ -179,9 +158,9 @@ public:
 
        매개변수:
          s : TrajectorySample (4 시점 위치 + 양 끝점 속도)
-             — 함수 첫 줄에서 set_sample_point(s) 호출 → detail::P1..P4, V1, V4 채움.
+             — 함수 첫 줄에서 set_sample_point(s) 호출 → instance storage 채움.
        반환: void
-         계수 저장 위치 (detail::segments[k], k=0,1,2):
+         계수 저장 위치 (m_segments[k], k=0,1,2):
            .P       : 구간 시작 위치 (= P1, P2, P3)
            .b       : (Pᵢ₊₁ - Pᵢ)/h - (h/3)·(2cᵢ + cᵢ₊₁)
            .c       : C = inverse_A · B 의 k 번째 행 transpose
@@ -211,6 +190,16 @@ public:
          속도 = b + τ·(2c + τ·3d)              ← 위치의 1차 미분
          (τ = t - segments[k].t_start) */
     PoseVel reconstruct(float t);
+
+private:
+    std::array<Eigen::Vector3f, 4> m_points{
+        Eigen::Vector3f::Zero(),
+        Eigen::Vector3f::Zero(),
+        Eigen::Vector3f::Zero(),
+        Eigen::Vector3f::Zero()};
+    Eigen::Vector3f m_start_velocity{Eigen::Vector3f::Zero()};
+    Eigen::Vector3f m_end_velocity{Eigen::Vector3f::Zero()};
+    std::array<detail::CubicSegment, 3> m_segments{};
 };
 
 

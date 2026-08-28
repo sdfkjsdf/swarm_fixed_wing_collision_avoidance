@@ -44,7 +44,9 @@ public:
         CandidateInput candidate,
         TrimGateParams trim_gate,
         double cone_generation_duration_s,
-        double tail_hold_duration_s);
+        double tail_hold_duration_s,
+        float minimum_level_eas,
+        float gravity);
 
     void onActivate() override;
     void onDeactivate() override;
@@ -60,7 +62,7 @@ private:
 
     bool trimConditionsSatisfied() const;
     void startManeuver();
-    float equivalentAirspeedCommand() const;
+    float equivalentAirspeedCommand(float lateral_acceleration) const;
 
     rclcpp::Node & m_node;
     std::shared_ptr<px4_ros2::FwLateralLongitudinalSetpointType> m_fw_setpoint;
@@ -100,5 +102,7 @@ private:
     std::atomic<float> m_wind_east{0.0F};
     std::atomic<float> m_air_density{1.225F};
     std::atomic<bool> m_has_local_z{false};
+    float m_minimum_level_eas{10.0F};
+    float m_gravity{9.80665F};
     double m_baseline_altitude{NAN};
 };

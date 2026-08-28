@@ -12,7 +12,9 @@ PropagationTestMode::PropagationTestMode(
     CandidateInput candidate,
     TrimGateParams trim_gate,
     double cone_generation_duration_s,
-    double tail_hold_duration_s)
+    double tail_hold_duration_s,
+    float minimum_level_eas,
+    float gravity)
 : ModeBase(
       node, Settings{"Propagation SILS Test"},
       "/px4_" + std::to_string(vehicle_id) + "/"),
@@ -22,7 +24,9 @@ PropagationTestMode::PropagationTestMode(
   m_cone_generation_duration_s(std::max(0.1, cone_generation_duration_s)),
   m_total_hold_duration_s(
       std::max(0.1, cone_generation_duration_s)
-      + std::max(4.5, tail_hold_duration_s))
+      + std::max(4.5, tail_hold_duration_s)),
+  m_minimum_level_eas(minimum_level_eas),
+  m_gravity(gravity)
 {
     m_fw_setpoint =
         std::make_shared<px4_ros2::FwLateralLongitudinalSetpointType>(*this);
@@ -138,9 +142,11 @@ void PropagationTestMode::onDeactivate()
     m_active.store(false, std::memory_order_release);
 }
 
-float PropagationTestMode::equivalentAirspeedCommand() const
+float PropagationTestMode::equivalentAirspeedCommand(
+    float lateral_acceleration) const
 {
-    return collision_avoidance::control::computeRequiredEquivalentAirspeed(
+    const float raw_eas =
+        collision_avoidance::control::computeRequiredEquivalentAirspeed(
         m_candidate.ground_speed,
         static_cast<float>(
             m_latest_ground_course.load(std::memory_order_relaxed)),
@@ -149,6 +155,8 @@ float PropagationTestMode::equivalentAirspeedCommand() const
         m_wind_east.load(std::memory_order_relaxed),
         0.0F,
         m_air_density.load(std::memory_order_relaxed));
+    return collision_avoidance::control::applyTurnMinimumEquivalentAirspeed(
+        raw_eas, m_minimum_level_eas, lateral_acceleration, m_gravity);
 }
 
 void PropagationTestMode::updateSetpoint(float)
@@ -160,7 +168,10 @@ void PropagationTestMode::updateSetpoint(float)
         return;
     }
 
-    const float v_cmd_eas = equivalentAirspeedCommand();
+    const float applied_lateral_acceleration =
+        (m_phase == Phase::Trim) ? 0.0F : m_candidate.lateral_acceleration;
+    const float v_cmd_eas =
+        equivalentAirspeedCommand(applied_lateral_acceleration);
 
     if (m_phase == Phase::Trim) {
         px4_ros2::FwLateralLongitudinalSetpoint trim_setpoint;

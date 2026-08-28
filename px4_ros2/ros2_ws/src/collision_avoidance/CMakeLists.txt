@@ -15,6 +15,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
     "msg/TrajectoryCone.msg"
+    "msg/TrajectoryIntent.msg"
 )
 rosidl_get_typesupport_target(collision_avoidance_typesupport_target
     ${PROJECT_NAME} rosidl_typesupport_cpp)
@@ -73,11 +74,64 @@ target_link_libraries(trajectory_reconstruction PUBLIC
     Eigen3::Eigen
 )
 
+# ROS-independent A-to-B trajectory-intent pipeline. Transport wrappers may
+# copy/serialize the fixed packet without duplicating prediction algorithms.
+add_library(trajectory_intent STATIC
+    src/estimation/trajectory_prediction/TrajectoryIntent.cpp
+)
+add_library(collision_avoidance::trajectory_intent ALIAS
+    trajectory_intent
+)
+target_include_directories(trajectory_intent PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(trajectory_intent PUBLIC
+    trajectory_prediction_core
+    trajectory_reconstruction
+)
+
+# Static two-aircraft Current-Best + two-alternate evaluator. It consumes the
+# 46-point mean/cone already reconstructed by trajectory_intent and adds no
+# second reconstruction or covariance implementation.
+add_library(maneuver_combination_evaluator STATIC
+    src/selection/ManeuverCombinationEvaluator.cpp
+)
+add_library(collision_avoidance::maneuver_combination_evaluator ALIAS
+    maneuver_combination_evaluator
+)
+target_include_directories(maneuver_combination_evaluator PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(maneuver_combination_evaluator PUBLIC
+    trajectory_intent
+)
+
+add_library(trajectory_intent_transport STATIC
+    src/communication/TrajectoryIntentTransport.cpp
+)
+add_library(collision_avoidance::trajectory_intent_transport ALIAS
+    trajectory_intent_transport
+)
+target_include_directories(trajectory_intent_transport PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(trajectory_intent_transport rclcpp)
+target_link_libraries(trajectory_intent_transport
+    trajectory_intent
+    "${collision_avoidance_typesupport_target}"
+)
+
 install(TARGETS
     common_coordinate_transform
     ground_to_eas_adapter
     trajectory_prediction_core
     trajectory_reconstruction
+    trajectory_intent
+    maneuver_combination_evaluator
+    trajectory_intent_transport
     EXPORT collision_avoidance_targets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
@@ -95,6 +149,7 @@ install(DIRECTORY include/
 ament_export_targets(collision_avoidance_targets HAS_LIBRARY_TARGET)
 ament_export_include_directories(include)
 ament_export_dependencies(Eigen3)
+ament_export_dependencies(rclcpp)
 ament_export_dependencies(rosidl_default_runtime)
 
 add_executable(vtol_guidance_node
@@ -152,6 +207,30 @@ if(BUILD_TESTING)
         trajectory_prediction_core
     )
     target_include_directories(test_trajectory_uncertainty PRIVATE include)
+
+    ament_add_gtest(test_trajectory_intent
+        test/test_trajectory_intent.cpp
+    )
+    target_link_libraries(test_trajectory_intent
+        trajectory_intent
+    )
+    target_include_directories(test_trajectory_intent PRIVATE include)
+
+    ament_add_gtest(test_trajectory_intent_transport
+        test/test_trajectory_intent_transport.cpp
+    )
+    target_link_libraries(test_trajectory_intent_transport
+        trajectory_intent_transport
+    )
+    target_include_directories(test_trajectory_intent_transport PRIVATE include)
+
+    ament_add_gtest(test_maneuver_combination_evaluator
+        test/test_maneuver_combination_evaluator.cpp
+    )
+    target_link_libraries(test_maneuver_combination_evaluator
+        maneuver_combination_evaluator
+    )
+    target_include_directories(test_maneuver_combination_evaluator PRIVATE include)
 
     ament_add_gtest(test_global_types
         test/test_global_types.cpp

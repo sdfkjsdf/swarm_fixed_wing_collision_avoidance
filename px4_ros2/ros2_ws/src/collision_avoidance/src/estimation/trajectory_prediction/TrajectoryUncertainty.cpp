@@ -187,8 +187,30 @@ bool TrajectoryUncertainty::propagateOneStep(
     }
 
     const PredictState next = predictor.stepRK4(state, input, dt);
-    const auto next_array = toArray(next);
-    const auto state_array = toArray(state);
+    if (!propagateCovarianceOneStep(
+            predictor, input, dt, state, next, covariance)) {
+        return false;
+    }
+    state = next;
+    return finiteState(state);
+}
+
+bool TrajectoryUncertainty::propagateCovarianceOneStep(
+    const TrajectoryPredict & predictor,
+    const PredictInput & input,
+    double dt,
+    const PredictState & linearization_state,
+    const PredictState & predicted_next_state,
+    PredictStateCovariance & covariance) const
+{
+    if (!(dt > 0.0) || !finiteState(linearization_state)
+        || !finiteState(predicted_next_state)
+        || !covarianceIsFiniteAndPsd(covariance)) {
+        return false;
+    }
+
+    const auto next_array = toArray(predicted_next_state);
+    const auto state_array = toArray(linearization_state);
     std::array<double, kX * kX> transition{};
 
     for (std::size_t column = 0; column < kX; ++column) {
@@ -224,9 +246,8 @@ bool TrajectoryUncertainty::propagateOneStep(
     }
 
     symmetrizeAndFloor(propagated, m_params.covariance_diagonal_floor);
-    state = next;
     covariance = propagated;
-    return finiteState(state) && covarianceIsFiniteAndPsd(covariance);
+    return covarianceIsFiniteAndPsd(covariance);
 }
 
 bool TrajectoryUncertainty::compensateFusionHorizonDelay(
@@ -267,6 +288,51 @@ bool TrajectoryUncertainty::propagate(
         cone[index + 1] = {
             static_cast<double>(index + 1) * dt,
             state,
+            covariance,
+            positionCovarianceNed(covariance)};
+    }
+    return true;
+}
+
+bool TrajectoryUncertainty::propagateAlongMean(
+    const TrajectoryPredict & predictor,
+    const PredictionMeanTrajectory & mean_trajectory,
+    const PredictStateCovariance & initial_covariance,
+    const PredictionInputTrajectory & inputs,
+    double dt,
+    TrajectoryCone & cone) const
+{
+    PredictStateCovariance covariance = initial_covariance;
+    if (!(dt > 0.0) || !finiteState(mean_trajectory.front())
+        || !covarianceIsFiniteAndPsd(covariance)) {
+        return false;
+    }
+
+    cone[0] = {
+        0.0,
+        mean_trajectory[0],
+        covariance,
+        positionCovarianceNed(covariance)};
+    for (std::size_t index = 0; index < kTrajectoryIntervalCount; ++index) {
+        const PredictState & current_mean = mean_trajectory[index];
+        const PredictState & next_mean = mean_trajectory[index + 1];
+        if (!finiteState(current_mean) || !finiteState(next_mean)) {
+            return false;
+        }
+        const PredictState predicted_next =
+            predictor.stepRK4(current_mean, inputs[index], dt);
+        if (!propagateCovarianceOneStep(
+                predictor,
+                inputs[index],
+                dt,
+                current_mean,
+                predicted_next,
+                covariance)) {
+            return false;
+        }
+        cone[index + 1] = {
+            static_cast<double>(index + 1) * dt,
+            next_mean,
             covariance,
             positionCovarianceNed(covariance)};
     }

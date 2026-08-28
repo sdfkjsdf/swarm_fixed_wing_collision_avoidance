@@ -43,7 +43,9 @@ public:
     TrajectoryReplayMode(rclcpp::Node & node,
                          int vehicle_id,
                          std::unique_ptr<SetpointSequencer> sequencer,
-                         std::shared_ptr<TrajectoryLogger> logger);
+                         std::shared_ptr<TrajectoryLogger> logger,
+                         float minimum_level_eas,
+                         float gravity);
     ~TrajectoryReplayMode() override;
 
     void onActivate() override;
@@ -77,6 +79,8 @@ private:
     float m_wind_n{0.0F};
     float m_wind_e{0.0F};
     float m_air_density{1.225F};
+    float m_minimum_level_eas{10.0F};
+    float m_gravity{9.80665F};
 
     std::unique_ptr<SetpointSequencer> m_sequencer;   /* rt_thread 단독 접근 */
     std::shared_ptr<TrajectoryLogger>  m_logger;      /* main thread 만 호출 */

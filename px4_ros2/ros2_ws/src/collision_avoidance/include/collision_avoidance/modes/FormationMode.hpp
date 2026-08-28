@@ -132,6 +132,8 @@ private:
     float m_cruise_altitude_amsl{NAN};
     float m_initial_course{0.f};
     float m_initial_ground_speed{15.f};
+    float m_minimum_level_eas{12.f};
+    float m_gravity{9.80665f};
 
     /* ── mt: 고도 P-제어 ── */
     float m_ref_pos_d_mt{0.f};

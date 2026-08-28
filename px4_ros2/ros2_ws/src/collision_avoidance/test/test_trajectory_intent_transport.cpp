@@ -1,0 +1,41 @@
+#include <gtest/gtest.h>
+
+#include <collision_avoidance/communication/TrajectoryIntentTransport.hpp>
+
+namespace ce = collision_avoidance::estimation;
+namespace cc = collision_avoidance::communication;
+
+TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
+{
+    ce::TrajectoryIntentPacket source{};
+    source.source_timestamp_us = 987654321ULL;
+    source.candidate_id = static_cast<std::uint8_t>(
+        ce::ManeuverCandidateId::RollMinus30);
+    for (std::size_t index = 0; index < source.initial_state.size(); ++index) {
+        source.initial_state[index] = static_cast<float>(index) + 0.25F;
+    }
+    for (std::size_t index = 0; index < source.initial_covariance.size(); ++index) {
+        source.initial_covariance[index] = static_cast<float>(index) * 0.01F;
+    }
+    source.compressed_mean = {
+        {1.0F, 2.0F, 3.0F},
+        {4.0F, 5.0F, 6.0F},
+        {7.0F, 8.0F, 9.0F},
+        {10.0F, 11.0F, 12.0F},
+        {13.0F, 14.0F, 15.0F},
+        {16.0F, 17.0F, 18.0F}};
+
+    const auto message = cc::toRosMessage(source);
+    const auto received = cc::fromRosMessage(message);
+
+    EXPECT_EQ(received.source_timestamp_us, source.source_timestamp_us);
+    EXPECT_EQ(received.candidate_id, source.candidate_id);
+    EXPECT_EQ(received.initial_state, source.initial_state);
+    EXPECT_EQ(received.initial_covariance, source.initial_covariance);
+    EXPECT_FLOAT_EQ(
+        received.compressed_mean.pos_t0.x,
+        source.compressed_mean.pos_t0.x);
+    EXPECT_FLOAT_EQ(
+        received.compressed_mean.vel_t45.z,
+        source.compressed_mean.vel_t45.z);
+}

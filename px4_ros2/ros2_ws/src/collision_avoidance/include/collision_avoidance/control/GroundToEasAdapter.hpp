@@ -19,4 +19,16 @@ float computeRequiredEquivalentAirspeed(
     float wind_down,
     float air_density) noexcept;
 
+/* Apply the accelerated-stall minimum EAS associated with a coordinated
+   turn command. The lateral acceleration command represents
+   phi_cmd = atan2(a_lat_cmd, gravity), so the turn load factor is
+   n = 1 / cos(phi_cmd). The returned command is
+   max(raw_equivalent_airspeed, minimum_level_eas * sqrt(n)).
+   Returns NaN when an input is invalid. */
+float applyTurnMinimumEquivalentAirspeed(
+    float raw_equivalent_airspeed,
+    float minimum_level_equivalent_airspeed,
+    float lateral_acceleration_command,
+    float gravity) noexcept;
+
 }  // namespace collision_avoidance::control

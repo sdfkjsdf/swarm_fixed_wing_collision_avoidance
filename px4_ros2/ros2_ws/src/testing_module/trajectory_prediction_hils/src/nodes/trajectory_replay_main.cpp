@@ -240,7 +240,8 @@ int main(int argc, char * argv[])
 
     auto preflight = std::make_shared<VtolPreflightMode>(*node, vehicle_ID);
     auto replay    = std::make_shared<TrajectoryReplayMode>(
-        *node, vehicle_ID, std::move(sequencer), logger);
+        *node, vehicle_ID, std::move(sequencer), logger,
+        limits.airspeed_min, limits.gravity);
 
     /* [4] Executor 생성 (owned_mode = preflight, second_mode = replay) */
     auto executor = std::make_shared<TrajectoryReplayExecutor>(*preflight, *replay);

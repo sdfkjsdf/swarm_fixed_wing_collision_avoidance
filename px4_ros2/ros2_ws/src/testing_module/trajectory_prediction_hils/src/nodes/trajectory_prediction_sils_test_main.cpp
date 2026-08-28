@@ -51,6 +51,7 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("height_rate_max_climb", 8.0);
     node->declare_parameter<double>("height_rate_min_sink", 2.7);
     node->declare_parameter<double>("max_roll_deg", 50.0);
+    node->declare_parameter<double>("gravity", 9.80665);
     node->declare_parameter<double>("tc_tas", 5.0);
     node->declare_parameter<double>("tc_alt", 5.0);
     node->declare_parameter<double>("tc_roll", 0.5);
@@ -92,7 +93,8 @@ int main(int argc, char * argv[])
         std::abs(node->get_parameter("height_rate_min_sink").as_double()));
     const double max_roll_rad =
         node->get_parameter("max_roll_deg").as_double() * M_PI / 180.0;
-    predict_params.a_lat_max = 9.80665 * std::tan(max_roll_rad);
+    const double gravity = node->get_parameter("gravity").as_double();
+    predict_params.a_lat_max = gravity * std::tan(max_roll_rad);
     predict_params.V_h_min = 1.0;
     auto predictor = std::make_shared<TrajectoryPredict>(predict_params);
 
@@ -139,7 +141,10 @@ int main(int argc, char * argv[])
         *node, vehicle_id, topic_namespace, candidate,
         trim_gate,
         node->get_parameter("test.cone_generation_duration_s").as_double(),
-        node->get_parameter("test.tail_hold_duration_s").as_double());
+        node->get_parameter("test.tail_hold_duration_s").as_double(),
+        static_cast<float>(
+            node->get_parameter("airspeed_min").as_double()),
+        static_cast<float>(gravity));
     auto executor = std::make_shared<PropagationTestExecutor>(
         *transition_mode, *test_mode);
 

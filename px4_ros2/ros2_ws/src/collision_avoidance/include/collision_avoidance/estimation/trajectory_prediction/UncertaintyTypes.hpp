@@ -20,6 +20,8 @@ using EstimatorBeliefCovariance =
 using PositionCovariance = std::array<double, 9>;
 using PredictionInputTrajectory =
     std::array<PredictInput, kTrajectoryIntervalCount>;
+using PredictionMeanTrajectory =
+    std::array<PredictState, kTrajectoryPointCount>;
 
 struct EstimatorTrajectoryBelief
 {

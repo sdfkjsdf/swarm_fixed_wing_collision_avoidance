@@ -69,9 +69,21 @@ rosidl_get_typesupport_target(
 target_link_libraries(trajectory_prediction_sils_test_node
     "${trajectory_prediction_hils_cpp_typesupport_target}")
 
+# Deterministic, non-ROS snapshot runner for the first 3x3 maneuver-combination
+# evaluation. It reuses the production intent reconstruction and uncertainty
+# cone before printing the complete PMR/MASD/AD table.
+add_executable(static_maneuver_combination
+    src/tools/static_maneuver_combination_main.cpp
+)
+target_link_libraries(static_maneuver_combination
+    collision_avoidance::trajectory_intent
+    collision_avoidance::maneuver_combination_evaluator
+)
+
 install(TARGETS
     trajectory_replay_node
     trajectory_prediction_sils_test_node
+    static_maneuver_combination
     DESTINATION lib/${PROJECT_NAME}
 )
 

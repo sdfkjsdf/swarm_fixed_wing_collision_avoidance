@@ -50,7 +50,7 @@ namespace collision_avoidance::estimation
    Clamped cubic spline 의 b/c/d 계수 계산.
    사용자 명시 (2026-05-13) 사양대로 구현:
 
-   1. set_sample_point(s) → detail::P1..P4, V1, V4 채움
+   1. set_sample_point(s) → instance sample storage 채움
    2. 4×3 행렬 B, C 를 Zero 로 초기화
    3. B 행 채우기 (각 행 = (1×3) row vector, 시점별 우변 항):
         B.row(0) = ((3/h)·(P2-P1) - 3·V1)^T
@@ -64,7 +64,7 @@ namespace collision_avoidance::estimation
    ───────────────────────────────────────────────────────────────── */
 void ReconstructTrajectory::calculate_clamp_cubic_spline(const TrajectorySample & s)
 {
-    /* (1) set 함수를 통해서 멤버 변수 (detail namespace) 에 값 할당 */
+    /* (1) set 함수를 통해서 instance sample storage 에 값 할당 */
     set_sample_point(s);
 
     /* (2) 4×3 행렬 B, C — 초기화된 (Zero) 상태로 선언.
@@ -77,12 +77,14 @@ void ReconstructTrajectory::calculate_clamp_cubic_spline(const TrajectorySample 
     constexpr float three_div_h = 3.0f / h;
 
     /* (3) B 의 각 행에 우변 항 인가 (1×3 = (3×1)^T) */
-    B.row(0) = (three_div_h * (detail::P2 - detail::P1) - 3.0f * detail::V1).transpose();
-    B.row(1) = (three_div_h * (detail::P3 - detail::P2)
-              - three_div_h * (detail::P2 - detail::P1)).transpose();
-    B.row(2) = (three_div_h * (detail::P4 - detail::P3)
-              - three_div_h * (detail::P3 - detail::P2)).transpose();
-    B.row(3) = (3.0f * detail::V4 - three_div_h * (detail::P4 - detail::P3)).transpose();
+    B.row(0) = (three_div_h * (m_points[1] - m_points[0])
+              - 3.0f * m_start_velocity).transpose();
+    B.row(1) = (three_div_h * (m_points[2] - m_points[1])
+              - three_div_h * (m_points[1] - m_points[0])).transpose();
+    B.row(2) = (three_div_h * (m_points[3] - m_points[2])
+              - three_div_h * (m_points[2] - m_points[1])).transpose();
+    B.row(3) = (3.0f * m_end_velocity
+              - three_div_h * (m_points[3] - m_points[2])).transpose();
 
     /* (4) C = inverse_A · B  (4×4 · 4×3 = 4×3) */
     C = detail::inverse_A * B;
@@ -97,37 +99,37 @@ void ReconstructTrajectory::calculate_clamp_cubic_spline(const TrajectorySample 
     const Eigen::Vector3f c4 = C.row(3).transpose();
 
     /* (6) b 계수 — bᵢ = (Pᵢ₊₁ - Pᵢ)/h - (h/3)·(2cᵢ + cᵢ₊₁)
-       → detail::segments[k].b 에 *직접 저장* */
+       → m_segments[k].b 에 *직접 저장* */
     constexpr float inv_h    = 1.0f / h;
     constexpr float h_div_3  = h / 3.0f;
-    detail::segments[0].b = (detail::P2 - detail::P1) * inv_h
-                          - h_div_3 * (2.0f * c1 + c2);
-    detail::segments[1].b = (detail::P3 - detail::P2) * inv_h
-                          - h_div_3 * (2.0f * c2 + c3);
-    detail::segments[2].b = (detail::P4 - detail::P3) * inv_h
-                          - h_div_3 * (2.0f * c3 + c4);
+    m_segments[0].b = (m_points[1] - m_points[0]) * inv_h
+                    - h_div_3 * (2.0f * c1 + c2);
+    m_segments[1].b = (m_points[2] - m_points[1]) * inv_h
+                    - h_div_3 * (2.0f * c2 + c3);
+    m_segments[2].b = (m_points[3] - m_points[2]) * inv_h
+                    - h_div_3 * (2.0f * c3 + c4);
 
     /* (7) c 계수 — segments[k].c = ck */
-    detail::segments[0].c = c1;
-    detail::segments[1].c = c2;
-    detail::segments[2].c = c3;
+    m_segments[0].c = c1;
+    m_segments[1].c = c2;
+    m_segments[2].c = c3;
 
     /* (8) d 계수 — dᵢ = (cᵢ₊₁ - cᵢ) / (3·h)
-       → detail::segments[k].d 에 *직접 저장* */
+       → m_segments[k].d 에 *직접 저장* */
     constexpr float inv_3h = 1.0f / (3.0f * h);
-    detail::segments[0].d = (c2 - c1) * inv_3h;
-    detail::segments[1].d = (c3 - c2) * inv_3h;
-    detail::segments[2].d = (c4 - c3) * inv_3h;
+    m_segments[0].d = (c2 - c1) * inv_3h;
+    m_segments[1].d = (c3 - c2) * inv_3h;
+    m_segments[2].d = (c4 - c3) * inv_3h;
 
     /* (9) 구간 시작 위치 (P) + 시각 (t_start) 채움.
        evaluate (reconstruct) 함수가 *segments[k] 만 보고* 모든 정보 획득 가능하도록
        *self-contained* 한 segments 보장. */
-    detail::segments[0].P = detail::P1;
-    detail::segments[1].P = detail::P2;
-    detail::segments[2].P = detail::P3;
-    detail::segments[0].t_start = 0.0f;
-    detail::segments[1].t_start = h;
-    detail::segments[2].t_start = 2.0f * h;
+    m_segments[0].P = m_points[0];
+    m_segments[1].P = m_points[1];
+    m_segments[2].P = m_points[2];
+    m_segments[0].t_start = 0.0f;
+    m_segments[1].t_start = h;
+    m_segments[2].t_start = 2.0f * h;
 }
 
 
@@ -170,7 +172,7 @@ PoseVel ReconstructTrajectory::reconstruct(float t)
     }
 
     /* (Q4-C) segments[k] 통합 접근 */
-    const detail::CubicSegment & seg = detail::segments[k];
+    const detail::CubicSegment & seg = m_segments[k];
     const float tau = t - seg.t_start;     /* 국소 좌표 τ ∈ [0, h] */
 
     /* 위치 (Horner): P + τ·(b + τ·(c + τ·d)) */
