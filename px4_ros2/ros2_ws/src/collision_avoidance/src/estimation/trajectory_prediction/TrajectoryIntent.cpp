@@ -10,7 +10,7 @@ namespace
 {
 
 constexpr std::array<double, kManeuverCandidateCount> kCandidateRollDegrees{
-    -45.0, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0};
+    -50.0, -30.0, -15.0, 0.0, 15.0, 30.0, 50.0};
 
 bool finiteState(const PredictState & state) noexcept
 {

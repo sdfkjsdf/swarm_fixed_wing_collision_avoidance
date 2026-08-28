@@ -41,8 +41,8 @@ struct ManeuverSelectionWorkerParams
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollPlus15),
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollMinus30),
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollPlus30),
-        static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollMinus45),
-        static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollPlus45)};
+        static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollMinus50),
+        static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollPlus50)};
 };
 
 struct ManeuverSelectionBeliefSnapshot

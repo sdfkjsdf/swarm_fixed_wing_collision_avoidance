@@ -17,7 +17,7 @@ from rosidl_runtime_py.utilities import get_message
 
 
 AIRCRAFT_COUNT = 5
-CANDIDATE_ROLL_DEGREES = (-45, -30, -15, 0, 15, 30, 45)
+CANDIDATE_ROLL_DEGREES = (-50, -30, -15, 0, 15, 30, 50)
 COLORS = plt.get_cmap("tab10").colors[:AIRCRAFT_COUNT]
 
 

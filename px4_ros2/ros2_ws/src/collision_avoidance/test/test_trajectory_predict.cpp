@@ -146,7 +146,7 @@ TEST(Accuracy, CoordinatedTurnRadius)
     TrajectoryPredict pred(params);
 
     const double V_cmd     = 18.0;
-    const double a_lat_cmd = 4.0;     /* < a_lat_max = 9.8 */
+    const double a_lat_cmd = 4.0;     /* < a_lat_max = g * tan(50 deg) */
     PredictInput u{V_cmd, std::nan(""), 0.0, a_lat_cmd};
 
     /* 30s 시뮬 — phi 시정수 0.5s, V 시정수 4s 모두 수렴 충분 */
@@ -297,6 +297,22 @@ TEST(PhiBased, LargeRollAngleAccuracy)
     /* g·tan(phi) 가 정확히 a_lat_cmd 복원 */
     const double a_lat_from_phi = kG * std::tan(x.phi);
     EXPECT_NEAR(a_lat_from_phi, 9.0, 0.05);
+}
+
+TEST(PhiBased, DefaultLimitAllowsFiftyDegreeCandidate)
+{
+    auto params = defaultParams();
+    TrajectoryPredict pred(params);
+
+    const double phi_command = 50.0 * M_PI / 180.0;
+    PredictInput u{
+        20.0, std::nan(""), 0.0, kG * std::tan(phi_command)};
+    auto x = calmInit(20.0);
+    for (int i = 0; i < 200; ++i) {
+        x = pred.stepRK4(x, u, 0.05);
+    }
+
+    EXPECT_NEAR(x.phi, phi_command, 1.0e-6);
 }
 
 

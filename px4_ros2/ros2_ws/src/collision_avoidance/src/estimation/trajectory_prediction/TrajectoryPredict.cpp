@@ -20,8 +20,8 @@
      phi_dot     = (phi_cmd   - phi  ) / tau_phi   ★ roll loop 1차 지연
 
    외부 입력 변환 (stepRK4 진입 시 1회):
-     phi_cmd     = atan2(a_lat_cmd, g)          a_lat_cmd ∈ [-g·tan(45°), +g·tan(45°)]
-                                                → phi_cmd ∈ [-45°, +45°]
+     phi_cmd     = atan2(a_lat_cmd, g)          a_lat_cmd ∈ [-g·tan(50°), +g·tan(50°)]
+                                                → phi_cmd ∈ [-50°, +50°]
 
    applyInputSaturation (§2.5, 변경 없음):
      V_cmd     <- clamp(V_cmd,    V_min,         V_max)
@@ -32,7 +32,7 @@
    applyStateSafety (§2.5):
      V         <- max(V, V_h_min)               (수치 안전 floor)
      |h_dot|   <- clamp(h_dot, ±0.99·V)        (V_h 발산 방지)
-     phi       <- clamp(phi, ±60°)              ★ tan 발산 방지 (FW_R_LIM 45° + 마진)
+     phi       <- clamp(phi, ±60°)              ★ tan 발산 방지 (FW_R_LIM 50° + 마진)
      psi       <- wrapPi(psi)
 
    stepRK4 (§7):
@@ -56,7 +56,7 @@ namespace
 /* 표준 중력 — PATCH §3.3 의 constexpr 9.80665 */
 constexpr double k_g = 9.80665;
 
-/* phi hard limit — PATCH §3.6, FW_R_LIM 45° 에 안전 마진 두고 ±60° */
+/* phi hard limit — PATCH §3.6, FW_R_LIM 50° 에 안전 마진 두고 ±60° */
 constexpr double k_phi_hard_limit = 1.047197551;   /* 60° in rad */
 
 /* psi 를 [-pi, pi] 로 wrap — 분기 없음 (fmod 2회) */
@@ -154,7 +154,7 @@ PredictState TrajectoryPredict::applyStateSafety(const PredictState & x) const
     /* |h_dot| < 0.99 * V — V_h 가 0 으로 가는 것 방지 */
     const double cap = 0.99 * y.V;
     y.h_dot = clampFM(y.h_dot, -cap, cap);
-    /* phi clamp ±60° — tan(±π/2) 발산 방지 (FW_R_LIM 45° 에 마진 15°) */
+    /* phi clamp ±60° — tan(±π/2) 발산 방지 (FW_R_LIM 50° 에 마진 10°) */
     y.phi = clampFM(y.phi, -k_phi_hard_limit, k_phi_hard_limit);
     /* psi wrap [-pi, pi] */
     y.psi = wrapPi(y.psi);

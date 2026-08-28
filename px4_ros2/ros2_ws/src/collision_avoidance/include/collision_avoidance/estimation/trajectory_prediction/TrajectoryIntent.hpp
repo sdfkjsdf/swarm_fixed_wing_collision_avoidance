@@ -16,13 +16,13 @@ inline constexpr std::size_t kManeuverCandidateCount = 7;
 
 enum class ManeuverCandidateId : std::uint8_t
 {
-    RollMinus45 = 0,
+    RollMinus50 = 0,
     RollMinus30,
     RollMinus15,
     RollZero,
     RollPlus15,
     RollPlus30,
-    RollPlus45,
+    RollPlus50,
 };
 
 struct ManeuverCandidateTable

@@ -77,7 +77,7 @@ struct PredictParams {
     double V_min       = 12.0;    /* FW_AIRSPD_MIN              */
     double V_max       = 25.0;    /* FW_AIRSPD_MAX              */
     double h_dot_max   = 5.0;     /* FW_T_CLMB_MAX (대칭 가정) */
-    double a_lat_max   = 9.8;     /* g * tan(FW_R_LIM)          */
+    double a_lat_max   = 11.68711036881401; /* g * tan(50 deg)    */
 
     /* 수치 안전 (§2.5) — sqrt(V^2 - h_dot^2) 가 0 으로 가는 것 방지 */
     double V_h_min     = 1.0;     /* [m/s] 수평 속도 floor      */

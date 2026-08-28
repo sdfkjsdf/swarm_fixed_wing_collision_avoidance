@@ -44,9 +44,19 @@ TEST(TrajectoryIntent, BuildsRequiredRollCandidateLookup)
     ASSERT_NE(candidates.find(3), nullptr);
     ASSERT_NE(candidates.find(6), nullptr);
     EXPECT_EQ(candidates.find(7), nullptr);
-    EXPECT_NEAR(candidates.find(0)->a_lat_cmd, -gravity, 1.0e-12);
+    EXPECT_NEAR(
+        candidates.find(0)->a_lat_cmd,
+        -gravity * std::tan(50.0 * M_PI / 180.0),
+        1.0e-12);
     EXPECT_NEAR(candidates.find(3)->a_lat_cmd, 0.0, 1.0e-12);
-    EXPECT_NEAR(candidates.find(6)->a_lat_cmd, gravity, 1.0e-12);
+    EXPECT_NEAR(
+        candidates.find(6)->a_lat_cmd,
+        gravity * std::tan(50.0 * M_PI / 180.0),
+        1.0e-12);
+    EXPECT_NEAR(
+        ce::PredictParams{}.a_lat_max,
+        candidates.find(6)->a_lat_cmd,
+        1.0e-12);
     EXPECT_NEAR(
         candidates.find(4)->a_lat_cmd,
         gravity * std::tan(15.0 * M_PI / 180.0),

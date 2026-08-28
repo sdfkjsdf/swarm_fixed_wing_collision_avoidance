@@ -1,4 +1,5 @@
 #include <rclcpp/rclcpp.hpp>
+#include <cmath>
 #include <collision_avoidance/modes/VtolPreflightMode.hpp>
 #include <collision_avoidance/modes/FormationMode.hpp>
 #include <collision_avoidance/modes/VtolGuidanceExecutor.hpp>
@@ -48,6 +49,12 @@ int main(int argc, char * argv[])
         collision_avoidance::selection::ManeuverSelectionWorkerParams params;
         params.ground_speed_command_mps =
             node->get_parameter("maneuver_ground_speed_command").as_double();
+        params.gravity_mps2 = node->get_parameter("gravity").as_double();
+        const double maximum_roll_radians =
+            node->get_parameter("max_roll_deg").as_double()
+            * std::acos(-1.0) / 180.0;
+        params.predictor_params.a_lat_max =
+            params.gravity_mps2 * std::tan(maximum_roll_radians);
         params.evaluator_params.desired_separation_distance_m =
             node->get_parameter("desired_separation_distance").as_double();
         const double half_wingspan =
