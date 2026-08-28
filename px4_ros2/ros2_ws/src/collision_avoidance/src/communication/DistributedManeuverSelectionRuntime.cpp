@@ -69,6 +69,8 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
         rclcpp::SensorDataQoS());
     m_intent_subscriptions.reserve(
         static_cast<std::size_t>(total_agent_count - 1));
+    m_decision_subscriptions.reserve(
+        static_cast<std::size_t>(total_agent_count - 1));
     for (int remote_vehicle_id = 0;
          remote_vehicle_id < total_agent_count; ++remote_vehicle_id) {
         if (remote_vehicle_id == m_vehicle_id) {
@@ -91,6 +93,50 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                     }
                 },
                 intent_history_depth));
+        const std::string remote_decision_topic =
+            "/common/px4_" + std::to_string(remote_vehicle_id)
+            + "/maneuver_selection_decision";
+        m_decision_subscriptions.push_back(
+            m_node.create_subscription<
+                collision_avoidance::msg::ManeuverSelectionDecision>(
+                remote_decision_topic,
+                rclcpp::SensorDataQoS(),
+                [this, remote_vehicle_id](
+                    collision_avoidance::msg::ManeuverSelectionDecision::
+                        ConstSharedPtr message) {
+                    selection::ManeuverSelectionPeerDecision decision;
+                    decision.vehicle_id = message->vehicle_id;
+                    decision.selection_timestamp_us =
+                        message->selection_timestamp_us;
+                    decision.local_selection_epoch =
+                        message->local_selection_epoch;
+                    std::copy(
+                        message->selected_candidate_ids.begin(),
+                        message->selected_candidate_ids.end(),
+                        decision.selected_candidate_ids.begin());
+                    decision.ownship_candidate_id =
+                        message->ownship_candidate_id;
+                    decision.proposal_timestamp_us =
+                        message->proposal_timestamp_us;
+                    decision.proposal_epoch = message->proposal_epoch;
+                    std::copy(
+                        message->proposed_candidate_ids.begin(),
+                        message->proposed_candidate_ids.end(),
+                        decision.proposed_candidate_ids.begin());
+                    decision.proposal_valid = message->proposal_valid;
+                    decision.proposal_consensus_confirmed =
+                        message->proposal_consensus_confirmed;
+                    decision.coordination_qualified =
+                        message->coordination_qualified;
+                    decision.activation_requested =
+                        message->activation_requested;
+                    if (!m_worker.pushRemoteDecision(
+                            remote_vehicle_id, decision)) {
+                        RCLCPP_WARN_THROTTLE(
+                            m_node.get_logger(), *m_node.get_clock(), 1000,
+                            "[maneuver-selection] remote decision input queue full");
+                    }
+                }));
     }
     m_belief_subscription =
         m_node.create_subscription<px4_msgs::msg::EstimatorTrajectoryBelief>(
@@ -112,6 +158,7 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
         m_output_timer.reset();
         m_belief_subscription.reset();
         m_intent_subscriptions.clear();
+        m_decision_subscriptions.clear();
         m_intent_publisher.reset();
         m_decision_publisher.reset();
         return;
@@ -132,6 +179,7 @@ DistributedManeuverSelectionRuntime::~DistributedManeuverSelectionRuntime()
     m_output_timer.reset();
     m_belief_subscription.reset();
     m_intent_subscriptions.clear();
+    m_decision_subscriptions.clear();
     m_worker.stop();
     m_decision_publisher.reset();
     m_intent_publisher.reset();
@@ -220,6 +268,16 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.selected_candidate_ids.end(),
                     message.selected_candidate_ids.begin());
                 message.ownship_candidate_id = decision.ownship_candidate_id;
+                message.proposal_timestamp_us =
+                    decision.proposal_timestamp_us;
+                message.proposal_epoch = decision.proposal_epoch;
+                std::copy(
+                    decision.proposed_candidate_ids.begin(),
+                    decision.proposed_candidate_ids.end(),
+                    message.proposed_candidate_ids.begin());
+                message.proposal_valid = decision.proposal_valid;
+                message.proposal_consensus_confirmed =
+                    decision.proposal_consensus_confirmed;
                 message.pmr_m = static_cast<float>(decision.pmr_m);
                 message.masd_m = static_cast<float>(decision.masd_m);
                 message.ad_m = static_cast<float>(decision.ad_m);
@@ -246,15 +304,19 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
             }
             RCLCPP_INFO(
                 m_node.get_logger(),
-                "[maneuver-selection] vehicle=%d epoch=%llu remote_epoch=%llu "
-                "qualified=%d own=%u threat=%u AD=%.3f active=%d "
+                "[maneuver-selection] vehicle=%d selected_epoch=%llu "
+                "proposal_epoch=%llu remote_epoch=%llu qualified=%d "
+                "proposal_confirmed=%d own=%u threat=%u AD=%.3f active=%d "
                 "start=%d end=%d reason=%u",
                 m_vehicle_id,
                 static_cast<unsigned long long>(
                     output->decision.local_selection_epoch),
                 static_cast<unsigned long long>(
+                    output->decision.proposal_epoch),
+                static_cast<unsigned long long>(
                     output->decision.remote_selection_epoch),
                 output->decision.coordination_qualified ? 1 : 0,
+                output->decision.proposal_consensus_confirmed ? 1 : 0,
                 static_cast<unsigned>(output->decision.ownship_candidate_id),
                 static_cast<unsigned>(output->decision.threat_candidate_id),
                 output->decision.ad_m,

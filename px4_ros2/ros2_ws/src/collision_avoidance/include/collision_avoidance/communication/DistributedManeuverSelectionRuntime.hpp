@@ -56,6 +56,9 @@ private:
         m_decision_publisher;
     std::vector<std::unique_ptr<TrajectoryIntentSubscription>>
         m_intent_subscriptions;
+    std::vector<rclcpp::Subscription<
+        collision_avoidance::msg::ManeuverSelectionDecision>::SharedPtr>
+        m_decision_subscriptions;
     rclcpp::Subscription<px4_msgs::msg::EstimatorTrajectoryBelief>::SharedPtr
         m_belief_subscription;
     rclcpp::TimerBase::SharedPtr m_output_timer;

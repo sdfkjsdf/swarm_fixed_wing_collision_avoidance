@@ -68,6 +68,12 @@ struct ManeuverSelectionDecision
         selected_candidate_ids{};
     std::uint8_t ownship_candidate_id{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
+    std::uint64_t proposal_timestamp_us{0};
+    std::uint64_t proposal_epoch{0};
+    std::array<std::uint8_t, kMaximumSelectionAircraft>
+        proposed_candidate_ids{};
+    bool proposal_valid{false};
+    bool proposal_consensus_confirmed{false};
     std::uint8_t threat_candidate_id{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
     estimation::PredictInput ownship_input{};
@@ -84,6 +90,28 @@ struct ManeuverSelectionDecision
     bool activation_requested{false};
     bool activation_just_started{false};
     bool activation_just_ended{false};
+};
+
+/* ROS-independent subset of a peer's published decision.  A peer owns only
+   its own candidate; the complete proposal is used solely for the distributed
+   same-epoch cross-check before any tuple is committed. */
+struct ManeuverSelectionPeerDecision
+{
+    int vehicle_id{-1};
+    std::uint64_t selection_timestamp_us{0};
+    std::uint64_t local_selection_epoch{0};
+    std::array<std::uint8_t, kMaximumSelectionAircraft>
+        selected_candidate_ids{};
+    std::uint8_t ownship_candidate_id{
+        static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
+    std::uint64_t proposal_timestamp_us{0};
+    std::uint64_t proposal_epoch{0};
+    std::array<std::uint8_t, kMaximumSelectionAircraft>
+        proposed_candidate_ids{};
+    bool proposal_valid{false};
+    bool proposal_consensus_confirmed{false};
+    bool coordination_qualified{false};
+    bool activation_requested{false};
 };
 
 struct ManeuverSelectionWorkerOutput
@@ -117,6 +145,9 @@ public:
     bool pushRemoteIntent(
         int remote_vehicle_id,
         const estimation::TrajectoryIntentPacket & packet) noexcept;
+    bool pushRemoteDecision(
+        int remote_vehicle_id,
+        const ManeuverSelectionPeerDecision & decision) noexcept;
     void setActivationEnabled(bool enabled) noexcept;
     std::optional<ManeuverSelectionWorkerOutput> tryPopOutput() noexcept;
 
@@ -131,6 +162,7 @@ private:
     {
         OwnshipBelief,
         RemoteIntent,
+        RemoteDecision,
     };
 
     struct WorkerInput
@@ -139,6 +171,7 @@ private:
         int remote_vehicle_id{-1};
         ManeuverSelectionBeliefSnapshot belief{};
         estimation::TrajectoryIntentPacket packet{};
+        ManeuverSelectionPeerDecision decision{};
     };
 
     struct RemoteCandidateCache
@@ -150,12 +183,34 @@ private:
         std::size_t count{0};
     };
 
+    struct RemoteDecisionCache
+    {
+        ManeuverSelectionPeerDecision decision{};
+        bool valid{false};
+    };
+
+    struct PendingSelectionProposal
+    {
+        std::uint64_t timestamp_us{0};
+        std::uint64_t epoch{0};
+        std::array<std::uint8_t, kMaximumSelectionAircraft>
+            candidate_ids{};
+        JointCombinationEvaluation evaluation{};
+        std::size_t combination_index{0};
+        std::size_t combination_count{0};
+        bool valid{false};
+        bool resolved{false};
+    };
+
     void workerLoop();
     bool processPending();
     bool acceptOwnshipBelief(const ManeuverSelectionBeliefSnapshot & snapshot);
     bool acceptRemoteIntent(
         int remote_vehicle_id,
         const estimation::TrajectoryIntentPacket & packet);
+    bool acceptRemoteDecision(
+        int remote_vehicle_id,
+        const ManeuverSelectionPeerDecision & decision);
     void initializeCandidateSet(std::uint64_t now_us);
     void refreshCandidateSet(std::uint64_t now_us);
     void chooseAlternates(std::uint64_t now_us);
@@ -166,6 +221,10 @@ private:
         ManeuverSelectionWorkerOutput & output);
     void evaluateCurrentSet(
         std::uint64_t now_us,
+        ManeuverSelectionWorkerOutput & output);
+    bool constrainActiveAircraftCandidates(
+        MultiAircraftExhaustiveCandidateIntentSets & candidate_sets) const;
+    bool finalizePendingCoordination(
         ManeuverSelectionWorkerOutput & output);
     bool buildActivationSample(
         std::uint64_t now_us,
@@ -228,6 +287,9 @@ private:
         m_remote_previous_caches{};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
         m_remote_staging_caches{};
+    std::array<RemoteDecisionCache, kMaximumSelectionAircraft>
+        m_remote_decision_caches{};
+    PendingSelectionProposal m_pending_proposal{};
 };
 
 }  // namespace collision_avoidance::selection

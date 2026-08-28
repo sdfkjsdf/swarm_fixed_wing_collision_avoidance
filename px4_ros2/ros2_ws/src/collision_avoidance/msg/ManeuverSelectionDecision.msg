@@ -8,6 +8,15 @@ uint16 selected_combination_index
 uint16 evaluated_combination_count
 uint8[5] selected_candidate_ids
 uint8 ownship_candidate_id
+
+# Locally evaluated tuple awaiting the distributed cross-check.  The selected
+# fields above describe only the last tuple confirmed by every participant.
+uint64 proposal_timestamp_us
+uint64 proposal_epoch
+uint8[5] proposed_candidate_ids
+bool proposal_valid
+bool proposal_consensus_confirmed
+
 float32 pmr_m
 float32 masd_m
 float32 ad_m

@@ -140,6 +140,7 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
             start + offset, 45.0 - 20.0 * elapsed_s, -20.0));
         spinFor(executor, std::chrono::milliseconds(35));
     }
+    spinFor(executor, std::chrono::milliseconds(120));
 
     ASSERT_TRUE(decision_a.has_value());
     ASSERT_TRUE(decision_b.has_value());

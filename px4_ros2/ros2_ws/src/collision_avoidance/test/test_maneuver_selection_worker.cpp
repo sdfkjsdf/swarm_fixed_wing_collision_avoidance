@@ -78,8 +78,89 @@ void exchangePackets(
          index < second_output.intent_packet_count; ++index) {
         ASSERT_TRUE(first.pushRemoteIntent(1, second_output.intent_packets[index]));
     }
+    if (second_output.intent_packet_count > 0) {
+        EXPECT_TRUE(first.processPendingForTest());
+    }
+    if (first_output.intent_packet_count > 0) {
+        EXPECT_TRUE(second.processPendingForTest());
+    }
+}
+
+cs::ManeuverSelectionPeerDecision peerDecision(
+    const cs::ManeuverSelectionDecision & decision)
+{
+    cs::ManeuverSelectionPeerDecision peer;
+    peer.vehicle_id = decision.vehicle_id;
+    peer.selection_timestamp_us = decision.selection_timestamp_us;
+    peer.local_selection_epoch = decision.local_selection_epoch;
+    peer.selected_candidate_ids = decision.selected_candidate_ids;
+    peer.ownship_candidate_id = decision.ownship_candidate_id;
+    peer.proposal_timestamp_us = decision.proposal_timestamp_us;
+    peer.proposal_epoch = decision.proposal_epoch;
+    peer.proposed_candidate_ids = decision.proposed_candidate_ids;
+    peer.proposal_valid = decision.proposal_valid;
+    peer.proposal_consensus_confirmed =
+        decision.proposal_consensus_confirmed;
+    peer.coordination_qualified = decision.coordination_qualified;
+    peer.activation_requested = decision.activation_requested;
+    return peer;
+}
+
+std::array<cs::ManeuverSelectionWorkerOutput, 2> confirmTwoAircraftProposal(
+    cs::ManeuverSelectionWorker & first,
+    cs::ManeuverSelectionWorker & second,
+    const cs::ManeuverSelectionWorkerOutput & first_proposal,
+    const cs::ManeuverSelectionWorkerOutput & second_proposal)
+{
+    EXPECT_TRUE(first_proposal.has_decision);
+    EXPECT_TRUE(second_proposal.has_decision);
+    EXPECT_TRUE(first_proposal.decision.proposal_valid);
+    EXPECT_TRUE(second_proposal.decision.proposal_valid);
+    EXPECT_TRUE(first.pushRemoteDecision(
+        1, peerDecision(second_proposal.decision)));
+    EXPECT_TRUE(second.pushRemoteDecision(
+        0, peerDecision(first_proposal.decision)));
     EXPECT_TRUE(first.processPendingForTest());
     EXPECT_TRUE(second.processPendingForTest());
+    const auto first_commit = first.tryPopOutput();
+    const auto second_commit = second.tryPopOutput();
+    EXPECT_TRUE(first_commit.has_value());
+    EXPECT_TRUE(second_commit.has_value());
+    return {
+        first_commit.value_or(cs::ManeuverSelectionWorkerOutput{}),
+        second_commit.value_or(cs::ManeuverSelectionWorkerOutput{})};
+}
+
+template<std::size_t AircraftCount>
+std::array<cs::ManeuverSelectionWorkerOutput, AircraftCount>
+confirmAllAircraftProposals(
+    std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, AircraftCount>
+        & workers,
+    const std::array<cs::ManeuverSelectionWorkerOutput, AircraftCount>
+        & proposals)
+{
+    for (std::size_t sender = 0; sender < AircraftCount; ++sender) {
+        EXPECT_TRUE(proposals[sender].has_decision);
+        EXPECT_TRUE(proposals[sender].decision.proposal_valid);
+        for (std::size_t receiver = 0; receiver < AircraftCount; ++receiver) {
+            if (sender == receiver) {
+                continue;
+            }
+            EXPECT_TRUE(workers[receiver]->pushRemoteDecision(
+                static_cast<int>(sender),
+                peerDecision(proposals[sender].decision)));
+        }
+    }
+
+    std::array<cs::ManeuverSelectionWorkerOutput, AircraftCount> commits{};
+    for (std::size_t aircraft = 0; aircraft < AircraftCount; ++aircraft) {
+        EXPECT_TRUE(workers[aircraft]->processPendingForTest());
+        const auto output = workers[aircraft]->tryPopOutput();
+        EXPECT_TRUE(output.has_value());
+        commits[aircraft] = output.value_or(
+            cs::ManeuverSelectionWorkerOutput{});
+    }
+    return commits;
 }
 
 }  // namespace
@@ -122,7 +203,10 @@ TEST(ManeuverSelectionWorker, ImplementsTwentyAndFourHertzCadenceWithoutSleeps)
         worker,
         beliefSnapshot(start + 251'000, 5.0, 0.0, 20.0, 0.0));
     EXPECT_TRUE(output.has_decision);
-    EXPECT_EQ(output.decision.selection_timestamp_us, start + 250'000);
+    EXPECT_EQ(output.decision.selection_timestamp_us, 0U);
+    EXPECT_EQ(output.decision.proposal_timestamp_us, start + 250'000);
+    EXPECT_EQ(output.decision.proposal_epoch, 4U);
+    EXPECT_FALSE(output.decision.proposal_valid);
     EXPECT_FALSE(output.decision.coordination_qualified);
     EXPECT_TRUE(output.decision.previous_best_retained);
     EXPECT_EQ(output.selection_epoch, 5U);
@@ -200,8 +284,10 @@ TEST(ManeuverSelectionWorker, RetainsLastCompleteSetUntilNewRefreshIsComplete)
         ownship,
         beliefSnapshot(start + 250'000, -40.0, 0.0, 20.0, 0.0));
     ASSERT_TRUE(decision_output.has_decision);
-    EXPECT_TRUE(decision_output.decision.coordination_qualified);
-    EXPECT_EQ(decision_output.decision.remote_selection_epoch, 10U);
+    EXPECT_FALSE(decision_output.decision.coordination_qualified);
+    EXPECT_TRUE(decision_output.decision.proposal_valid);
+    EXPECT_EQ(decision_output.decision.proposal_epoch, 10U);
+    EXPECT_EQ(decision_output.decision.remote_selection_epoch, 0U);
 }
 
 TEST(ManeuverSelectionWorker, IndependentlySelectsAndRequestsActivation)
@@ -233,6 +319,11 @@ TEST(ManeuverSelectionWorker, IndependentlySelectsAndRequestsActivation)
         first, beliefSnapshot(start + 250'000, -40.0, 0.0, 20.0, 0.0));
     second_output = pushBeliefAndProcess(
         second, beliefSnapshot(start + 250'000, 40.0, 0.0, -20.0, 0.0));
+
+    const auto commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    first_output = commits[0];
+    second_output = commits[1];
 
     ASSERT_TRUE(first_output.has_decision);
     ASSERT_TRUE(second_output.has_decision);
@@ -277,6 +368,11 @@ TEST(ManeuverSelectionWorker, DoesNotActivateWhileCurrentPlanIsSafe)
     second_output = pushBeliefAndProcess(
         second, beliefSnapshot(start + 250'000, 195.0, 0.0, -20.0, 0.0));
 
+    const auto commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    first_output = commits[0];
+    second_output = commits[1];
+
     ASSERT_TRUE(first_output.has_decision);
     ASSERT_TRUE(second_output.has_decision);
     EXPECT_TRUE(first_output.decision.coordination_qualified);
@@ -310,23 +406,29 @@ TEST(ManeuverSelectionWorker, MonitorsActivationBetweenSelectionEvents)
     second_output = pushBeliefAndProcess(
         second, beliefSnapshot(start + 250'000, 200.0, 0.0, -20.0, 0.0));
     exchangePackets(first, second, first_output, second_output);
+    const auto commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    first_output = commits[0];
+    second_output = commits[1];
     ASSERT_TRUE(first_output.has_decision);
     ASSERT_FALSE(first_output.decision.activation_requested);
     const std::uint64_t selected_epoch =
         first_output.decision.local_selection_epoch;
 
     first_output = pushBeliefAndProcess(
-        first, beliefSnapshot(start + 300'000, -20.0, 0.0, 20.0, 0.0));
+        first, beliefSnapshot(start + 300'000, -5.0, 0.0, 20.0, 0.0));
     second_output = pushBeliefAndProcess(
-        second, beliefSnapshot(start + 300'000, 20.0, 0.0, -20.0, 0.0));
+        second, beliefSnapshot(start + 300'000, 5.0, 0.0, -20.0, 0.0));
     exchangePackets(first, second, first_output, second_output);
 
     first_output = pushBeliefAndProcess(
-        first, beliefSnapshot(start + 350'000, -19.0, 0.0, 20.0, 0.0));
+        first, beliefSnapshot(start + 350'000, -4.0, 0.0, 20.0, 0.0));
     second_output = pushBeliefAndProcess(
-        second, beliefSnapshot(start + 350'000, 19.0, 0.0, -20.0, 0.0));
+        second, beliefSnapshot(start + 350'000, 4.0, 0.0, -20.0, 0.0));
     ASSERT_TRUE(first_output.has_decision);
     ASSERT_TRUE(second_output.has_decision);
+    EXPECT_LT(first_output.decision.ad_m, 0.0);
+    EXPECT_LT(second_output.decision.ad_m, 0.0);
     EXPECT_TRUE(first_output.decision.activation_requested);
     EXPECT_TRUE(second_output.decision.activation_requested);
     EXPECT_TRUE(first_output.decision.activation_just_started);
@@ -359,6 +461,10 @@ TEST(ManeuverSelectionWorker, WarmsSelectionButDoesNotActivateBeforeGateOpens)
         first, beliefSnapshot(start + 250'000, -20.0, 0.0, 20.0, 0.0));
     second_output = pushBeliefAndProcess(
         second, beliefSnapshot(start + 250'000, 20.0, 0.0, -20.0, 0.0));
+    const auto commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    first_output = commits[0];
+    second_output = commits[1];
     ASSERT_TRUE(first_output.has_decision);
     ASSERT_TRUE(second_output.has_decision);
     EXPECT_TRUE(first_output.decision.coordination_qualified);
@@ -380,6 +486,171 @@ TEST(ManeuverSelectionWorker, WarmsSelectionButDoesNotActivateBeforeGateOpens)
     EXPECT_TRUE(second_output.decision.activation_requested);
     EXPECT_TRUE(first_output.decision.activation_just_started);
     EXPECT_TRUE(second_output.decision.activation_just_started);
+}
+
+TEST(ManeuverSelectionWorker,
+    RejectsMismatchedProposalWithoutRelabelingTheCommittedEpoch)
+{
+    cs::ManeuverSelectionWorker first(params());
+    cs::ManeuverSelectionWorker second(params(1));
+    first.setActivationEnabled(false);
+    second.setActivationEnabled(false);
+    constexpr std::uint64_t start = 8'000'000ULL;
+
+    cs::ManeuverSelectionWorkerOutput first_output;
+    cs::ManeuverSelectionWorkerOutput second_output;
+    for (const std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                start + offset, -45.0 + 20.0 * elapsed_s,
+                0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                start + offset, 45.0 - 20.0 * elapsed_s,
+                0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 250'000, -40.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 250'000, 40.0, 0.0, -20.0, 0.0));
+    auto commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    ASSERT_TRUE(commits[0].decision.coordination_qualified);
+    const auto committed_tuple = commits[0].decision.selected_candidate_ids;
+    const std::uint64_t committed_epoch =
+        commits[0].decision.local_selection_epoch;
+    const std::uint64_t committed_timestamp =
+        commits[0].decision.selection_timestamp_us;
+    exchangePackets(first, second, commits[0], commits[1]);
+
+    for (const std::uint64_t offset : {
+             300'000ULL, 350'000ULL, 400'000ULL, 450'000ULL}) {
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(start + offset, -40.0, 0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(start + offset, 40.0, 0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 500'000, -40.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 500'000, 40.0, 0.0, -20.0, 0.0));
+    ASSERT_TRUE(first_output.decision.proposal_valid);
+    ASSERT_GT(first_output.decision.proposal_epoch, committed_epoch);
+
+    auto mismatched_peer = peerDecision(second_output.decision);
+    mismatched_peer.proposed_candidate_ids[0] = static_cast<std::uint8_t>(
+        (first_output.decision.proposed_candidate_ids[0] + 1U)
+        % ce::kManeuverCandidateCount);
+    ASSERT_TRUE(first.pushRemoteDecision(1, mismatched_peer));
+    ASSERT_TRUE(first.processPendingForTest());
+    const auto rejected = first.tryPopOutput();
+    ASSERT_TRUE(rejected.has_value());
+    ASSERT_TRUE(rejected->has_decision);
+    EXPECT_FALSE(rejected->decision.proposal_consensus_confirmed);
+    EXPECT_TRUE(rejected->decision.coordination_qualified);
+    EXPECT_TRUE(rejected->decision.previous_best_retained);
+    EXPECT_FALSE(rejected->decision.new_best_accepted);
+    EXPECT_EQ(rejected->decision.local_selection_epoch, committed_epoch);
+    EXPECT_EQ(rejected->decision.selection_timestamp_us, committed_timestamp);
+    EXPECT_EQ(rejected->decision.selected_candidate_ids, committed_tuple);
+}
+
+TEST(ManeuverSelectionWorker,
+    ActiveAircraftLatchesOnlyItsOwnCandidateAcrossAConfirmedNewEpoch)
+{
+    cs::ManeuverSelectionWorker first(params());
+    cs::ManeuverSelectionWorker second(params(1));
+    constexpr std::uint64_t start = 12'000'000ULL;
+
+    cs::ManeuverSelectionWorkerOutput first_output;
+    cs::ManeuverSelectionWorkerOutput second_output;
+    for (const std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                start + offset, -45.0 + 20.0 * elapsed_s,
+                0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                start + offset, 45.0 - 20.0 * elapsed_s,
+                0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 250'000, -40.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 250'000, 40.0, 0.0, -20.0, 0.0));
+    auto commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    ASSERT_TRUE(commits[0].decision.activation_requested);
+    const std::uint8_t latched_ownship_id =
+        commits[0].decision.ownship_candidate_id;
+    const std::uint64_t first_committed_epoch =
+        commits[0].decision.local_selection_epoch;
+    exchangePackets(first, second, commits[0], commits[1]);
+
+    auto peer_inactive = peerDecision(commits[1].decision);
+    peer_inactive.activation_requested = false;
+    ASSERT_TRUE(first.pushRemoteDecision(1, peer_inactive));
+    ASSERT_TRUE(first.processPendingForTest());
+
+    for (const std::uint64_t offset : {
+             300'000ULL, 350'000ULL, 400'000ULL, 450'000ULL}) {
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(start + offset, -40.0, 0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(start + offset, 40.0, 0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 500'000, -40.0, 0.0, 20.0, 0.0));
+    ASSERT_TRUE(first_output.has_decision);
+    ASSERT_TRUE(first_output.decision.proposal_valid);
+    EXPECT_EQ(
+        first_output.decision.proposed_candidate_ids[0], latched_ownship_id);
+    EXPECT_EQ(first_output.decision.ownship_candidate_id, latched_ownship_id);
+    EXPECT_EQ(
+        first_output.decision.local_selection_epoch, first_committed_epoch);
+    EXPECT_GT(
+        first_output.decision.proposal_epoch,
+        first_output.decision.local_selection_epoch);
+    EXPECT_FALSE(first_output.decision.proposal_consensus_confirmed);
+
+    auto matching_peer = peerDecision(first_output.decision);
+    matching_peer.vehicle_id = 1;
+    matching_peer.ownship_candidate_id =
+        matching_peer.proposed_candidate_ids[1];
+    matching_peer.activation_requested = false;
+    ASSERT_TRUE(first.pushRemoteDecision(1, matching_peer));
+    ASSERT_TRUE(first.processPendingForTest());
+    const auto next_commit = first.tryPopOutput();
+    ASSERT_TRUE(next_commit.has_value());
+    ASSERT_TRUE(next_commit->has_decision);
+    EXPECT_TRUE(next_commit->decision.proposal_consensus_confirmed);
+    EXPECT_TRUE(next_commit->decision.coordination_qualified);
+    EXPECT_EQ(
+        next_commit->decision.local_selection_epoch,
+        first_output.decision.proposal_epoch);
+    EXPECT_EQ(next_commit->decision.ownship_candidate_id, latched_ownship_id);
+    EXPECT_EQ(
+        next_commit->decision.selected_candidate_ids[0], latched_ownship_id);
+    EXPECT_EQ(
+        next_commit->decision.selected_candidate_ids[1],
+        first_output.decision.proposed_candidate_ids[1]);
 }
 
 TEST(ManeuverSelectionWorker, StartsStopsAndKeepsInstancesIndependent)
@@ -493,6 +764,7 @@ TEST(ManeuverSelectionWorker, FiveAircraftWorkersSelectSameJointTuple)
                 -speed_mps * unit_east));
     }
 
+    outputs = confirmAllAircraftProposals(workers, outputs);
     const auto expected_tuple = outputs[0].decision.selected_candidate_ids;
     for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
         const auto & decision = outputs[aircraft].decision;
@@ -570,6 +842,7 @@ TEST(ManeuverSelectionWorker, ExhaustiveTestModeEvaluatesAllFiveAircraftRollTupl
                 -speed_mps * unit_east));
     }
 
+    outputs = confirmAllAircraftProposals(workers, outputs);
     const auto expected_tuple = outputs[0].decision.selected_candidate_ids;
     for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
         const auto & decision = outputs[aircraft].decision;

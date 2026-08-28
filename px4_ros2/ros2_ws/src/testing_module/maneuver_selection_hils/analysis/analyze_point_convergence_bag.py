@@ -133,12 +133,19 @@ def decision_summary(decisions):
         evaluated_16807 = sum(
             int(message.evaluated_combination_count) == 16807
             for _, message in records)
+        valid_proposals = sum(
+            bool(message.proposal_valid) for _, message in records)
+        confirmed_proposals = sum(
+            bool(message.proposal_consensus_confirmed)
+            for _, message in records)
         result.append({
             "vehicle_id": vehicle,
             "decision_count": len(records),
             "qualified_count": qualified,
             "evaluated_243_count": evaluated_243,
             "evaluated_16807_count": evaluated_16807,
+            "valid_proposal_count": valid_proposals,
+            "confirmed_proposal_count": confirmed_proposals,
         })
     return result
 
@@ -235,6 +242,102 @@ def decision_consensus_summary(decisions, elapsed_s):
             float(consensus_count / all_qualified_count)
             if all_qualified_count else None),
         "wall_time_first_mismatch_s": first_mismatch_time_s,
+    }
+
+
+def coordination_invariant_summary(decisions):
+    per_vehicle_by_selected_epoch = []
+    per_vehicle_by_proposal_epoch = []
+    active_selected_slot_mismatch_count = 0
+    active_proposal_slot_mismatch_count = 0
+    unconfirmed_current_epoch_qualified_count = 0
+    selected_epoch_vector_mismatch_count = 0
+
+    for vehicle, records in enumerate(decisions):
+        selected_by_epoch = {}
+        proposal_by_epoch = {}
+        for _, decision in records:
+            selected_epoch = int(decision.local_selection_epoch)
+            proposal_epoch = int(decision.proposal_epoch)
+            if decision.coordination_qualified:
+                selected_by_epoch[selected_epoch] = decision
+                if any(
+                        int(epoch) != selected_epoch
+                        for epoch in decision.selection_epochs_by_aircraft[
+                            :AIRCRAFT_COUNT]):
+                    selected_epoch_vector_mismatch_count += 1
+            if decision.proposal_valid:
+                proposal_by_epoch[proposal_epoch] = decision
+            if (decision.coordination_qualified
+                    and decision.proposal_valid
+                    and selected_epoch == proposal_epoch
+                    and not decision.proposal_consensus_confirmed):
+                unconfirmed_current_epoch_qualified_count += 1
+            if (decision.activation_requested
+                    and int(decision.selected_candidate_ids[vehicle])
+                    != int(decision.ownship_candidate_id)):
+                active_selected_slot_mismatch_count += 1
+            if (decision.activation_requested
+                    and decision.proposal_valid
+                    and int(decision.proposed_candidate_ids[vehicle])
+                    != int(decision.ownship_candidate_id)):
+                active_proposal_slot_mismatch_count += 1
+        per_vehicle_by_selected_epoch.append(selected_by_epoch)
+        per_vehicle_by_proposal_epoch.append(proposal_by_epoch)
+
+    common_selected_epochs = set(per_vehicle_by_selected_epoch[0])
+    common_proposal_epochs = set(per_vehicle_by_proposal_epoch[0])
+    for by_epoch in per_vehicle_by_selected_epoch[1:]:
+        common_selected_epochs.intersection_update(by_epoch)
+    for by_epoch in per_vehicle_by_proposal_epoch[1:]:
+        common_proposal_epochs.intersection_update(by_epoch)
+
+    peer_ownship_assumption_mismatch_count = 0
+    first_peer_ownship_mismatch_epoch = None
+    for epoch in sorted(common_selected_epochs):
+        decisions_at_epoch = [
+            by_epoch[epoch] for by_epoch in per_vehicle_by_selected_epoch]
+        for observer in range(AIRCRAFT_COUNT):
+            observer_tuple = decisions_at_epoch[
+                observer].selected_candidate_ids
+            for peer in range(AIRCRAFT_COUNT):
+                if int(observer_tuple[peer]) != int(
+                        decisions_at_epoch[peer].ownship_candidate_id):
+                    peer_ownship_assumption_mismatch_count += 1
+                    if first_peer_ownship_mismatch_epoch is None:
+                        first_peer_ownship_mismatch_epoch = epoch
+
+    same_proposal_tuple_count = 0
+    first_proposal_mismatch_epoch = None
+    for epoch in sorted(common_proposal_epochs):
+        tuples = [
+            tuple(by_epoch[epoch].proposed_candidate_ids[:AIRCRAFT_COUNT])
+            for by_epoch in per_vehicle_by_proposal_epoch]
+        if all(candidate_tuple == tuples[0] for candidate_tuple in tuples[1:]):
+            same_proposal_tuple_count += 1
+        elif first_proposal_mismatch_epoch is None:
+            first_proposal_mismatch_epoch = epoch
+
+    return {
+        "common_selected_epoch_count": len(common_selected_epochs),
+        "peer_ownship_assumption_mismatch_count": (
+            peer_ownship_assumption_mismatch_count),
+        "first_peer_ownship_mismatch_epoch": (
+            first_peer_ownship_mismatch_epoch),
+        "common_proposal_epoch_count": len(common_proposal_epochs),
+        "same_proposal_tuple_count": same_proposal_tuple_count,
+        "same_proposal_tuple_ratio": (
+            float(same_proposal_tuple_count / len(common_proposal_epochs))
+            if common_proposal_epochs else None),
+        "first_proposal_mismatch_epoch": first_proposal_mismatch_epoch,
+        "unconfirmed_current_epoch_qualified_count": (
+            unconfirmed_current_epoch_qualified_count),
+        "selected_epoch_vector_mismatch_count": (
+            selected_epoch_vector_mismatch_count),
+        "active_selected_slot_mismatch_count": (
+            active_selected_slot_mismatch_count),
+        "active_proposal_slot_mismatch_count": (
+            active_proposal_slot_mismatch_count),
     }
 
 
@@ -441,6 +544,7 @@ def analyze(args):
         "activation_state_diagnostics": activation_state_summary(decisions),
         "distributed_decision_consensus": decision_consensus_summary(
             decisions, elapsed_s),
+        "coordination_invariants": coordination_invariant_summary(decisions),
     }
     with (args.summary_dir / "summary.json").open("w", encoding="utf-8") as stream:
         json.dump(summary, stream, indent=2)

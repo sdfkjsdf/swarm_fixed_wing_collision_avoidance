@@ -159,6 +159,9 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
   m_exhaustive_evaluator(params.evaluator_params),
   m_activation_controller(params.activation_params)
 {
+    m_selected_candidate_ids.fill(kRollZeroId);
+    m_latest_selection_decision.selected_candidate_ids.fill(kRollZeroId);
+    m_latest_selection_decision.proposed_candidate_ids.fill(kRollZeroId);
 }
 
 ManeuverSelectionWorker::~ManeuverSelectionWorker()
@@ -220,6 +223,21 @@ bool ManeuverSelectionWorker::pushRemoteIntent(
     return true;
 }
 
+bool ManeuverSelectionWorker::pushRemoteDecision(
+    int remote_vehicle_id,
+    const ManeuverSelectionPeerDecision & decision) noexcept
+{
+    WorkerInput input;
+    input.kind = InputKind::RemoteDecision;
+    input.remote_vehicle_id = remote_vehicle_id;
+    input.decision = decision;
+    if (!m_input_queue.try_push(input)) {
+        m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
+
 void ManeuverSelectionWorker::setActivationEnabled(bool enabled) noexcept
 {
     m_activation_enabled.store(enabled, std::memory_order_release);
@@ -273,8 +291,10 @@ bool ManeuverSelectionWorker::processPending()
         consumed_input = true;
         if (input->kind == InputKind::OwnshipBelief) {
             acceptOwnshipBelief(input->belief);
-        } else {
+        } else if (input->kind == InputKind::RemoteIntent) {
             acceptRemoteIntent(input->remote_vehicle_id, input->packet);
+        } else {
+            acceptRemoteDecision(input->remote_vehicle_id, input->decision);
         }
     }
 
@@ -318,8 +338,11 @@ bool ManeuverSelectionWorker::processPending()
         } while (m_next_trajectory_refresh_timestamp_us <= now_us);
     }
 
-    if (selection_due || trajectory_refreshed) {
-        updateActivationState(now_us, selection_due, output);
+    const bool coordination_committed = finalizePendingCoordination(output);
+    if ((selection_due || trajectory_refreshed || coordination_committed)
+        && m_has_selected_combination) {
+        updateActivationState(
+            now_us, selection_due || coordination_committed, output);
     }
 
     if (output.intent_packet_count > 0 || output.has_decision) {
@@ -459,6 +482,47 @@ bool ManeuverSelectionWorker::acceptRemoteIntent(
         }
     }
     return false;
+}
+
+bool ManeuverSelectionWorker::acceptRemoteDecision(
+    int remote_vehicle_id,
+    const ManeuverSelectionPeerDecision & decision)
+{
+    if (remote_vehicle_id < 0
+        || remote_vehicle_id >= m_params.total_agent_count
+        || remote_vehicle_id == m_params.vehicle_id
+        || decision.vehicle_id != remote_vehicle_id) {
+        return false;
+    }
+    const auto candidatesValid = [this](
+                                      const std::array<
+                                          std::uint8_t,
+                                          kMaximumSelectionAircraft> & ids) {
+        for (int aircraft = 0;
+             aircraft < m_params.total_agent_count; ++aircraft) {
+            if (ids[static_cast<std::size_t>(aircraft)]
+                >= estimation::kManeuverCandidateCount) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (decision.ownship_candidate_id >= estimation::kManeuverCandidateCount
+        || !candidatesValid(decision.selected_candidate_ids)
+        || (decision.proposal_valid
+            && !candidatesValid(decision.proposed_candidate_ids))) {
+        return false;
+    }
+
+    RemoteDecisionCache & cache = m_remote_decision_caches[
+        static_cast<std::size_t>(remote_vehicle_id)];
+    if (cache.valid
+        && decision.proposal_epoch < cache.decision.proposal_epoch) {
+        return false;
+    }
+    cache.decision = decision;
+    cache.valid = true;
+    return true;
 }
 
 void ManeuverSelectionWorker::initializeCandidateSet(std::uint64_t now_us)
@@ -613,12 +677,20 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
     std::uint64_t now_us,
     ManeuverSelectionWorkerOutput & output)
 {
-    ManeuverSelectionDecision decision;
+    ManeuverSelectionDecision decision = m_has_selected_combination
+        ? m_latest_selection_decision
+        : ManeuverSelectionDecision{};
     decision.vehicle_id = m_params.vehicle_id;
     decision.aircraft_count = static_cast<std::size_t>(
         m_params.total_agent_count);
-    decision.selection_timestamp_us = now_us;
-    decision.local_selection_epoch = m_selection_epoch;
+    decision.proposal_timestamp_us = now_us;
+    decision.proposal_epoch = m_selection_epoch;
+    decision.proposal_valid = false;
+    decision.proposal_consensus_confirmed = false;
+    decision.new_best_accepted = false;
+    decision.previous_best_retained = true;
+    decision.coordination_qualified = m_has_selected_combination;
+    decision.selected_candidate_ids = m_selected_candidate_ids;
     decision.ownship_candidate_id = m_current_best_id;
     if (const auto * input = m_candidate_table.find(m_current_best_id)) {
         decision.ownship_input = *input;
@@ -632,8 +704,6 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
         if (aircraft == m_params.vehicle_id) {
             candidate_sets[static_cast<std::size_t>(aircraft)] =
                 m_ownship_candidates;
-            decision.selection_epochs_by_aircraft[
-                static_cast<std::size_t>(aircraft)] = m_selection_epoch;
             continue;
         }
         const std::size_t aircraft_index =
@@ -654,14 +724,10 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
             continue;
         }
         candidate_sets[aircraft_index] = remote_cache->candidates;
-        decision.selection_epochs_by_aircraft[
-            aircraft_index] = remote_cache->selection_epoch;
-        if (decision.remote_selection_epoch == 0) {
-            decision.remote_selection_epoch = remote_cache->selection_epoch;
-        }
     }
 
-    if (all_candidate_sets_complete) {
+    if (all_candidate_sets_complete
+        && constrainActiveAircraftCandidates(candidate_sets)) {
         JointCombinationEvaluation best{};
         std::size_t best_combination_index = 0;
         std::size_t combination_count = 0;
@@ -703,7 +769,7 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
         }
         if (evaluated) {
             std::array<std::uint8_t, kMaximumSelectionAircraft>
-                proposed_candidate_ids{};
+                proposed_candidate_ids = m_selected_candidate_ids;
             for (int aircraft = 0;
                  aircraft < m_params.total_agent_count; ++aircraft) {
                 const std::size_t aircraft_index =
@@ -713,63 +779,189 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                 proposed_candidate_ids[aircraft_index] =
                     candidate_sets[aircraft_index][candidate_slot].candidate_id;
             }
+            m_pending_proposal.timestamp_us = now_us;
+            m_pending_proposal.epoch = m_selection_epoch;
+            m_pending_proposal.candidate_ids = proposed_candidate_ids;
+            m_pending_proposal.evaluation = best;
+            m_pending_proposal.combination_index = best_combination_index;
+            m_pending_proposal.combination_count = combination_count;
+            m_pending_proposal.valid = true;
+            m_pending_proposal.resolved = false;
 
-            const bool command_is_active =
-                m_activation_controller.status().active;
-            const bool proposed_is_current = m_has_selected_combination
-                && proposed_candidate_ids == m_selected_candidate_ids;
-            const bool accept_proposed = !command_is_active
-                && (!m_has_selected_combination || !proposed_is_current);
-
-            if (accept_proposed) {
-                m_selected_candidate_ids = proposed_candidate_ids;
-                m_has_selected_combination = true;
-                m_current_best_id = m_selected_candidate_ids[
-                    static_cast<std::size_t>(m_params.vehicle_id)];
-            }
-
-            if (command_is_active && m_has_selected_combination) {
-                decision = m_latest_selection_decision;
-                decision.selection_timestamp_us = now_us;
-                decision.local_selection_epoch = m_selection_epoch;
-                decision.selection_epochs_by_aircraft.fill(m_selection_epoch);
-                decision.new_best_accepted = false;
-                decision.previous_best_retained = true;
-                decision.evaluated_combination_count = combination_count;
-            } else {
-                decision.coordination_qualified = true;
-                decision.new_best_accepted = accept_proposed;
-                decision.previous_best_retained = !accept_proposed;
-                decision.selected_combination_index = best_combination_index;
-                decision.evaluated_combination_count = combination_count;
-                decision.pmr_m = best.minimum_pmr_m;
-                decision.masd_m = best.minimum_masd_m;
-                decision.ad_m = best.minimum_ad_m;
-                decision.reciprocal_cost_sum = best.reciprocal_cost_sum;
-                decision.selected_candidate_ids = m_selected_candidate_ids;
-                decision.ownship_candidate_id = m_current_best_id;
-                if (const auto * input = m_candidate_table.find(
-                        decision.ownship_candidate_id)) {
-                    decision.ownship_input = *input;
-                }
-                for (int aircraft = 0;
-                     aircraft < m_params.total_agent_count; ++aircraft) {
-                    if (aircraft != m_params.vehicle_id) {
-                        decision.threat_candidate_id =
-                            m_selected_candidate_ids[
-                                static_cast<std::size_t>(aircraft)];
-                        break;
-                    }
-                }
-            }
-            m_latest_selection_decision = decision;
+            decision.proposed_candidate_ids = proposed_candidate_ids;
+            decision.proposal_valid = true;
+            decision.evaluated_combination_count = combination_count;
         }
     }
 
-    if (!m_has_selected_combination) {
+    m_latest_selection_decision = decision;
+    output.decision = decision;
+    output.has_decision = true;
+}
+
+bool ManeuverSelectionWorker::constrainActiveAircraftCandidates(
+    MultiAircraftExhaustiveCandidateIntentSets & candidate_sets) const
+{
+    const std::size_t candidate_count = activeCandidateCount();
+    for (int aircraft = 0;
+         aircraft < m_params.total_agent_count; ++aircraft) {
+        bool active = false;
+        std::uint8_t active_candidate_id = kRollZeroId;
+        if (aircraft == m_params.vehicle_id) {
+            const ManeuverActivationStatus status =
+                m_activation_controller.status();
+            active = status.active;
+            active_candidate_id = status.latched_candidate_id;
+        } else {
+            const RemoteDecisionCache & cache = m_remote_decision_caches[
+                static_cast<std::size_t>(aircraft)];
+            active = cache.valid
+                && cache.decision.coordination_qualified
+                && cache.decision.activation_requested;
+            active_candidate_id = cache.decision.ownship_candidate_id;
+        }
+        if (!active) {
+            continue;
+        }
+
+        auto & candidates = candidate_sets[static_cast<std::size_t>(aircraft)];
+        const auto found = std::find_if(
+            candidates.begin(),
+            candidates.begin() + static_cast<std::ptrdiff_t>(candidate_count),
+            [active_candidate_id](const auto & candidate) {
+                return candidate.candidate_id == active_candidate_id;
+            });
+        if (found == candidates.begin()
+                + static_cast<std::ptrdiff_t>(candidate_count)) {
+            return false;
+        }
+        const estimation::ReceivedTrajectoryIntent active_candidate = *found;
+        std::fill_n(candidates.begin(), candidate_count, active_candidate);
+    }
+    return true;
+}
+
+bool ManeuverSelectionWorker::finalizePendingCoordination(
+    ManeuverSelectionWorkerOutput & output)
+{
+    if (!m_pending_proposal.valid || m_pending_proposal.resolved) {
+        return false;
+    }
+
+    bool all_proposals_available = true;
+    bool all_proposals_match = true;
+    for (int aircraft = 0;
+         aircraft < m_params.total_agent_count; ++aircraft) {
+        if (aircraft == m_params.vehicle_id) {
+            continue;
+        }
+        const RemoteDecisionCache & cache = m_remote_decision_caches[
+            static_cast<std::size_t>(aircraft)];
+        if (!cache.valid || !cache.decision.proposal_valid
+            || cache.decision.proposal_epoch != m_pending_proposal.epoch) {
+            all_proposals_available = false;
+            continue;
+        }
+        if (cache.decision.proposed_candidate_ids
+                != m_pending_proposal.candidate_ids
+            || (cache.decision.activation_requested
+                && cache.decision.proposed_candidate_ids[
+                    static_cast<std::size_t>(aircraft)]
+                    != cache.decision.ownship_candidate_id)) {
+            all_proposals_match = false;
+        }
+    }
+    if (!all_proposals_available) {
+        return false;
+    }
+
+    ManeuverSelectionDecision decision = m_latest_selection_decision;
+    decision.proposal_consensus_confirmed = all_proposals_match;
+    decision.new_best_accepted = false;
+    decision.previous_best_retained = true;
+    if (!all_proposals_match) {
+        m_pending_proposal.resolved = true;
+        decision.coordination_qualified = m_has_selected_combination;
+        m_latest_selection_decision = decision;
         output.decision = decision;
         output.has_decision = true;
+        return false;
     }
+
+    const ManeuverActivationStatus activation =
+        m_activation_controller.status();
+    const std::size_t ownship_index = static_cast<std::size_t>(
+        m_params.vehicle_id);
+    if (activation.active
+        && m_pending_proposal.candidate_ids[ownship_index]
+            != activation.latched_candidate_id) {
+        m_pending_proposal.resolved = true;
+        decision.proposal_consensus_confirmed = false;
+        decision.coordination_qualified = m_has_selected_combination;
+        m_latest_selection_decision = decision;
+        output.decision = decision;
+        output.has_decision = true;
+        return false;
+    }
+
+    const bool changed = !m_has_selected_combination
+        || m_pending_proposal.candidate_ids != m_selected_candidate_ids;
+    m_selected_candidate_ids = m_pending_proposal.candidate_ids;
+    m_has_selected_combination = true;
+    m_current_best_id = activation.active
+        ? activation.latched_candidate_id
+        : m_selected_candidate_ids[ownship_index];
+
+    // Proposal agreement can arrive after the next 4 Hz candidate refresh.
+    // Keep the newly committed ownship command in that already-open epoch's
+    // Current Best + Alternate set and immediately rebroadcast its intents.
+    if (!m_params.exhaustive_test_mode
+        && std::find(
+            m_held_candidate_ids.begin(),
+            m_held_candidate_ids.begin()
+                + static_cast<std::ptrdiff_t>(activeCandidateCount()),
+            m_current_best_id)
+            == m_held_candidate_ids.begin()
+                + static_cast<std::ptrdiff_t>(activeCandidateCount())) {
+        chooseAlternates(m_latest_state_timestamp_us);
+        buildCurrentIntentSet(m_latest_state_timestamp_us, output);
+    }
+
+    decision.selection_timestamp_us = m_pending_proposal.timestamp_us;
+    decision.local_selection_epoch = m_pending_proposal.epoch;
+    decision.remote_selection_epoch = m_pending_proposal.epoch;
+    decision.selection_epochs_by_aircraft.fill(m_pending_proposal.epoch);
+    decision.selected_combination_index =
+        m_pending_proposal.combination_index;
+    decision.evaluated_combination_count =
+        m_pending_proposal.combination_count;
+    decision.selected_candidate_ids = m_selected_candidate_ids;
+    decision.ownship_candidate_id = m_current_best_id;
+    decision.pmr_m = m_pending_proposal.evaluation.minimum_pmr_m;
+    decision.masd_m = m_pending_proposal.evaluation.minimum_masd_m;
+    decision.ad_m = m_pending_proposal.evaluation.minimum_ad_m;
+    decision.reciprocal_cost_sum =
+        m_pending_proposal.evaluation.reciprocal_cost_sum;
+    decision.coordination_qualified = true;
+    decision.new_best_accepted = changed;
+    decision.previous_best_retained = !changed;
+    if (const auto * input = m_candidate_table.find(m_current_best_id)) {
+        decision.ownship_input = *input;
+    }
+    for (int aircraft = 0;
+         aircraft < m_params.total_agent_count; ++aircraft) {
+        if (aircraft != m_params.vehicle_id) {
+            decision.threat_candidate_id = m_selected_candidate_ids[
+                static_cast<std::size_t>(aircraft)];
+            break;
+        }
+    }
+
+    m_pending_proposal.resolved = true;
+    m_latest_selection_decision = decision;
+    output.decision = decision;
+    output.has_decision = true;
+    return true;
 }
 
 bool ManeuverSelectionWorker::buildActivationSample(
