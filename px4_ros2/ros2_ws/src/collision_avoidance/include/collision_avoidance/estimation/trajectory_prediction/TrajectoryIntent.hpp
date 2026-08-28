@@ -43,6 +43,7 @@ ManeuverCandidateTable makeLevelTurnCandidateTable(
 struct TrajectoryIntentPacket
 {
     std::uint64_t source_timestamp_us{0};
+    std::uint64_t selection_epoch{0};
     std::array<float, kPredictStateDimension> initial_state{};
     std::array<float,
         kPredictStateDimension * kPredictStateDimension> initial_covariance{};
@@ -56,6 +57,7 @@ static_assert(std::is_trivially_copyable_v<TrajectoryIntentPacket>);
 struct ReceivedTrajectoryIntent
 {
     std::uint64_t source_timestamp_us{0};
+    std::uint64_t selection_epoch{0};
     std::uint8_t candidate_id{0};
     PredictionMeanTrajectory reconstructed_mean{};
     TrajectoryCone cone{};
@@ -75,7 +77,8 @@ public:
         std::uint8_t candidate_id,
         const PredictState & initial_state,
         const PredictStateCovariance & initial_covariance,
-        TrajectoryIntentPacket & packet) const;
+        TrajectoryIntentPacket & packet,
+        std::uint64_t selection_epoch = 0) const;
 
 private:
     TrajectoryPredict m_predictor;

@@ -84,6 +84,7 @@ TEST(TrajectoryIntent, TransfersReconstructedMeanAndPropagatesCone)
         10.0, -5.0, 120.0, 20.0, 0.25, 0.0, 0.0};
     const auto initial_covariance = diagonalCovariance(0.04);
     constexpr std::uint64_t source_timestamp_us = 123456789ULL;
+    constexpr std::uint64_t selection_epoch = 17ULL;
     const auto candidate_id = static_cast<std::uint8_t>(
         ce::ManeuverCandidateId::RollPlus15);
 
@@ -93,11 +94,13 @@ TEST(TrajectoryIntent, TransfersReconstructedMeanAndPropagatesCone)
         candidate_id,
         initial_state,
         initial_covariance,
-        packet));
+        packet,
+        selection_epoch));
 
     ce::ReceivedTrajectoryIntent received;
     ASSERT_TRUE(receiver.receive(packet, received));
     EXPECT_EQ(received.source_timestamp_us, source_timestamp_us);
+    EXPECT_EQ(received.selection_epoch, selection_epoch);
     EXPECT_EQ(received.candidate_id, candidate_id);
     EXPECT_NEAR(received.cone.front().time_offset_s, 0.0, 1.0e-12);
     EXPECT_NEAR(received.cone.back().time_offset_s, 4.5, 1.0e-12);

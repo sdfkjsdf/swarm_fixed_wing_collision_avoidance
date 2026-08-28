@@ -12,6 +12,7 @@ find_package(std_msgs REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(px4_ros2_cpp REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(Threads REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
     "msg/TrajectoryCone.msg"
@@ -108,6 +109,24 @@ target_link_libraries(maneuver_combination_evaluator PUBLIC
     trajectory_intent
 )
 
+# Per-aircraft five-stage runtime worker. ROS callbacks remain in the onboard
+# node; this target owns only deterministic prediction/selection state and one
+# SPSC-fed computation thread.
+add_library(maneuver_selection_worker STATIC
+    src/selection/ManeuverSelectionWorker.cpp
+)
+add_library(collision_avoidance::maneuver_selection_worker ALIAS
+    maneuver_selection_worker
+)
+target_include_directories(maneuver_selection_worker PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(maneuver_selection_worker PUBLIC
+    maneuver_combination_evaluator
+    Threads::Threads
+)
+
 add_library(trajectory_intent_transport STATIC
     src/communication/TrajectoryIntentTransport.cpp
 )
@@ -124,6 +143,22 @@ target_link_libraries(trajectory_intent_transport
     "${collision_avoidance_typesupport_target}"
 )
 
+add_library(distributed_maneuver_selection_runtime STATIC
+    src/communication/DistributedManeuverSelectionRuntime.cpp
+)
+add_library(collision_avoidance::distributed_maneuver_selection_runtime ALIAS
+    distributed_maneuver_selection_runtime
+)
+target_include_directories(distributed_maneuver_selection_runtime PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(distributed_maneuver_selection_runtime rclcpp px4_msgs)
+target_link_libraries(distributed_maneuver_selection_runtime
+    maneuver_selection_worker
+    trajectory_intent_transport
+)
+
 install(TARGETS
     common_coordinate_transform
     ground_to_eas_adapter
@@ -131,7 +166,9 @@ install(TARGETS
     trajectory_reconstruction
     trajectory_intent
     maneuver_combination_evaluator
+    maneuver_selection_worker
     trajectory_intent_transport
+    distributed_maneuver_selection_runtime
     EXPORT collision_avoidance_targets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
@@ -150,6 +187,8 @@ ament_export_targets(collision_avoidance_targets HAS_LIBRARY_TARGET)
 ament_export_include_directories(include)
 ament_export_dependencies(Eigen3)
 ament_export_dependencies(rclcpp)
+ament_export_dependencies(px4_msgs)
+ament_export_dependencies(Threads)
 ament_export_dependencies(rosidl_default_runtime)
 
 add_executable(vtol_guidance_node
@@ -166,6 +205,9 @@ target_link_libraries(vtol_guidance_node
     rclcpp::rclcpp
     px4_ros2_cpp::px4_ros2_cpp
     ground_to_eas_adapter
+    maneuver_selection_worker
+    trajectory_intent_transport
+    distributed_maneuver_selection_runtime
 )
 
 add_executable(coordinate_transformer_node
@@ -231,6 +273,25 @@ if(BUILD_TESTING)
         maneuver_combination_evaluator
     )
     target_include_directories(test_maneuver_combination_evaluator PRIVATE include)
+
+    ament_add_gtest(test_maneuver_selection_worker
+        test/test_maneuver_selection_worker.cpp
+    )
+    target_link_libraries(test_maneuver_selection_worker
+        maneuver_selection_worker
+    )
+    target_include_directories(test_maneuver_selection_worker PRIVATE include)
+
+    ament_add_gtest(test_distributed_maneuver_selection_runtime
+        test/test_distributed_maneuver_selection_runtime.cpp
+    )
+    ament_target_dependencies(
+        test_distributed_maneuver_selection_runtime rclcpp px4_msgs)
+    target_link_libraries(test_distributed_maneuver_selection_runtime
+        distributed_maneuver_selection_runtime
+    )
+    target_include_directories(
+        test_distributed_maneuver_selection_runtime PRIVATE include)
 
     ament_add_gtest(test_global_types
         test/test_global_types.cpp

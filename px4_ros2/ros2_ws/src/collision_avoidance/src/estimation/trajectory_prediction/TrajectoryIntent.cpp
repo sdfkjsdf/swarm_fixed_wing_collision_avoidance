@@ -129,7 +129,8 @@ bool TrajectoryIntentSender::buildForSelectedCandidate(
     std::uint8_t candidate_id,
     const PredictState & initial_state,
     const PredictStateCovariance & initial_covariance,
-    TrajectoryIntentPacket & packet) const
+    TrajectoryIntentPacket & packet,
+    std::uint64_t selection_epoch) const
 {
     const PredictInput * input = m_candidates.find(candidate_id);
     if (input == nullptr || !usableInput(*input) || !finiteState(initial_state)
@@ -148,6 +149,7 @@ bool TrajectoryIntentSender::buildForSelectedCandidate(
 
     TrajectoryIntentPacket candidate_packet{};
     candidate_packet.source_timestamp_us = source_timestamp_us;
+    candidate_packet.selection_epoch = selection_epoch;
     candidate_packet.candidate_id = candidate_id;
     candidate_packet.initial_state = encodeState(initial_state);
     std::transform(
@@ -205,6 +207,7 @@ bool TrajectoryIntentReceiver::receive(
     inputs.fill(*input);
     ReceivedTrajectoryIntent candidate_received{};
     candidate_received.source_timestamp_us = packet.source_timestamp_us;
+    candidate_received.selection_epoch = packet.selection_epoch;
     candidate_received.candidate_id = packet.candidate_id;
     candidate_received.reconstructed_mean = reconstructed_mean;
     if (!m_uncertainty.propagateAlongMean(

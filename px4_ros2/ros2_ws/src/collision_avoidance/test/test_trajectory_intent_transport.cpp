@@ -9,6 +9,7 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
 {
     ce::TrajectoryIntentPacket source{};
     source.source_timestamp_us = 987654321ULL;
+    source.selection_epoch = 42ULL;
     source.candidate_id = static_cast<std::uint8_t>(
         ce::ManeuverCandidateId::RollMinus30);
     for (std::size_t index = 0; index < source.initial_state.size(); ++index) {
@@ -29,6 +30,7 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
     const auto received = cc::fromRosMessage(message);
 
     EXPECT_EQ(received.source_timestamp_us, source.source_timestamp_us);
+    EXPECT_EQ(received.selection_epoch, source.selection_epoch);
     EXPECT_EQ(received.candidate_id, source.candidate_id);
     EXPECT_EQ(received.initial_state, source.initial_state);
     EXPECT_EQ(received.initial_covariance, source.initial_covariance);

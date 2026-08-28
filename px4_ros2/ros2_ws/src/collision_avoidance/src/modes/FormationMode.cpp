@@ -258,7 +258,45 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
         /* (2) queue 비었지만 이전에 한 번이라도 받아본 적 있음 → hold last (ZOH) */
         RCLCPP_WARN_THROTTLE(_node.get_logger(), *_node.get_clock(), 1000,
             "[Formation] output_queue 비어있음 → hold last (ZOH)");
-    } else {
+    }
+
+    const bool avoidance_override =
+        !m_collision_avoidance_shadow_only_mt
+        && m_has_maneuver_decision_mt
+        && m_maneuver_decision_mt.coordination_qualified
+        && m_maneuver_decision_mt.activation_requested;
+    if (avoidance_override) {
+        float course = m_initial_course;
+        if (m_vehicle_id >= 0
+            && m_vehicle_id < static_cast<int>(m_state_for_control_mt.size())) {
+            const auto & velocity = m_state_for_control_mt[m_vehicle_id].velocity;
+            if (std::isfinite(velocity[0]) && std::isfinite(velocity[1])
+                && std::hypot(velocity[0], velocity[1]) > 1.0e-3F) {
+                course = std::atan2(velocity[1], velocity[0]);
+            }
+        }
+        const auto & input = m_maneuver_decision_mt.ownship_input;
+        const float lateral_acceleration =
+            static_cast<float>(input.a_lat_cmd);
+        const float v_cmd_ground = static_cast<float>(input.V_cmd);
+        const float v_cmd_eas = to_eas(
+            v_cmd_ground, course, 0.0F, lateral_acceleration);
+        px4_ros2::FwLateralLongitudinalSetpoint sp;
+        sp.withLateralAcceleration(lateral_acceleration)
+          .withEquivalentAirspeed(v_cmd_eas);
+        _fw_setpoint->update(sp);
+        RCLCPP_WARN_THROTTLE(
+            _node.get_logger(), *_node.get_clock(), 1000,
+            "[Formation] collision-avoidance override: candidate=%u AD=%.2f "
+            "a_lat=%.2f v_ground=%.2f",
+            static_cast<unsigned>(m_maneuver_decision_mt.ownship_candidate_id),
+            m_maneuver_decision_mt.ad_m,
+            lateral_acceleration,
+            v_cmd_ground);
+        return;
+    }
+
+    if (!m_has_last_output_mt) {
         /* (3) 활성화 직후 rt_thread 가 아직 첫 결과를 push 못함 → cruise fallback */
         const float v_cmd_eas = to_eas(
             m_initial_ground_speed, m_initial_course, 0.0F, 0.0F);

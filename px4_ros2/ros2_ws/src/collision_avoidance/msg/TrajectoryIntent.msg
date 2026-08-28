@@ -1,5 +1,6 @@
 # Compact A-to-B trajectory intent in the shared local NED frame.
 uint64 source_timestamp_us
+uint64 selection_epoch
 uint8 candidate_id
 
 # Predictor state order: [p_n, p_e, h, V_ground, course, h_dot, roll].

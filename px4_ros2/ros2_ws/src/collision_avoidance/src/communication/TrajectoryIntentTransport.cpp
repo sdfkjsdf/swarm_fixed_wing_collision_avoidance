@@ -43,6 +43,7 @@ collision_avoidance::msg::TrajectoryIntent toRosMessage(
 {
     collision_avoidance::msg::TrajectoryIntent message;
     message.source_timestamp_us = packet.source_timestamp_us;
+    message.selection_epoch = packet.selection_epoch;
     message.candidate_id = packet.candidate_id;
     std::copy(
         packet.initial_state.begin(),
@@ -65,6 +66,7 @@ estimation::TrajectoryIntentPacket fromRosMessage(
 {
     estimation::TrajectoryIntentPacket packet{};
     packet.source_timestamp_us = message.source_timestamp_us;
+    packet.selection_epoch = message.selection_epoch;
     packet.candidate_id = message.candidate_id;
     std::copy(
         message.initial_state.begin(),

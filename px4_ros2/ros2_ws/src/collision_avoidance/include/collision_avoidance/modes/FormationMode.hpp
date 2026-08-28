@@ -52,6 +52,7 @@
 
 #include <collision_avoidance/common/GlobalTypes.hpp>
 #include <collision_avoidance/guidance/FlockingGuidance.hpp>
+#include <collision_avoidance/selection/ManeuverSelectionWorker.hpp>
 
 
 class FormationMode : public px4_ros2::ModeBase
@@ -63,6 +64,18 @@ public:
     void onActivate() override;
     void onDeactivate() override;
     void updateSetpoint(float dt_s) override;
+
+    void setManeuverSelectionDecision(
+        const collision_avoidance::selection::ManeuverSelectionDecision & decision)
+    {
+        m_maneuver_decision_mt = decision;
+        m_has_maneuver_decision_mt = true;
+    }
+
+    void setCollisionAvoidanceShadowOnly(bool shadow_only)
+    {
+        m_collision_avoidance_shadow_only_mt = shadow_only;
+    }
 
     /* Executor 가 Preflight 종료 시점에 캡처한 cruise altitude / 초기 코스를 주입.
        FormationMode 활성화 전에 호출되어야 함. */
@@ -140,4 +153,10 @@ private:
     bool  m_ref_pos_d_valid_mt{false};
     float m_alt_hold_p_gain{0.5f};
     float m_alt_hold_hr_max{3.0f};
+
+    /* ── mt: distributed maneuver-selection result and local command gate ── */
+    collision_avoidance::selection::ManeuverSelectionDecision
+        m_maneuver_decision_mt{};
+    bool m_has_maneuver_decision_mt{false};
+    bool m_collision_avoidance_shadow_only_mt{true};
 };
