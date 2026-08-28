@@ -244,6 +244,7 @@ private:
     estimation::TrajectoryIntentReceiver m_receiver;
     estimation::TrajectoryUncertainty m_uncertainty;
     ManeuverCombinationEvaluator m_pair_evaluator;
+    PositiveMarginBarrierEvaluator m_barrier_evaluator;
     JointManeuverCombinationEvaluator m_joint_evaluator;
     ExhaustiveManeuverCombinationEvaluator m_exhaustive_evaluator;
     HeuristicCandidateSelector m_candidate_selector;

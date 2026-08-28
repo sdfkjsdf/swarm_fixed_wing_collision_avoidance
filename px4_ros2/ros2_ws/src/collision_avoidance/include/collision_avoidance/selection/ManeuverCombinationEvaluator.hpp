@@ -42,6 +42,13 @@ enum class CombinationValidity
     StaleTimestamp,
     NoCommonHorizon,
     InvalidTrajectory,
+    BarrierRejected,
+};
+
+enum class BarrierDirection : std::uint8_t
+{
+    Left,
+    Right,
 };
 
 struct ManeuverCombinationEvaluatorParams
@@ -51,6 +58,24 @@ struct ManeuverCombinationEvaluatorParams
     double threat_half_wingspan_m{0.0};
     double confidence_chi_squared{7.814727903251179};
     double stale_timeout_s{3.0};
+    bool positive_margin_filter_enabled{false};
+    // Project tuning seed only; this is not a validated fixed-wing TC-CBF gain.
+    double positive_margin_gamma{0.02};
+    // Kept separate from MASD uncertainty; production wires this to DSD.
+    double positive_margin_reference_m{10.0};
+    double maximum_lateral_acceleration_mps2{11.68711036881401};
+};
+
+struct BarrierDirectionEvaluation
+{
+    CombinationValidity validity{CombinationValidity::InvalidTrajectory};
+    BarrierDirection direction{BarrierDirection::Left};
+    std::size_t evaluated_interval_count{0};
+    std::size_t first_violation_interval{0};
+    double minimum_clearance_m{std::numeric_limits<double>::quiet_NaN()};
+    double minimum_residual_m{std::numeric_limits<double>::quiet_NaN()};
+    bool initial_clearance_nonnegative{false};
+    bool admissible{false};
 };
 
 struct PmrWindowResult
@@ -82,6 +107,10 @@ struct CombinationEvaluation
     bool feasible{false};
     bool reciprocal_cost_defined{false};
     double reciprocal_cost{std::numeric_limits<double>::quiet_NaN()};
+    bool barrier_evaluated{false};
+    bool barrier_admissible{true};
+    double minimum_barrier_residual_m{
+        std::numeric_limits<double>::quiet_NaN()};
     bool selected_best{false};
 };
 
@@ -100,12 +129,33 @@ struct JointCombinationEvaluation
     std::array<std::uint8_t, kMaximumSelectionAircraft> candidate_slots{};
     std::size_t evaluated_pair_count{0};
     bool valid{false};
+    bool barrier_evaluated{false};
+    bool barrier_admissible{true};
+    double minimum_barrier_residual_m{
+        std::numeric_limits<double>::quiet_NaN()};
     bool all_pairs_feasible{false};
     double minimum_pmr_m{std::numeric_limits<double>::quiet_NaN()};
     double minimum_masd_m{std::numeric_limits<double>::quiet_NaN()};
     double minimum_ad_m{std::numeric_limits<double>::quiet_NaN()};
     double reciprocal_cost_sum{std::numeric_limits<double>::quiet_NaN()};
     bool selected_best{false};
+};
+
+class PositiveMarginBarrierEvaluator
+{
+public:
+    explicit PositiveMarginBarrierEvaluator(
+        const ManeuverCombinationEvaluatorParams & params = {});
+
+    bool evaluateDirection(
+        std::uint64_t evaluation_timestamp_us,
+        const estimation::ReceivedTrajectoryIntent & ownship_intent,
+        const estimation::ReceivedTrajectoryIntent & threat_intent,
+        BarrierDirection direction,
+        BarrierDirectionEvaluation & evaluation) const;
+
+private:
+    ManeuverCombinationEvaluatorParams m_params;
 };
 
 struct JointManeuverEvaluation
@@ -174,6 +224,8 @@ public:
 
 private:
     ManeuverCombinationEvaluator m_pair_evaluator;
+    PositiveMarginBarrierEvaluator m_barrier_evaluator;
+    bool m_positive_margin_filter_enabled{false};
 };
 
 class ExhaustiveManeuverCombinationEvaluator
@@ -190,6 +242,8 @@ public:
 
 private:
     ManeuverCombinationEvaluator m_pair_evaluator;
+    PositiveMarginBarrierEvaluator m_barrier_evaluator;
+    bool m_positive_margin_filter_enabled{false};
 };
 
 }  // namespace collision_avoidance::selection

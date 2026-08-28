@@ -46,7 +46,17 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
         || params.activation_params.maximum_active_duration_us == 0
         || !std::isfinite(
             params.activation_params.separating_rate_threshold_mps)
-        || params.activation_params.separating_rate_threshold_mps < 0.0) {
+        || params.activation_params.separating_rate_threshold_mps < 0.0
+        || (params.evaluator_params.positive_margin_filter_enabled
+            && (!std::isfinite(
+                    params.evaluator_params.positive_margin_gamma)
+                || params.evaluator_params.positive_margin_gamma <= 0.0
+                || params.evaluator_params.positive_margin_gamma > 1.0
+                || !finitePositive(
+                    params.evaluator_params.positive_margin_reference_m)
+                || !finitePositive(
+                    params.evaluator_params
+                        .maximum_lateral_acceleration_mps2)))) {
         return false;
     }
 
@@ -155,6 +165,7 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
   m_receiver(m_predictor, m_candidate_table, params.uncertainty_params),
   m_uncertainty(params.uncertainty_params),
   m_pair_evaluator(params.evaluator_params),
+  m_barrier_evaluator(params.evaluator_params),
   m_joint_evaluator(params.evaluator_params),
   m_exhaustive_evaluator(params.evaluator_params),
   m_activation_controller(params.activation_params)
@@ -593,6 +604,64 @@ ManeuverSelectionWorker::scoreEligibleCandidates(std::uint64_t now_us)
                 m_selection_epoch)
             || !m_receiver.receive(packet, own_candidate)) {
             continue;
+        }
+
+        if (m_params.evaluator_params.positive_margin_filter_enabled) {
+            bool barrier_compared = false;
+            bool barrier_valid = true;
+            bool left_admissible = true;
+            bool right_admissible = true;
+            for (int remote_id = 0;
+                 remote_id < m_params.total_agent_count; ++remote_id) {
+                if (remote_id == m_params.vehicle_id) {
+                    continue;
+                }
+                const RemoteCandidateCache & remote_cache =
+                    m_remote_caches[static_cast<std::size_t>(remote_id)];
+                if (remote_cache.count != activeCandidateCount()) {
+                    continue;
+                }
+                for (std::size_t remote_index = 0;
+                     remote_index < activeCandidateCount(); ++remote_index) {
+                    BarrierDirectionEvaluation left;
+                    BarrierDirectionEvaluation right;
+                    if (!m_barrier_evaluator.evaluateDirection(
+                            now_us,
+                            own_candidate,
+                            remote_cache.candidates[remote_index],
+                            BarrierDirection::Left,
+                            left)
+                        || !m_barrier_evaluator.evaluateDirection(
+                            now_us,
+                            own_candidate,
+                            remote_cache.candidates[remote_index],
+                            BarrierDirection::Right,
+                            right)) {
+                        barrier_valid = false;
+                        break;
+                    }
+                    barrier_compared = true;
+                    left_admissible = left_admissible && left.admissible;
+                    right_admissible = right_admissible && right.admissible;
+                }
+                if (!barrier_valid) {
+                    break;
+                }
+            }
+
+            constexpr double acceleration_tolerance = 1.0e-9;
+            const bool direction_admissible =
+                scores[index].lateral_acceleration_mps2
+                    < -acceleration_tolerance
+                ? left_admissible
+                : scores[index].lateral_acceleration_mps2
+                        > acceleration_tolerance
+                    ? right_admissible
+                    : left_admissible || right_admissible;
+            if (!barrier_compared || !barrier_valid
+                || !direction_admissible) {
+                continue;
+            }
         }
 
         bool compared = false;

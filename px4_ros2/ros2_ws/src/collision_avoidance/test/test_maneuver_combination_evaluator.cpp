@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include <collision_avoidance/selection/ManeuverCombinationEvaluator.hpp>
 
@@ -87,7 +88,264 @@ cs::ExhaustiveCandidateIntentSet exhaustiveParallelCandidates(
     return candidates;
 }
 
+cs::CandidateIntentSet repeatedCandidates(
+    const ce::ReceivedTrajectoryIntent & intent)
+{
+    cs::CandidateIntentSet candidates{};
+    candidates.fill(intent);
+    return candidates;
+}
+
+cs::ManeuverCombinationEvaluatorParams barrierParams()
+{
+    cs::ManeuverCombinationEvaluatorParams params;
+    params.positive_margin_filter_enabled = true;
+    params.positive_margin_gamma = 1.0;
+    params.positive_margin_reference_m = 1.0;
+    params.maximum_lateral_acceleration_mps2 = 10.0;
+    params.ownship_half_wingspan_m = 0.0;
+    params.threat_half_wingspan_m = 0.0;
+    return params;
+}
+
 }  // namespace
+
+TEST(PositiveMarginBarrierEvaluator, UsesNedLeftAndRightTurningCenters)
+{
+    constexpr std::uint64_t timestamp_us = 500'000ULL;
+    const auto ownship = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 0.0, 100.0, 10.0, 0.0, 0.0);
+    const auto threat = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 10.0, 100.0, 10.0, 0.0, 0.0);
+
+    cs::PositiveMarginBarrierEvaluator evaluator(barrierParams());
+    cs::BarrierDirectionEvaluation left;
+    cs::BarrierDirectionEvaluation right;
+    ASSERT_TRUE(evaluator.evaluateDirection(
+        timestamp_us, ownship, threat, cs::BarrierDirection::Left, left));
+    ASSERT_TRUE(evaluator.evaluateDirection(
+        timestamp_us, ownship, threat, cs::BarrierDirection::Right, right));
+
+    EXPECT_TRUE(left.admissible);
+    EXPECT_FALSE(right.admissible);
+    EXPECT_NEAR(left.minimum_clearance_m, 10.0, 1.0e-9);
+    EXPECT_NEAR(right.minimum_clearance_m, -10.0, 1.0e-9);
+    EXPECT_EQ(left.evaluated_interval_count, ce::kTrajectoryIntervalCount);
+}
+
+TEST(PositiveMarginBarrierEvaluator, RejectsIntermediateViolationEvenIfEndpointPasses)
+{
+    constexpr std::uint64_t timestamp_us = 600'000ULL;
+    const auto ownship = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollPlus15),
+        0.0, 0.0, 100.0, 10.0, 0.0, 0.0);
+    auto threat = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 40.0, 100.0, 10.0, 0.0, 0.0);
+    constexpr std::size_t violation_index = 20;
+    threat.reconstructed_mean[violation_index].p_e = 10.0;
+    threat.cone[violation_index].mean.p_e = 10.0;
+
+    cs::PositiveMarginBarrierEvaluator evaluator(barrierParams());
+    cs::BarrierDirectionEvaluation result;
+    ASSERT_TRUE(evaluator.evaluateDirection(
+        timestamp_us,
+        ownship,
+        threat,
+        cs::BarrierDirection::Right,
+        result));
+
+    EXPECT_FALSE(result.admissible);
+    EXPECT_LT(result.minimum_residual_m, 0.0);
+    EXPECT_LT(result.first_violation_interval, violation_index + 1);
+    EXPECT_NEAR(
+        threat.cone.back().mean.p_e - ownship.cone.back().mean.p_e,
+        40.0,
+        1.0e-12);
+}
+
+TEST(PositiveMarginBarrierEvaluator, RejectsInvalidParametersAndTime)
+{
+    constexpr std::uint64_t timestamp_us = 700'000ULL;
+    const auto ownship = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 0.0, 100.0, 0.0, 0.0, 0.0);
+    const auto threat = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 20.0, 100.0, 0.0, 0.0, 0.0);
+
+    cs::BarrierDirectionEvaluation result;
+    std::array<cs::ManeuverCombinationEvaluatorParams, 5> invalid_params{};
+    invalid_params.fill(barrierParams());
+    invalid_params[0].positive_margin_gamma = 0.0;
+    invalid_params[1].positive_margin_gamma = 1.01;
+    invalid_params[2].positive_margin_reference_m = 0.0;
+    invalid_params[3].maximum_lateral_acceleration_mps2 = 0.0;
+    invalid_params[4].positive_margin_gamma =
+        std::numeric_limits<double>::quiet_NaN();
+    for (const auto & params : invalid_params) {
+        cs::PositiveMarginBarrierEvaluator invalid_evaluator(params);
+        EXPECT_FALSE(invalid_evaluator.evaluateDirection(
+            timestamp_us,
+            ownship,
+            threat,
+            cs::BarrierDirection::Left,
+            result));
+    }
+
+    cs::PositiveMarginBarrierEvaluator evaluator(barrierParams());
+    EXPECT_FALSE(evaluator.evaluateDirection(
+        timestamp_us - 1,
+        ownship,
+        threat,
+        cs::BarrierDirection::Left,
+        result));
+    EXPECT_EQ(result.validity, cs::CombinationValidity::FutureTimestamp);
+}
+
+TEST(PositiveMarginBarrierEvaluator, ReportsOnlyAlignedCommonIntervals)
+{
+    constexpr std::uint64_t ownship_timestamp_us = 1'000'000ULL;
+    constexpr std::uint64_t evaluation_timestamp_us = 1'050'000ULL;
+    const auto ownship = linearIntent(
+        ownship_timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 0.0, 100.0, 0.0, 0.0, 0.0);
+    const auto threat = linearIntent(
+        evaluation_timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 20.0, 100.0, 0.0, 0.0, 0.0);
+
+    cs::PositiveMarginBarrierEvaluator evaluator(barrierParams());
+    cs::BarrierDirectionEvaluation result;
+    ASSERT_TRUE(evaluator.evaluateDirection(
+        evaluation_timestamp_us,
+        ownship,
+        threat,
+        cs::BarrierDirection::Left,
+        result));
+    EXPECT_TRUE(result.admissible);
+    EXPECT_EQ(result.evaluated_interval_count, 44U);
+}
+
+TEST(ManeuverCombinationEvaluator, BarrierRejectsBeforeStaticAdEvaluation)
+{
+    constexpr std::uint64_t timestamp_us = 750'000ULL;
+    const auto ownship = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollPlus15),
+        0.0, 0.0, 100.0, 10.0, 0.0, 0.0);
+    const auto threat = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 10.0, 100.0, 10.0, 0.0, 0.0);
+    const auto ownship_candidates = repeatedCandidates(ownship);
+    const auto threat_candidates = repeatedCandidates(threat);
+
+    cs::ManeuverCombinationEvaluator evaluator(barrierParams());
+    cs::StaticCombinationEvaluation evaluation;
+    EXPECT_FALSE(evaluator.evaluate(
+        timestamp_us, ownship_candidates, threat_candidates, evaluation));
+    for (const auto & combination : evaluation.combinations) {
+        EXPECT_TRUE(combination.barrier_evaluated);
+        EXPECT_FALSE(combination.barrier_admissible);
+        EXPECT_EQ(
+            combination.validity,
+            cs::CombinationValidity::BarrierRejected);
+        EXPECT_EQ(combination.evaluated_sample_count, 0U);
+        EXPECT_TRUE(std::isnan(combination.ad_m));
+    }
+}
+
+TEST(JointManeuverCombinationEvaluator, DoesNotMixDirectionsAcrossThreats)
+{
+    constexpr std::uint64_t timestamp_us = 800'000ULL;
+    const auto ownship = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 0.0, 100.0, 10.0, 0.0, 0.0);
+    const auto east_threat = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 10.0, 100.0, 10.0, 0.0, 0.0);
+    const auto west_threat = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, -10.0, 100.0, 10.0, 0.0, 0.0);
+
+    cs::PositiveMarginBarrierEvaluator pair_evaluator(barrierParams());
+    cs::BarrierDirectionEvaluation east_left;
+    cs::BarrierDirectionEvaluation east_right;
+    cs::BarrierDirectionEvaluation west_left;
+    cs::BarrierDirectionEvaluation west_right;
+    ASSERT_TRUE(pair_evaluator.evaluateDirection(
+        timestamp_us, ownship, east_threat, cs::BarrierDirection::Left,
+        east_left));
+    ASSERT_TRUE(pair_evaluator.evaluateDirection(
+        timestamp_us, ownship, east_threat, cs::BarrierDirection::Right,
+        east_right));
+    ASSERT_TRUE(pair_evaluator.evaluateDirection(
+        timestamp_us, ownship, west_threat, cs::BarrierDirection::Left,
+        west_left));
+    ASSERT_TRUE(pair_evaluator.evaluateDirection(
+        timestamp_us, ownship, west_threat, cs::BarrierDirection::Right,
+        west_right));
+    EXPECT_TRUE(east_left.admissible);
+    EXPECT_FALSE(east_right.admissible);
+    EXPECT_FALSE(west_left.admissible);
+    EXPECT_TRUE(west_right.admissible);
+
+    cs::MultiAircraftCandidateIntentSets candidate_sets{};
+    candidate_sets[0] = repeatedCandidates(ownship);
+    candidate_sets[1] = repeatedCandidates(east_threat);
+    candidate_sets[2] = repeatedCandidates(west_threat);
+    cs::JointManeuverCombinationEvaluator evaluator(barrierParams());
+    cs::JointManeuverEvaluation evaluation;
+    EXPECT_FALSE(evaluator.evaluate(
+        timestamp_us, candidate_sets, 3U, evaluation));
+    EXPECT_FALSE(evaluation.has_best);
+    for (std::size_t index = 0; index < evaluation.combination_count; ++index) {
+        EXPECT_TRUE(evaluation.combinations[index].barrier_evaluated);
+        EXPECT_FALSE(evaluation.combinations[index].barrier_admissible);
+        EXPECT_EQ(evaluation.combinations[index].evaluated_pair_count, 0U);
+    }
+}
+
+TEST(JointManeuverCombinationEvaluator, KeepsBestUnsafeAdInsideBarrierSet)
+{
+    constexpr std::uint64_t timestamp_us = 900'000ULL;
+    const auto ownship = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 0.0, 100.0, 0.0, 0.0, 0.0);
+    const auto threat = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 12.0, 100.0, 0.0, 0.0, 0.0);
+    cs::MultiAircraftCandidateIntentSets candidate_sets{};
+    candidate_sets[0] = repeatedCandidates(ownship);
+    candidate_sets[1] = repeatedCandidates(threat);
+    auto params = barrierParams();
+    params.desired_separation_distance_m = 20.0;
+
+    cs::JointManeuverCombinationEvaluator evaluator(params);
+    cs::JointManeuverEvaluation evaluation;
+    ASSERT_TRUE(evaluator.evaluate(
+        timestamp_us, candidate_sets, 2U, evaluation));
+    const auto & best = evaluation.combinations[
+        evaluation.best_combination_index];
+    EXPECT_TRUE(best.barrier_admissible);
+    EXPECT_FALSE(best.all_pairs_feasible);
+    EXPECT_NEAR(best.minimum_ad_m, -8.0, 1.0e-12);
+}
 
 TEST(ManeuverCombinationEvaluator, EvaluatesAllNineAndKeepsWindowPmrValues)
 {
@@ -364,4 +622,22 @@ TEST(ExhaustiveManeuverCombinationEvaluator, EvaluatesAllFiveAircraftCombination
     EXPECT_TRUE(evaluation.best_combination.valid);
     EXPECT_TRUE(evaluation.best_combination.all_pairs_feasible);
     EXPECT_EQ(evaluation.best_combination.evaluated_pair_count, 10U);
+}
+
+TEST(ExhaustiveManeuverCombinationEvaluator, FiltersBeforeSevenBySevenAdSearch)
+{
+    constexpr std::uint64_t timestamp_us = 11'000'000ULL;
+    cs::MultiAircraftExhaustiveCandidateIntentSets candidate_sets{};
+    candidate_sets[0] = exhaustiveParallelCandidates(timestamp_us, 0.0, 0.0);
+    candidate_sets[1] = exhaustiveParallelCandidates(timestamp_us, 100.0, 0.0);
+
+    cs::ExhaustiveManeuverCombinationEvaluator evaluator(barrierParams());
+    cs::ExhaustiveManeuverEvaluation evaluation;
+    ASSERT_TRUE(evaluator.evaluate(
+        timestamp_us, candidate_sets, 2U, evaluation));
+    EXPECT_EQ(evaluation.combination_count, 49U);
+    EXPECT_EQ(evaluation.evaluated_unique_pair_count, 49U);
+    EXPECT_TRUE(evaluation.best_combination.barrier_evaluated);
+    EXPECT_TRUE(evaluation.best_combination.barrier_admissible);
+    EXPECT_EQ(evaluation.best_combination.evaluated_pair_count, 1U);
 }

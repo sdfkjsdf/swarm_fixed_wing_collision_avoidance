@@ -26,6 +26,8 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("maneuver_ground_speed_command", 20.0);
     node->declare_parameter<double>("desired_separation_distance", 10.0);
     node->declare_parameter<double>("aircraft_half_wingspan", 1.072);
+    node->declare_parameter<bool>("positive_margin_filter_enabled", true);
+    node->declare_parameter<double>("positive_margin_gamma", 0.02);
     node->declare_parameter<bool>(
         "maneuver_selection_exhaustive_test_mode", false);
 
@@ -57,6 +59,14 @@ int main(int argc, char * argv[])
             params.gravity_mps2 * std::tan(maximum_roll_radians);
         params.evaluator_params.desired_separation_distance_m =
             node->get_parameter("desired_separation_distance").as_double();
+        params.evaluator_params.positive_margin_filter_enabled =
+            node->get_parameter("positive_margin_filter_enabled").as_bool();
+        params.evaluator_params.positive_margin_gamma =
+            node->get_parameter("positive_margin_gamma").as_double();
+        params.evaluator_params.positive_margin_reference_m =
+            params.evaluator_params.desired_separation_distance_m;
+        params.evaluator_params.maximum_lateral_acceleration_mps2 =
+            params.predictor_params.a_lat_max;
         const double half_wingspan =
             node->get_parameter("aircraft_half_wingspan").as_double();
         params.evaluator_params.ownship_half_wingspan_m = half_wingspan;
