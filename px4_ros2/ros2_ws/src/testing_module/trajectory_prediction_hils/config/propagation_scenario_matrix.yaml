@@ -128,3 +128,27 @@ profiles:
       - ZOH_C18_ALATM2P628
       - ZOH_C22_ALATM2P628
       - ZOH_C22_ALATP2P628
+
+  # Full horizontal-command Monte Carlo sweep.  Five independent Gazebo seeds
+  # are collected for every maintained straight, symmetric-turn and coupled
+  # speed/turn case.  No climb or sink command is introduced.
+  monte_carlo_all:
+    dataset: monte_carlo
+    seed_base: 70000
+    repetitions: 5
+    cases:
+      - ZOH_V16_STRAIGHT
+      - ZOH_V18_STRAIGHT
+      - ZOH_V20_STRAIGHT
+      - ZOH_V22_STRAIGHT
+      - ZOH_V24_STRAIGHT
+      - ZOH_ALATM4P572_V20
+      - ZOH_ALATM2P628_V20
+      - ZOH_ALATM0P858_V20
+      - ZOH_ALATP0P858_V20
+      - ZOH_ALATP2P628_V20
+      - ZOH_ALATP4P572_V20
+      - ZOH_C18_ALATP2P628
+      - ZOH_C18_ALATM2P628
+      - ZOH_C22_ALATM2P628
+      - ZOH_C22_ALATP2P628
