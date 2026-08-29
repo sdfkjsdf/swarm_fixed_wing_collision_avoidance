@@ -581,19 +581,41 @@ TEST(ManeuverSelectionWorker,
 
     pushV4Inputs(first, start + 500'000ULL);
     pushV4Inputs(second, start + 500'000ULL);
-    first_output = pushBeliefAndProcess(
-        first,
-        beliefSnapshot(start + 500'000ULL, -90.0, 0.0, 20.0, 0.0));
+    // Let the peer cross the epoch boundary first.  Its newly published set
+    // advances the receiver's current cache, so evaluation of the preceding
+    // epoch must use the true previous-set cache while the selected legacy
+    // bootstrap intent remains independently retained for V4 evaluation.
     second_output = pushBeliefAndProcess(
         second,
         beliefSnapshot(start + 500'000ULL, 90.0, 0.0, -20.0, 0.0));
+    for (std::size_t index = 0;
+         index < second_output.intent_packet_count; ++index) {
+        ASSERT_TRUE(first.pushRemoteIntent(
+            1, second_output.intent_packets[index]));
+    }
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(start + 500'000ULL, -90.0, 0.0, 20.0, 0.0));
     ASSERT_TRUE(first_output.decision.proposal_valid);
     ASSERT_TRUE(second_output.decision.proposal_valid);
     EXPECT_TRUE(first_output.decision.proposed_v4_cutover);
     EXPECT_TRUE(second_output.decision.proposed_v4_cutover);
 
+    auto first_transmitted_proposal = first_output;
+    auto second_transmitted_proposal = second_output;
+    // Each receiver may hold a different 20 Hz trajectory snapshot for the
+    // other aircraft while still selecting the exact same command revision.
+    // Snapshot time is therefore owner-canonicalized, not a command-consensus
+    // key.
+    first_transmitted_proposal.decision
+        .proposed_candidate_source_timestamps_us[1] += 1;
+    second_transmitted_proposal.decision
+        .proposed_candidate_source_timestamps_us[0] += 2;
     const auto v4_commits = confirmTwoAircraftProposal(
-        first, second, first_output, second_output);
+        first,
+        second,
+        first_transmitted_proposal,
+        second_transmitted_proposal);
     ASSERT_TRUE(v4_commits[0].decision.coordination_qualified);
     ASSERT_TRUE(v4_commits[1].decision.coordination_qualified);
     EXPECT_TRUE(v4_commits[0].decision.selected_v4_cutover);
@@ -606,6 +628,15 @@ TEST(ManeuverSelectionWorker,
     EXPECT_EQ(
         v4_commits[0].decision.selected_candidate_input_revisions,
         v4_commits[1].decision.selected_candidate_input_revisions);
+    EXPECT_EQ(
+        v4_commits[0].decision.selected_candidate_source_timestamps_us,
+        v4_commits[1].decision.selected_candidate_source_timestamps_us);
+    EXPECT_EQ(
+        v4_commits[0].decision.selected_candidate_source_timestamps_us[0],
+        first_output.decision.proposed_candidate_source_timestamps_us[0]);
+    EXPECT_EQ(
+        v4_commits[0].decision.selected_candidate_source_timestamps_us[1],
+        second_output.decision.proposed_candidate_source_timestamps_us[1]);
 
     const std::uint8_t latched_role =
         v4_commits[0].decision.ownship_candidate_id;
@@ -616,6 +647,8 @@ TEST(ManeuverSelectionWorker,
         first,
         beliefSnapshot(start + 550'000ULL, -89.0, 0.0, 20.0, 0.0));
     ASSERT_GT(refreshed.intent_packet_count, 0U);
+    EXPECT_TRUE(refreshed.decision.activation_requested);
+    EXPECT_FALSE(refreshed.decision.activation_just_started);
     const auto retained = std::find_if(
         refreshed.intent_packets.begin(),
         refreshed.intent_packets.begin()
@@ -631,6 +664,36 @@ TEST(ManeuverSelectionWorker,
     EXPECT_EQ(
         retained->candidate_set_kind,
         ce::CandidateSetKind::V4SafeControl);
+
+    first.setActivationEnabled(false);
+    pushV4Inputs(first, start + 600'000ULL, 20.0, -4.0);
+    const auto deactivated = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(start + 600'000ULL, -88.0, 0.0, 20.0, 0.0));
+    ASSERT_TRUE(deactivated.has_decision);
+
+    pushV4Inputs(first, start + 650'000ULL, 20.0, -4.0);
+    const auto selected_but_inactive = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(start + 650'000ULL, -87.0, 0.0, 20.0, 0.0));
+    EXPECT_FALSE(selected_but_inactive.decision.activation_requested);
+    ASSERT_GT(selected_but_inactive.intent_packet_count, 0U);
+    const auto retained_while_inactive = std::find_if(
+        selected_but_inactive.intent_packets.begin(),
+        selected_but_inactive.intent_packets.begin()
+            + static_cast<std::ptrdiff_t>(
+                selected_but_inactive.intent_packet_count),
+        [latched_role](const ce::TrajectoryIntentPacket & packet) {
+            return packet.candidate_id == latched_role;
+        });
+    ASSERT_NE(
+        retained_while_inactive,
+        selected_but_inactive.intent_packets.begin()
+            + static_cast<std::ptrdiff_t>(
+                selected_but_inactive.intent_packet_count));
+    EXPECT_EQ(
+        retained_while_inactive->candidate_input_revision,
+        latched_revision);
 }
 
 TEST(ManeuverSelectionWorker,

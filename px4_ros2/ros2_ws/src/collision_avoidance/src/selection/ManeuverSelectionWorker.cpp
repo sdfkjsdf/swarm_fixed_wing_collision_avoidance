@@ -435,7 +435,9 @@ bool ManeuverSelectionWorker::processPending()
                     == SafeControlCandidateAdapterStatus::Valid
                 && output.decision.v4_candidates.candidate_count > 0;
             const bool active = m_activation_controller.status().active;
-            if (v4_candidates_valid || active) {
+            const bool retain_selected_v4 =
+                m_has_selected_combination && m_selected_v4_cutover;
+            if (v4_candidates_valid || active || retain_selected_v4) {
                 buildV4IntentSet(
                     now_us, output.decision.v4_candidates, output);
             } else if (m_v4_cutover_ready) {
@@ -643,15 +645,18 @@ bool ManeuverSelectionWorker::acceptRemoteIntent(
                     RemoteCandidateCache & previous_cache =
                         m_remote_previous_caches[
                             static_cast<std::size_t>(remote_vehicle_id)];
+                    RemoteSelectedIntentCache & selected_cache =
+                        m_remote_selected_caches[
+                            static_cast<std::size_t>(remote_vehicle_id)];
                     const RemoteDecisionCache & peer =
                         m_remote_decision_caches[
                             static_cast<std::size_t>(remote_vehicle_id)];
-                    const auto matchesPeerSelection = [remote_vehicle_id,
-                                                       &peer](
-                        const RemoteCandidateCache & cache) {
+                    const auto findPeerSelection = [remote_vehicle_id, &peer](
+                                                       const RemoteCandidateCache & cache)
+                        -> const estimation::ReceivedTrajectoryIntent * {
                         if (!peer.valid
                             || !peer.decision.coordination_qualified) {
-                            return false;
+                            return nullptr;
                         }
                         const std::size_t peer_index =
                             static_cast<std::size_t>(remote_vehicle_id);
@@ -660,7 +665,7 @@ bool ManeuverSelectionWorker::acceptRemoteIntent(
                         const std::uint64_t selected_revision =
                             peer.decision
                                 .selected_candidate_input_revisions[peer_index];
-                        return std::any_of(
+                        const auto found = std::find_if(
                             cache.candidates.begin(),
                             cache.candidates.begin()
                                 + static_cast<std::ptrdiff_t>(cache.count),
@@ -670,13 +675,45 @@ bool ManeuverSelectionWorker::acceptRemoteIntent(
                                     && candidate.candidate_input_revision
                                         == selected_revision;
                             });
+                        return found == cache.candidates.begin()
+                                + static_cast<std::ptrdiff_t>(cache.count)
+                            ? nullptr
+                            : &(*found);
                     };
-                    if (!matchesPeerSelection(previous_cache)
-                        || matchesPeerSelection(remote_cache)) {
-                        previous_cache = remote_cache;
+                    previous_cache = remote_cache;
+                    if (const auto * selected =
+                            findPeerSelection(remote_cache)) {
+                        selected_cache.intent = *selected;
+                        selected_cache.valid = true;
                     }
                 }
                 remote_cache = staging_cache;
+                const RemoteDecisionCache & peer =
+                    m_remote_decision_caches[
+                        static_cast<std::size_t>(remote_vehicle_id)];
+                if (peer.valid && peer.decision.coordination_qualified) {
+                    const std::size_t peer_index =
+                        static_cast<std::size_t>(remote_vehicle_id);
+                    const std::uint8_t selected_id =
+                        peer.decision.ownship_candidate_id;
+                    const std::uint64_t selected_revision =
+                        peer.decision.selected_candidate_input_revisions[
+                            peer_index];
+                    const auto selected = std::find_if(
+                        remote_cache.candidates.begin(),
+                        remote_cache.candidates.begin()
+                            + static_cast<std::ptrdiff_t>(remote_cache.count),
+                        [selected_id, selected_revision](const auto & candidate) {
+                            return candidate.candidate_id == selected_id
+                                && candidate.candidate_input_revision
+                                    == selected_revision;
+                        });
+                    if (selected != remote_cache.candidates.begin()
+                            + static_cast<std::ptrdiff_t>(remote_cache.count)) {
+                        m_remote_selected_caches[peer_index].intent = *selected;
+                        m_remote_selected_caches[peer_index].valid = true;
+                    }
+                }
             }
             return true;
         }
@@ -750,6 +787,40 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
     }
     cache.decision = decision;
     cache.valid = true;
+    if (decision.coordination_qualified) {
+        const auto find_selected = [remote_index, &decision](
+                                       const RemoteCandidateCache & candidate_cache)
+            -> const estimation::ReceivedTrajectoryIntent * {
+            if (candidate_cache.count == 0
+                || candidate_cache.count != candidate_cache.expected_count) {
+                return nullptr;
+            }
+            const auto found = std::find_if(
+                candidate_cache.candidates.begin(),
+                candidate_cache.candidates.begin()
+                    + static_cast<std::ptrdiff_t>(candidate_cache.count),
+                [remote_index, &decision](const auto & candidate) {
+                    return candidate.candidate_id
+                            == decision.ownship_candidate_id
+                        && candidate.candidate_input_revision
+                            == decision.selected_candidate_input_revisions[
+                                remote_index];
+                });
+            return found == candidate_cache.candidates.begin()
+                    + static_cast<std::ptrdiff_t>(candidate_cache.count)
+                ? nullptr
+                : &(*found);
+        };
+        for (const RemoteCandidateCache * candidate_cache : {
+                 &m_remote_caches[remote_index],
+                 &m_remote_previous_caches[remote_index]}) {
+            if (const auto * selected = find_selected(*candidate_cache)) {
+                m_remote_selected_caches[remote_index].intent = *selected;
+                m_remote_selected_caches[remote_index].valid = true;
+                break;
+            }
+        }
+    }
     return true;
 }
 
@@ -996,27 +1067,40 @@ bool ManeuverSelectionWorker::buildV4IntentSet(
 
     const ManeuverActivationStatus activation =
         m_activation_controller.status();
-    if (activation.active) {
-        if (activation.latched_candidate_id
-            >= kMaximumSafeControlCandidates) {
+    const bool retain_selected = activation.active
+        || (m_has_selected_combination && m_selected_v4_cutover);
+    if (retain_selected) {
+        const std::size_t ownship_index = static_cast<std::size_t>(
+            m_params.vehicle_id);
+        const std::uint8_t retained_candidate_id = activation.active
+            ? activation.latched_candidate_id
+            : m_selected_candidate_ids[ownship_index];
+        const std::uint64_t retained_input_revision = activation.active
+            ? activation.latched_candidate_input_revision
+            : m_selected_candidate_input_revisions[ownship_index];
+        const estimation::PredictInput retained_input = activation.active
+            ? activation.latched_input
+            : m_latest_selection_decision.ownship_input;
+        if (retained_candidate_id >= kMaximumSafeControlCandidates
+            || retained_input_revision == 0) {
             return false;
         }
         const auto found = std::find_if(
             selected_candidates.begin(),
             selected_candidates.begin()
                 + static_cast<std::ptrdiff_t>(candidate_count),
-            [&activation](const SafeControlCandidate & candidate) {
+            [retained_candidate_id](const SafeControlCandidate & candidate) {
                 return static_cast<std::uint8_t>(candidate.role)
-                    == activation.latched_candidate_id;
+                    == retained_candidate_id;
             });
         if (found != selected_candidates.begin()
                 + static_cast<std::ptrdiff_t>(candidate_count)) {
-            found->predictor_input = activation.latched_input;
+            found->predictor_input = retained_input;
         } else if (candidate_count < selected_candidates.size()) {
             auto & retained = selected_candidates[candidate_count++];
             retained.role = static_cast<SafeCandidateRole>(
-                activation.latched_candidate_id);
-            retained.predictor_input = activation.latched_input;
+                retained_candidate_id);
+            retained.predictor_input = retained_input;
         } else {
             return false;
         }
@@ -1043,6 +1127,19 @@ bool ManeuverSelectionWorker::buildV4IntentSet(
                 m_latest_covariance,
                 packets[index],
                 m_selection_epoch)) {
+                m_ownship_candidates_complete = false;
+                m_ownship_candidate_count = 0;
+                return false;
+        }
+        if (retain_selected && candidate_id == (activation.active
+                ? activation.latched_candidate_id
+                : m_selected_candidate_ids[static_cast<std::size_t>(
+                    m_params.vehicle_id)])
+            && packets[index].candidate_input_revision
+                != (activation.active
+                    ? activation.latched_candidate_input_revision
+                    : m_selected_candidate_input_revisions[
+                        static_cast<std::size_t>(m_params.vehicle_id)])) {
             m_ownship_candidates_complete = false;
             m_ownship_candidate_count = 0;
             return false;
@@ -1111,6 +1208,11 @@ void ManeuverSelectionWorker::evaluateV4(
     decision.v4_nominal_available = false;
     decision.v4_safe_control = SafeControlSetV4Result{};
     decision.v4_candidates = SafeControlCandidateAdapterResult{};
+    // These are one-output transition events.  A diagnostic-only 20 Hz
+    // publication must not repeat the previous activation edge.
+    decision.activation_just_started = false;
+    decision.activation_just_ended = false;
+    decision.deactivation_reason = ManeuverDeactivationReason::None;
 
     const auto publishDiagnostics = [&]() {
         m_latest_selection_decision = decision;
@@ -1211,16 +1313,25 @@ void ManeuverSelectionWorker::evaluateV4(
                 break;
             }
         }
-        if (selected_cache == nullptr || selected_intent == nullptr) {
+        const RemoteSelectedIntentCache & retained =
+            m_remote_selected_caches[remote_index];
+        if (selected_intent == nullptr && retained.valid
+            && retained.intent.candidate_id == candidate_id
+            && retained.intent.candidate_input_revision
+                == candidate_input_revision) {
+            selected_intent = &retained.intent;
+        }
+        if (selected_intent == nullptr) {
             decision.v4_shadow_status =
                 V4ShadowEvaluationStatus::MissingPeerIntent;
             publishDiagnostics();
             return;
         }
-        if (selected_intent->source_timestamp_us
-                != selected_cache->source_timestamp_us
-            || selected_intent->selection_epoch
-                != selected_cache->selection_epoch) {
+        if (selected_cache != nullptr
+            && (selected_intent->source_timestamp_us
+                    != selected_cache->source_timestamp_us
+                || selected_intent->selection_epoch
+                    != selected_cache->selection_epoch)) {
             decision.v4_shadow_status =
                 V4ShadowEvaluationStatus::InvalidPeerIntent;
             publishDiagnostics();
@@ -1577,6 +1688,8 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
 
     bool all_proposals_available = true;
     bool all_proposals_match = true;
+    auto authoritative_source_timestamps_us =
+        m_pending_proposal.candidate_source_timestamps_us;
     for (int aircraft = 0;
          aircraft < m_params.total_agent_count; ++aircraft) {
         if (aircraft == m_params.vehicle_id) {
@@ -1589,12 +1702,15 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
             all_proposals_available = false;
             continue;
         }
+        const std::size_t aircraft_index =
+            static_cast<std::size_t>(aircraft);
+        authoritative_source_timestamps_us[aircraft_index] =
+            cache.decision.proposed_candidate_source_timestamps_us[
+                aircraft_index];
         if (cache.decision.proposed_candidate_ids
                 != m_pending_proposal.candidate_ids
             || cache.decision.proposed_candidate_input_revisions
                 != m_pending_proposal.candidate_input_revisions
-            || cache.decision.proposed_candidate_source_timestamps_us
-                != m_pending_proposal.candidate_source_timestamps_us
             || cache.decision.proposed_v4_cutover
                 != m_pending_proposal.v4_cutover
             || (cache.decision.activation_requested
@@ -1654,7 +1770,7 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
     m_selected_candidate_input_revisions =
         m_pending_proposal.candidate_input_revisions;
     m_selected_candidate_source_timestamps_us =
-        m_pending_proposal.candidate_source_timestamps_us;
+        authoritative_source_timestamps_us;
     m_selected_v4_cutover = m_pending_proposal.v4_cutover;
     m_has_selected_combination = true;
     m_current_best_id = activation.active
@@ -1817,6 +1933,22 @@ bool ManeuverSelectionWorker::buildActivationSample(
                     cache->count,
                     remote_candidate_id,
                     remote_candidate_input_revision);
+            }
+        }
+        if (remote_intent == nullptr) {
+            const RemoteSelectedIntentCache & retained =
+                m_remote_selected_caches[remote_index];
+            if (retained.valid
+                && retained.intent.candidate_id == remote_candidate_id
+                && retained.intent.candidate_input_revision
+                    == remote_candidate_input_revision
+                && ((m_selected_v4_cutover
+                        && retained.intent.candidate_set_kind
+                            == estimation::CandidateSetKind::V4SafeControl)
+                    || (!m_selected_v4_cutover
+                        && retained.intent.candidate_set_kind
+                            == estimation::CandidateSetKind::LegacyRoll))) {
+                remote_intent = &retained.intent;
             }
         }
         if (remote_intent == nullptr) {

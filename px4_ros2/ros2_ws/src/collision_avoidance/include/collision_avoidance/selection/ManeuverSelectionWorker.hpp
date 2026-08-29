@@ -296,6 +296,12 @@ private:
         bool valid{false};
     };
 
+    struct RemoteSelectedIntentCache
+    {
+        estimation::ReceivedTrajectoryIntent intent{};
+        bool valid{false};
+    };
+
     struct PendingSelectionProposal
     {
         std::uint64_t timestamp_us{0};
@@ -429,6 +435,11 @@ private:
         m_remote_caches{};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
         m_remote_previous_caches{};
+    // A selected trajectory may outlive both candidate-set epochs.  Retain
+    // only that one intent so the previous-set slot remains available for the
+    // 4 Hz coordination race without duplicating another full trajectory set.
+    std::array<RemoteSelectedIntentCache, kMaximumSelectionAircraft>
+        m_remote_selected_caches{};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
         m_remote_staging_caches{};
     std::array<RemoteDecisionCache, kMaximumSelectionAircraft>

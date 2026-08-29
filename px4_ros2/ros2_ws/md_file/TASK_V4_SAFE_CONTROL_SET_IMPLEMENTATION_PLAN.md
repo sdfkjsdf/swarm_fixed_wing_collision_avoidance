@@ -361,20 +361,23 @@ Required changes:
 Candidate ID in V4 mode identifies `NearNominal/RobustLeft/RobustRight`, not a
 fixed roll degree.
 
-### 6.6 Exact snapshot and active-command consistency
+### 6.6 Command identity and owner-canonical snapshot consistency
 
 Dynamic role IDs make two extra invariants mandatory:
 
-1. A proposal must identify each aircraft's candidate-set source timestamp, not
-   only its 4 Hz epoch and role IDs. Same role ID with a different \(r\) is a
-   different candidate snapshot.
+1. A proposal identifies each aircraft's candidate-set source timestamp for
+   traceability, but command consensus is the 4 Hz epoch, mode, role ID, and
+   actual input revision. The aircraft that owns a candidate is authoritative
+   for the committed source timestamp of its own slot.
 2. Once activation latches a candidate, later 20 Hz refreshes must retain that
    aircraft's exact latched \(r\) and `PredictInput` for the active role.
 
 Extend the existing proposal/decision message with the per-aircraft candidate
-set timestamp/revision used for evaluation. Consensus requires epoch, role
-tuple, and revisions to match. If they do not match, retain the previous
-coordinated selection.
+set timestamp/revision used for evaluation. Consensus requires epoch, mode,
+role tuple, and revisions to match. Different 20 Hz receive snapshots of the
+same command do not invalidate consensus; committed timestamps are assembled
+from each owner's proposal. If command identity does not match, retain the
+previous coordinated selection.
 
 This prevents:
 
@@ -898,9 +901,10 @@ Implemented:
 - Distributed proposals now identify, for every participating aircraft:
   candidate ID, candidate-input revision, and the exact trajectory source
   timestamp used by the evaluator.
-- Proposal consensus requires all three arrays and the selection epoch to
-  match. A same-role proposal with a different input revision retains the last
-  coordinated selection.
+- Proposal consensus requires the role and input-revision arrays plus the
+  selection epoch to match. Source timestamps remain visible and are
+  canonicalized from each candidate owner's proposal. A same-role proposal
+  with a different input revision retains the last coordinated selection.
 - A committed selection stores the same revision/timestamp arrays in the
   existing decision message, making snapshot agreement rosbag-visible.
 - Activation now latches the selected candidate's input revision together
@@ -956,8 +960,10 @@ Step 4 adversarial findings corrected before acceptance:
    sender uses that same quantized input for prediction. This prevents the
    sender mean and receiver covariance path from using subtly different input
    values.
-3. Role tuple equality alone was insufficient. Consensus now compares the
-   per-aircraft input revisions and exact evaluated source timestamps as well.
+3. Role tuple equality alone was insufficient. Consensus compares the
+   per-aircraft input revisions. Step 6 later corrected the initially
+   over-conservative requirement for all observers' 20 Hz source timestamps
+   to match exactly and uses owner-canonical timestamps instead.
 4. Activation previously looked the command up again by fixed candidate ID.
    It now obtains the input from the selected reconstructed intent and latches
    that intent's revision and input together.
@@ -984,8 +990,8 @@ Audit scope:
 |---|---|---|
 | Source accuracy | PASS | The existing source investigation explicitly requires `timestamp + candidate role + x0 + P0 + compressed mean + PredictInput`, receiver-side covariance propagation from the actual input, and no 46-point payload. The implementation preserves each listed field and does not claim that this project transport detail is a disclosed Auto ACAS wire format. |
 | No over-interpretation | PASS | Step 4 establishes transport and identity consistency only. It makes no collision-avoidance, DSD, 95% containment, forward-invariance, security, command-execution, or SILS claim. |
-| Proportional complexity | PASS | The existing packet, ROS messages, sender, receiver, runtime subscriptions, worker proposal, and activation controller are extended in place. The revision and timestamp arrays are the minimum state needed to distinguish same-role/different-input and different evaluated snapshots; no parallel transport or coordination path was added. |
-| Implementation correctness | PASS | Sender and receiver use the same float32 input, receiver rejects an input/revision mismatch, consensus compares epoch/ID/revision/source time, active lookup requires ID/revision, and activation latches the intent input. Focused, two-aircraft, five-aircraft, ROS, and full-suite tests pass. |
+| Proportional complexity | PASS | The existing packet, ROS messages, sender, receiver, runtime subscriptions, worker proposal, and activation controller are extended in place. The revision is the command identity and timestamps remain trace evidence; no parallel transport or coordination path was added. |
+| Implementation correctness | PASS | Sender and receiver use the same float32 input, receiver rejects an input/revision mismatch, consensus compares epoch/mode/ID/revision, owner-canonical source times are committed, active lookup requires ID/revision, and activation latches the intent input. Focused, distributed, ROS, and full-suite tests pass. |
 | Directional alignment | PASS | The change enables the documented dynamic-candidate contract while leaving V4 cutover downstream, preserving local 46-point reconstruction and the existing TPA/PMR/MASD/AD/activation architecture. |
 
 Cross-axis dependencies: none remain for the bounded Step-4 transport and
@@ -1014,8 +1020,9 @@ Implemented:
   the product of the actual per-aircraft counts while using the unchanged
   pair evaluator and unchanged PMR/MASD/AD equations.
 - Proposal/selection decisions identify whether the tuple is a V4 cutover
-  tuple. Consensus now requires that mode flag together with the existing
-  epoch, role IDs, input revisions, and source timestamps.
+  tuple. Consensus requires that mode flag together with the existing epoch,
+  role IDs, and input revisions; source timestamps are committed from the
+  aircraft that owns each selected slot.
 - Before the first verified peer selection exists, cutover mode retains the
   existing legacy candidate exchange only as a non-executing bootstrap. A
   legacy bootstrap tuple is never eligible for activation in cutover mode.
@@ -1023,9 +1030,9 @@ Implemented:
   legacy candidates.
 - A V4 `SEARCH_SET_INFEASIBLE` result supplies zero new candidates. Therefore
   the downstream evaluator cannot revive it through its best-unsafe AD
-  fallback. An already-active V4 command is the only exception: its exact
-  latched role/input/revision continues to be published and constrained, as
-  required by the existing activation hold semantics.
+  fallback. A previously coordinated Current Best continues to be repredicted;
+  if active, its exact latched role/input/revision is additionally constrained,
+  as required by the existing hold semantics.
 - During the legacy-to-V4 handoff, the remote cache retains the exact
   peer-selected trajectory input until the peer publishes a coordinated V4
   selection. This prevents the 20 Hz V4 refresh from erasing the trajectory
@@ -1118,9 +1125,154 @@ Evidence baseline:
 | 1. Source accuracy and traceability | PASS | The decision source Section 5 states `timestamp + candidate role + x0 + P0 + compressed mean + PredictInput`; its final boundary requires existing worker/TPA/AD integration. Plan Sections 6.4–6.7 make the cutover and infeasibility gates explicit. | Intent packets retain the compact mean and add only set metadata; V4 roles use the Step-4 dynamic input builder; existing evaluator/activation objects are reused. | The implementation follows the project-authoritative contract and does not misrepresent these project-specific transport details as a published Auto ACAS packet format. | High |
 | 2. Interpretation fidelity | PASS | The source and plan limit the baseline to non-robust safe intervals upstream of uncertainty-aware MASD and require explicit infeasibility rather than a guarantee. | Cutover diagnostics retain `v4_shadow_only`; documentation excludes proofs/SILS/DSD guarantees; infeasible sets emit no new candidates, while feasible candidates still use existing AD policy. | No example or qualitative source statement is promoted to a safety guarantee. The non-executing legacy bootstrap is identified as a project readiness mechanism, not a source requirement. | High |
 | 3. Complexity proportionality | PASS | Variable 0..3 candidates, exact dynamic identity, selected-peer time alignment, and retained active input are named integration constraints. | Existing packet/message/cache/worker/evaluator are extended in place. No new node, topic, thread, estimator, optimizer, or duplicate PMR/MASD/AD path exists. Set size/kind and one evaluator overload are the minimum additions needed to avoid fixed-three and semantic-alias errors. | The added state is justified by cold-start readiness, variable candidate count, and exact active-command consistency; no materially separate architecture was introduced. | High |
-| 4. Correct implementation under aligned direction | PASS | The gate requires no V3/V4 double filtering, exact tuple/role/revision agreement, unchanged uncertainty logic, and no infeasible fallback. | Parameter validation enforces mutual exclusion; cache/evaluator use actual counts; consensus compares V4 mode plus ID/revision/source; active refresh retains the selected revision; focused tests and the 132-test suite pass. | Timing, candidate identity, candidate-count indexing, fallback, and activation boundary conditions have direct regression evidence. PMR/MASD/AD formulas were not modified. | High |
+| 4. Correct implementation under aligned direction | PASS | The gate requires no V3/V4 double filtering, exact command role/revision agreement, unchanged uncertainty logic, and no infeasible fallback. | Parameter validation enforces mutual exclusion; cache/evaluator use actual counts; consensus compares V4 mode plus ID/revision and owner-canonicalizes source timestamps; selected and active refresh retain the chosen revision; focused tests and the full suite pass. | Candidate identity, candidate-count indexing, fallback, and activation boundary conditions have direct regression evidence. PMR/MASD/AD formulas were not modified. | High |
 | 5. Directional alignment | PASS | The governing direction is continuous Left/Right V4 safe-set generation first, then candidate representation, existing TPA/PMR/MASD/AD/Cost, coordination, and activation. | `SafeControlSetV4` remains upstream; its adapter supplies V4 role/input packets; the existing downstream evaluators and activation controller remain authoritative. | The implementation neither relabels V3 as V4 nor replaces the source-directed hierarchy with a new optimizer or trajectory-level uncertainty gate. | High |
 
 Cross-axis dependencies: none remain for the bounded Step-5 code cutover.
 All applicable axes pass. The next admissible step is Step 6 headless SILS and
 offline evidence collection; a passing Step 5 does not prejudge that result.
+
+## 18. Step 6 headless SILS result — 2026-08-29
+
+Step 6 is complete as a cutover wiring and behavior smoke. It is not a DSD
+safety acceptance: the final run violated the 10 m DSD and therefore opens a
+separate performance-remediation step.
+
+### Harness and offline evidence changes
+
+- The existing point-convergence runner now accepts `V4_MODE=shadow|cutover`,
+  rejects cutover with the legacy exhaustive mode, sources the current
+  collision-avoidance overlay, and passes the V4/V3 gate parameters
+  explicitly. The simulator remains headless.
+- The bag processor sources the same overlay before deserialization.
+- The existing analyzer reads decision and trajectory-intent topics, reports
+  V4 mode/role/revision identity, distinguishes command agreement from exact
+  20 Hz snapshot agreement, edge-detects activation, checks active role and
+  revision retention, validates variable-size V4 packet metadata, and verifies
+  every selected owner intent against the transmitted packet.
+- `FormationMode` override logs are cross-checked against the exact selected
+  packet's candidate ID, `V_cmd`, and `a_lat_cmd`. This proves the command
+  handed to the existing PX4 setpoint adapter; it does not prove PX4 plant
+  tracking or datalink delivery beyond that adapter call.
+
+### Failures found and corrected during SILS
+
+1. `step6_v4_cutover_20260829_01` never reached V4 cutover. One full
+   `previous` cache was serving both selected-intent retention and previous
+   4 Hz epoch retention, so a legacy selected set displaced the V4 set needed
+   at an asynchronous epoch boundary. The roles were separated: current and
+   previous full sets remain coordination caches, while only one selected
+   intent is retained. A regression test advances the peer across the boundary
+   first.
+2. `step6_v4_cutover_20260829_02` committed V4 tuples but never activated.
+   The next 20 Hz refresh removed the exact selected input revision before the
+   activation monitor could resolve it. The selected Current Best is now
+   repredicted with the same input/revision even while activation is not yet
+   active. The existing infeasible-set test still proves zero *new* candidates
+   and no legacy/best-unsafe revival.
+3. `step6_v4_cutover_20260829_03` activated only after the closest pass in that
+   run. Of 64 common proposal epochs, 59 agreed on mode/IDs/input revisions but
+   only 25 also had identical observer-side 20 Hz source timestamps. Requiring
+   the latter was an unsupported exact-snapshot expansion. Consensus now uses
+   executable command identity and commits each source timestamp from the
+   aircraft that owns that slot. A test injects different observer-side source
+   timestamps and verifies one owner-canonical committed array.
+4. Diagnostic publications could repeat a prior `activation_just_started` or
+   `activation_just_ended` flag. V4 diagnostic output now clears these
+   one-output events, and offline summaries count real false/true edges rather
+   than raw repeated flags.
+
+### Final cutover smoke
+
+Final run:
+`step6_v4_cutover_20260829_04`
+
+Artifacts:
+
+- rosbag: `result/rosbag/step6_v4_cutover_20260829_04`
+- summary: `result/summary/step6_v4_cutover_20260829_04/summary.json`
+- plot: `result/plot/step6_v4_cutover_20260829_04/actual_maneuver_overview.png`
+- video: `result/video/step6_v4_cutover_20260829_04/actual_maneuver.mp4`
+
+Wiring/identity evidence:
+
+- All five aircraft were V4-cutover selected for every post-gate decision
+  record (`814..867` records per aircraft); every record also had a valid V4
+  proposal.
+- All 138 common committed epochs had the exact same mode/ID/revision and
+  owner-canonical source-timestamp tuple.
+- 138/146 common proposal epochs agreed on command identity. Exact observer
+  snapshot agreement was only 73/146, which is retained as a latency
+  diagnostic rather than used as command consensus.
+- Selected intent references were missing in 0 records for all five aircraft;
+  malformed V4 packet metadata count was 0.
+- Every aircraft activated before the 17.5 s closest pass; first activation
+  occurred at 6.06..6.95 s. Active candidate switch count and active input
+  revision switch count were both 0 for all aircraft.
+- Throttled Formation override evidence matched the exact selected intent in
+  `14/14`, `17/17`, `13/13`, `13/13`, and `14/14` records. Missing or inactive
+  references were 0.
+- No queue-full/drop, process error, exception, segmentation, or terminate
+  diagnostic was present in the five guidance logs.
+
+Behavior evidence, intentionally not promoted to a safety claim:
+
+- Actual minimum 3D separation: `1.881194 m`.
+- Actual minimum horizontal separation: `1.314832 m`.
+- Closest pair: aircraft `0-3` at `17.5 s`.
+- DSD-violation estimate: `1.8 s` at the analyzer's 10 Hz grid.
+- Therefore the V4 cutover wiring smoke passes, but the 10 m DSD performance
+  criterion fails. The next step must diagnose model/control/activation
+  adequacy from these recorded trajectories; increasing margins or changing
+  the V4 equations is not part of this Step-6 wiring correction.
+
+Verification:
+
+- Full `collision_avoidance` suite: 132 tests, 0 errors, 0 failures,
+  0 skipped.
+- Worker regressions cover asynchronous epoch-cache rollover, inactive
+  Current-Best revision retention, owner-canonical timestamp consensus,
+  active latching, and infeasible zero-new-candidate behavior.
+- Analyzer `py_compile`, runner/processor `bash -n`, and `git diff --check`
+  pass.
+
+### Step 6 adversarial audit
+
+| Attack | Result | Evidence |
+|---|---|---|
+| A selected legacy intent permanently occupies the previous-epoch V4 cache | PASS | Selected retention is one independent intent; the previous full-set cache always rolls with candidate epochs, and the peer-first boundary regression passes. |
+| A selected but not-yet-active V4 input disappears at the next 20 Hz refresh | PASS | Current Best is retained by role/input/revision before activation; the regression disables activation and observes the same revision on a later refresh. |
+| V4 infeasibility revives a new legacy or best-unsafe candidate | PASS | The existing three-aircraft regression still emits zero packets when no Current Best exists; only an already-coordinated Current Best may be repredicted. |
+| Same role but different executable input reaches consensus | PASS | Command consensus includes per-aircraft input revisions; a mismatch remains rejected. |
+| Same command is rejected only because observers received adjacent 20 Hz snapshots | PASS | Consensus excludes observer-side source time and owner-canonicalizes the committed timestamp; 59/64 pre-fix command agreements motivated the correction. |
+| An active role or input silently changes | PASS | Final bag reports zero active candidate switches and zero active revision switches for every aircraft. |
+| Selected intent and Formation override differ | PASS | All 71 throttled override records match the owner-selected packet's candidate, ground-speed command, and lateral acceleration within the log's 0.01 precision. |
+| A successful smoke is called a 10 m safety proof | PASS | The 1.881 m final minimum and 10 m DSD failure are explicit; the accepted claim is limited to wiring and observed behavior. |
+
+### Step 6 five-axis source audit
+
+Audit scope:
+
+- Sources: the reviewed Auto ACAS timing/current-best evidence in
+  `reference/paper/auto_acas_maneuver_selection_study_reviewed_v26.html`
+  (Current Best + alternates, 20 Hz trajectory refresh, approximately 0.25 s
+  delayed selection), and the project decisions in
+  `reference/paper/MD_FILES/codex_v4_implementation_decisions_v2.md`.
+- Derived requirements: Sections 6.4 through 6.7 and Step 6 of this plan.
+- Implementation/evidence: worker cutover/cache/consensus/latching code,
+  runner, bag processor/analyzer, unit/integration tests, and final SILS bag.
+- Excluded from a PASS claim: formal invariance, robust uncertainty safety,
+  10 m DSD assurance, 95% containment, and PX4 closed-loop tracking accuracy.
+
+| Axis | Status | Source evidence | Implementation evidence | Reason / impact | Confidence |
+|---:|---|---|---|---|---|
+| 1. Source accuracy and traceability | PASS | The reviewed source separates held maneuver commands from 20 Hz trajectory refresh and identifies delayed selection as synchronization, while the project decision source defines dynamic `PredictInput` transport and existing downstream AD/activation reuse. | The implementation keeps command revision distinct from trajectory source time, retains Current Best, updates compact trajectories, and reuses the existing downstream path. | No project-specific packet field or V4 formula is claimed to be a disclosed Auto ACAS implementation detail. | High |
+| 2. Interpretation fidelity | PASS | The sources require nearly identical coordinated information, not bit-identical observer receive timestamps or guaranteed DSD performance from one smoke. | The earlier exact-source-time gate was removed after bag evidence; the final report explicitly records the 10 m failure and limits success to wiring. | Neither timing prose nor a SILS run is expanded into a formal or empirical safety guarantee. | High |
+| 3. Complexity proportionality | PASS | The named constraints are asynchronous epoch rollover, one retained Current Best, variable one-to-three candidates, and offline traceability. | One single-intent retention slot is used instead of another full trajectory-set cache; the existing worker, messages, topics, runner, logs, and analyzer are extended without a new node/thread/evaluator. | Every added field/check maps to an observed failure or Step-6 acceptance item; the first full-cache attempt was removed after a stack-overflow regression. | High |
+| 4. Correct implementation under aligned direction | PASS | Command identity must remain stable while its trajectory is refreshed and selected peer data must be time-aligned before downstream evaluation. | 132 tests pass; final bag has exact committed identity on 138/138 epochs, zero selected-intent misses, zero active role/revision switches, and 71/71 Formation override matches. | Cache timing, command identity, latching, packet metadata, and execution handoff have static and runtime evidence. This status covers wiring correctness, not DSD performance. | High |
+| 5. Directional alignment | PASS | V4 safe intervals remain upstream of candidate representation and the existing TPA/PMR/MASD/AD/coordination/activation hierarchy. | No alternative optimizer, uncertainty subtraction, vertical maneuver, or new command path was introduced; infeasible new-set behavior remains explicit. | The governing architecture remains the agreed source-directed hierarchy. | High |
+
+Cross-axis dependencies: none remain for the bounded Step-6 wiring claim.
+All five axes pass for that claim. The observed 10 m separation-performance
+failure is a separate, explicit next-step blocker and is not relabeled as a
+wiring failure or hidden by the audit scope.

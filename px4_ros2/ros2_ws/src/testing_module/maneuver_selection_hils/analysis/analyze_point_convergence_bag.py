@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import math
+import re
 from collections import Counter
 from itertools import combinations
 from pathlib import Path
@@ -19,6 +20,7 @@ from rosidl_runtime_py.utilities import get_message
 
 AIRCRAFT_COUNT = 5
 CANDIDATE_ROLL_DEGREES = (-50, -30, -15, 0, 15, 30, 50)
+V4_CANDIDATE_ROLES = ("near", "left", "right")
 COLORS = plt.get_cmap("tab10").colors[:AIRCRAFT_COUNT]
 
 
@@ -29,6 +31,8 @@ def read_bag(bag: Path):
             f"/common/px4_{vehicle}/trans_vehicle_odometry")
         selected_topics.add(
             f"/common/px4_{vehicle}/maneuver_selection_decision")
+        selected_topics.add(
+            f"/common/px4_{vehicle}/trajectory_intent")
 
     reader = rosbag2_py.SequentialReader()
     reader.open(
@@ -123,6 +127,13 @@ def decision_records(messages, start_ns):
     return decisions
 
 
+def intent_records(messages):
+    return [
+        messages.get(f"/common/px4_{vehicle}/trajectory_intent", [])
+        for vehicle in range(AIRCRAFT_COUNT)
+    ]
+
+
 def decision_summary(decisions):
     result = []
     for vehicle, records in enumerate(decisions):
@@ -139,6 +150,11 @@ def decision_summary(decisions):
         confirmed_proposals = sum(
             bool(message.proposal_consensus_confirmed)
             for _, message in records)
+        selected_v4 = sum(
+            bool(message.selected_v4_cutover) for _, message in records)
+        proposed_v4 = sum(
+            bool(message.proposal_valid and message.proposed_v4_cutover)
+            for _, message in records)
         result.append({
             "vehicle_id": vehicle,
             "decision_count": len(records),
@@ -147,6 +163,8 @@ def decision_summary(decisions):
             "evaluated_16807_count": evaluated_16807,
             "valid_proposal_count": valid_proposals,
             "confirmed_proposal_count": confirmed_proposals,
+            "selected_v4_cutover_count": selected_v4,
+            "proposed_v4_cutover_count": proposed_v4,
         })
     return result
 
@@ -165,6 +183,10 @@ def v4_shadow_summary(decisions):
             "vehicle_id": vehicle,
             "enabled_record_count": len(enabled),
             "evaluated_record_count": len(evaluated),
+            "shadow_only_record_count": sum(
+                bool(message.v4_shadow_only) for message in enabled),
+            "cutover_record_count": sum(
+                not message.v4_shadow_only for message in enabled),
             "shadow_status_counts": dict(sorted(Counter(
                 int(message.v4_shadow_status)
                 for message in enabled).items())),
@@ -206,34 +228,189 @@ def activation_state_summary(decisions):
         starts = []
         ends = []
         active_candidate_switch_count = 0
+        active_revision_switch_count = 0
+        repeated_start_flag_count = 0
+        repeated_end_flag_count = 0
+        previous_active = False
         previous_active_candidate = None
+        previous_active_revision = None
         for time_s, message in records:
-            if message.activation_just_started:
+            active = bool(message.activation_requested)
+            if active and not previous_active:
                 starts.append({
                     "time_s": float(time_s),
                     "ad_m": float(message.ad_m),
                     "candidate_id": int(message.ownship_candidate_id),
+                    "candidate_input_revision": int(
+                        message.selected_candidate_input_revisions[vehicle]),
                 })
-            if message.activation_just_ended:
+            if not active and previous_active:
                 ends.append({
                     "time_s": float(time_s),
                     "reason": int(message.deactivation_reason),
                 })
-            if message.activation_requested:
+            if message.activation_just_started and previous_active:
+                repeated_start_flag_count += 1
+            if message.activation_just_ended and not previous_active:
+                repeated_end_flag_count += 1
+            if active:
                 candidate_id = int(message.ownship_candidate_id)
+                revision = int(
+                    message.selected_candidate_input_revisions[vehicle])
                 if (previous_active_candidate is not None
                         and candidate_id != previous_active_candidate):
                     active_candidate_switch_count += 1
+                if (previous_active_revision is not None
+                        and revision != previous_active_revision):
+                    active_revision_switch_count += 1
                 previous_active_candidate = candidate_id
+                previous_active_revision = revision
             else:
                 previous_active_candidate = None
+                previous_active_revision = None
+            previous_active = active
         result.append({
             "vehicle_id": vehicle,
             "activation_start_count": len(starts),
             "activation_end_count": len(ends),
             "active_candidate_switch_count": active_candidate_switch_count,
+            "active_revision_switch_count": active_revision_switch_count,
+            "repeated_start_flag_count": repeated_start_flag_count,
+            "repeated_end_flag_count": repeated_end_flag_count,
             "starts": starts,
             "ends": ends,
+        })
+    return result
+
+
+def trajectory_intent_summary(intents, decisions, start_ns):
+    result = []
+    for vehicle in range(AIRCRAFT_COUNT):
+        all_records = intents[vehicle]
+        evaluation_records = [
+            message for bag_time_ns, message in all_records
+            if bag_time_ns >= start_ns]
+        exact_signatures = {
+            (int(message.source_timestamp_us), int(message.candidate_id),
+             int(message.candidate_input_revision),
+             int(message.candidate_set_kind))
+            for _, message in all_records
+        }
+        command_signatures = {
+            (int(message.candidate_id),
+             int(message.candidate_input_revision),
+             int(message.candidate_set_kind))
+            for _, message in all_records
+        }
+        selected_reference_count = 0
+        missing_exact_reference_count = 0
+        missing_command_reference_count = 0
+        for _, decision in decisions[vehicle]:
+            if not decision.coordination_qualified:
+                continue
+            selected_reference_count += 1
+            kind = 1 if decision.selected_v4_cutover else 0
+            exact = (
+                int(decision.selected_candidate_source_timestamps_us[vehicle]),
+                int(decision.selected_candidate_ids[vehicle]),
+                int(decision.selected_candidate_input_revisions[vehicle]),
+                kind)
+            command = (exact[1], exact[2], exact[3])
+            if exact not in exact_signatures:
+                missing_exact_reference_count += 1
+            if command not in command_signatures:
+                missing_command_reference_count += 1
+        invalid_v4_metadata_count = sum(
+            int(message.candidate_set_size) < 1
+            or int(message.candidate_set_size) > 3
+            or int(message.candidate_id) >= len(V4_CANDIDATE_ROLES)
+            for message in evaluation_records
+            if int(message.candidate_set_kind) == 1)
+        result.append({
+            "vehicle_id": vehicle,
+            "intent_record_count": len(evaluation_records),
+            "candidate_set_kind_counts": dict(sorted(Counter(
+                int(message.candidate_set_kind)
+                for message in evaluation_records).items())),
+            "v4_candidate_set_size_histogram": dict(sorted(Counter(
+                int(message.candidate_set_size)
+                for message in evaluation_records
+                if int(message.candidate_set_kind) == 1).items())),
+            "invalid_v4_metadata_count": invalid_v4_metadata_count,
+            "selected_reference_count": selected_reference_count,
+            "missing_exact_selected_intent_count": (
+                missing_exact_reference_count),
+            "missing_selected_command_count": (
+                missing_command_reference_count),
+        })
+    return result
+
+
+def formation_override_summary(log_dir, messages, intents):
+    pattern = re.compile(
+        r"^\[WARN\] \[(\d+\.\d+)\].*candidate=(\d+) .*"
+        r"a_lat=([-+0-9.]+) v_ground=([-+0-9.]+)")
+    result = []
+    for vehicle in range(AIRCRAFT_COUNT):
+        decision_topic = (
+            f"/common/px4_{vehicle}/maneuver_selection_decision")
+        raw_decisions = messages.get(decision_topic, [])
+        decision_times = np.asarray(
+            [record[0] for record in raw_decisions], dtype=np.int64)
+        exact_intents = {
+            (int(message.source_timestamp_us), int(message.candidate_id),
+             int(message.candidate_input_revision),
+             int(message.candidate_set_kind)): message
+            for _, message in intents[vehicle]
+        }
+        override_count = 0
+        exact_match_count = 0
+        missing_reference_count = 0
+        inactive_decision_count = 0
+        log_path = log_dir / f"guidance_{vehicle}.log"
+        lines = (log_path.read_text(errors="replace").splitlines()
+                 if log_path.is_file() else [])
+        for line in lines:
+            matched = pattern.search(line)
+            if matched is None:
+                continue
+            override_count += 1
+            timestamp_ns = int(round(float(matched.group(1)) * 1.0e9))
+            index = int(np.searchsorted(
+                decision_times, timestamp_ns, side="right")) - 1
+            if index < 0:
+                missing_reference_count += 1
+                continue
+            decision = raw_decisions[index][1]
+            if not decision.activation_requested:
+                inactive_decision_count += 1
+                continue
+            kind = 1 if decision.selected_v4_cutover else 0
+            key = (
+                int(decision.selected_candidate_source_timestamps_us[vehicle]),
+                int(decision.selected_candidate_ids[vehicle]),
+                int(decision.selected_candidate_input_revisions[vehicle]),
+                kind)
+            intent = exact_intents.get(key)
+            if intent is None:
+                missing_reference_count += 1
+                continue
+            logged_candidate_id = int(matched.group(2))
+            logged_lateral_acceleration = float(matched.group(3))
+            logged_ground_speed = float(matched.group(4))
+            if (logged_candidate_id == key[1]
+                    and abs(logged_ground_speed
+                            - float(intent.candidate_input[0])) <= 0.011
+                    and abs(logged_lateral_acceleration
+                            - float(intent.candidate_input[3])) <= 0.011):
+                exact_match_count += 1
+        result.append({
+            "vehicle_id": vehicle,
+            "override_log_count": override_count,
+            "selected_intent_match_count": exact_match_count,
+            "missing_selected_intent_count": missing_reference_count,
+            "latest_decision_inactive_count": inactive_decision_count,
+            "rounded_value_tolerance": 0.011,
         })
     return result
 
@@ -249,11 +426,8 @@ def decision_consensus_summary(decisions, elapsed_s):
         if not all(decision.coordination_qualified for decision in latest):
             continue
         all_qualified_count += 1
-        tuples = [
-            tuple(decision.selected_candidate_ids[:AIRCRAFT_COUNT])
-            for decision in latest
-        ]
-        if all(candidate_tuple == tuples[0] for candidate_tuple in tuples[1:]):
+        identities = [selected_identity(decision) for decision in latest]
+        if all(identity == identities[0] for identity in identities[1:]):
             consensus_count += 1
         elif first_mismatch_time_s is None:
             first_mismatch_time_s = float(time_s)
@@ -270,11 +444,11 @@ def decision_consensus_summary(decisions, elapsed_s):
     same_epoch_tuple_count = 0
     first_epoch_mismatch = None
     for epoch in sorted(common_epochs):
-        tuples = [
-            tuple(by_epoch[epoch].selected_candidate_ids[:AIRCRAFT_COUNT])
+        identities = [
+            selected_identity(by_epoch[epoch])
             for by_epoch in per_vehicle_by_epoch
         ]
-        if all(candidate_tuple == tuples[0] for candidate_tuple in tuples[1:]):
+        if all(identity == identities[0] for identity in identities[1:]):
             same_epoch_tuple_count += 1
         elif first_epoch_mismatch is None:
             first_epoch_mismatch = epoch
@@ -358,15 +532,26 @@ def coordination_invariant_summary(decisions):
                         first_peer_ownship_mismatch_epoch = epoch
 
     same_proposal_tuple_count = 0
+    same_proposal_command_count = 0
     first_proposal_mismatch_epoch = None
+    first_proposal_command_mismatch_epoch = None
     for epoch in sorted(common_proposal_epochs):
-        tuples = [
-            tuple(by_epoch[epoch].proposed_candidate_ids[:AIRCRAFT_COUNT])
+        identities = [
+            proposal_identity(by_epoch[epoch])
             for by_epoch in per_vehicle_by_proposal_epoch]
-        if all(candidate_tuple == tuples[0] for candidate_tuple in tuples[1:]):
+        command_identities = [
+            proposal_command_identity(by_epoch[epoch])
+            for by_epoch in per_vehicle_by_proposal_epoch]
+        if all(identity == identities[0] for identity in identities[1:]):
             same_proposal_tuple_count += 1
         elif first_proposal_mismatch_epoch is None:
             first_proposal_mismatch_epoch = epoch
+        if all(
+                identity == command_identities[0]
+                for identity in command_identities[1:]):
+            same_proposal_command_count += 1
+        elif first_proposal_command_mismatch_epoch is None:
+            first_proposal_command_mismatch_epoch = epoch
 
     return {
         "common_selected_epoch_count": len(common_selected_epochs),
@@ -380,6 +565,12 @@ def coordination_invariant_summary(decisions):
             float(same_proposal_tuple_count / len(common_proposal_epochs))
             if common_proposal_epochs else None),
         "first_proposal_mismatch_epoch": first_proposal_mismatch_epoch,
+        "same_proposal_command_count": same_proposal_command_count,
+        "same_proposal_command_ratio": (
+            float(same_proposal_command_count / len(common_proposal_epochs))
+            if common_proposal_epochs else None),
+        "first_proposal_command_mismatch_epoch": (
+            first_proposal_command_mismatch_epoch),
         "unconfirmed_current_epoch_qualified_count": (
             unconfirmed_current_epoch_qualified_count),
         "selected_epoch_vector_mismatch_count": (
@@ -399,16 +590,47 @@ def latest_decision(records, elapsed_s):
     return records[index][1] if index >= 0 else None
 
 
+def selected_identity(decision):
+    return (
+        bool(decision.selected_v4_cutover),
+        tuple(decision.selected_candidate_ids[:AIRCRAFT_COUNT]),
+        tuple(decision.selected_candidate_input_revisions[:AIRCRAFT_COUNT]),
+        tuple(
+            decision.selected_candidate_source_timestamps_us[
+                :AIRCRAFT_COUNT]))
+
+
+def proposal_identity(decision):
+    return (
+        bool(decision.proposed_v4_cutover),
+        tuple(decision.proposed_candidate_ids[:AIRCRAFT_COUNT]),
+        tuple(decision.proposed_candidate_input_revisions[:AIRCRAFT_COUNT]),
+        tuple(
+            decision.proposed_candidate_source_timestamps_us[
+                :AIRCRAFT_COUNT]))
+
+
+def proposal_command_identity(decision):
+    return (
+        bool(decision.proposed_v4_cutover),
+        tuple(decision.proposed_candidate_ids[:AIRCRAFT_COUNT]),
+        tuple(decision.proposed_candidate_input_revisions[:AIRCRAFT_COUNT]))
+
+
 def tuple_label(decision):
     if decision is None or not decision.coordination_qualified:
         return "selection: waiting"
-    rolls = []
+    labels = []
     for candidate_id in decision.selected_candidate_ids[:AIRCRAFT_COUNT]:
-        if candidate_id < len(CANDIDATE_ROLL_DEGREES):
-            rolls.append(f"{CANDIDATE_ROLL_DEGREES[candidate_id]:+d}°")
+        if (decision.selected_v4_cutover
+                and candidate_id < len(V4_CANDIDATE_ROLES)):
+            labels.append(V4_CANDIDATE_ROLES[candidate_id])
+        elif candidate_id < len(CANDIDATE_ROLL_DEGREES):
+            labels.append(f"{CANDIDATE_ROLL_DEGREES[candidate_id]:+d}°")
         else:
-            rolls.append("?")
-    return "selected roll tuple: [" + ", ".join(rolls) + "]"
+            labels.append("?")
+    kind = "V4 role" if decision.selected_v4_cutover else "roll"
+    return f"selected {kind} tuple: [" + ", ".join(labels) + "]"
 
 
 def distributed_tuple_label(decisions, elapsed_s):
@@ -419,14 +641,11 @@ def distributed_tuple_label(decisions, elapsed_s):
         decision for decision in latest if decision.coordination_qualified]
     if not qualified:
         return "selection: unqualified"
-    tuples = [
-        tuple(decision.selected_candidate_ids[:AIRCRAFT_COUNT])
-        for decision in qualified
-    ]
+    identities = [selected_identity(decision) for decision in qualified]
     label = tuple_label(qualified[0])
     if len(qualified) != AIRCRAFT_COUNT:
         return f"{label} ({len(qualified)}/5 nodes qualified)"
-    if not all(candidate_tuple == tuples[0] for candidate_tuple in tuples[1:]):
+    if not all(identity == identities[0] for identity in identities[1:]):
         return f"node 0 {label.removeprefix('selected ')} (tuple mismatch)"
     return label + " (5/5 consensus)"
 
@@ -561,6 +780,7 @@ def analyze(args):
     (pair_list, pair_distance, minimum_distance, minimum_horizontal,
      nearest_pair_index) = separation_history(tracks)
     decisions = decision_records(messages, int(grid_ns[0]))
+    intents = intent_records(messages)
 
     global_flat_index = int(np.argmin(pair_distance))
     pair_index, time_index = np.unravel_index(
@@ -593,6 +813,10 @@ def analyze(args):
         "decision_diagnostics": decision_summary(decisions),
         "v4_shadow_diagnostics": v4_shadow_summary(decisions),
         "activation_state_diagnostics": activation_state_summary(decisions),
+        "trajectory_intent_diagnostics": trajectory_intent_summary(
+            intents, decisions, int(grid_ns[0])),
+        "formation_override_diagnostics": formation_override_summary(
+            args.log_dir, messages, intents),
         "distributed_decision_consensus": decision_consensus_summary(
             decisions, elapsed_s),
         "coordination_invariants": coordination_invariant_summary(decisions),
@@ -634,6 +858,7 @@ def parse_args():
     parser.add_argument("--summary-dir", type=Path, required=True)
     parser.add_argument("--plot-dir", type=Path, required=True)
     parser.add_argument("--video-dir", type=Path, required=True)
+    parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--evaluation-start-ns", type=int, required=True)
     parser.add_argument("--desired-separation-distance", type=float, default=10.0)
     parser.add_argument("--target-north", type=float, default=300.0)
