@@ -314,12 +314,22 @@ TEST(DistributedManeuverSelectionRuntime, FiveRuntimesPublishSameJointDecision)
 
     ASSERT_TRUE(decisions[0].has_value());
     const auto expected_tuple = decisions[0]->selected_candidate_ids;
+    const auto expected_input_revisions =
+        decisions[0]->selected_candidate_input_revisions;
+    const auto expected_source_timestamps =
+        decisions[0]->selected_candidate_source_timestamps_us;
     for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
         ASSERT_TRUE(decisions[aircraft].has_value());
         EXPECT_TRUE(decisions[aircraft]->coordination_qualified);
         EXPECT_EQ(decisions[aircraft]->aircraft_count, aircraft_count);
         EXPECT_EQ(decisions[aircraft]->evaluated_combination_count, 243U);
         EXPECT_EQ(decisions[aircraft]->selected_candidate_ids, expected_tuple);
+        EXPECT_EQ(
+            decisions[aircraft]->selected_candidate_input_revisions,
+            expected_input_revisions);
+        EXPECT_EQ(
+            decisions[aircraft]->selected_candidate_source_timestamps_us,
+            expected_source_timestamps);
     }
 
     executor.remove_node(node);

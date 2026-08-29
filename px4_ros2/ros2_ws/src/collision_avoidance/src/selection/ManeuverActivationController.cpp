@@ -62,6 +62,8 @@ ManeuverActivationStatus ManeuverActivationController::update(
     m_status.activation_timestamp_us = sample.timestamp_us;
     m_status.affected_threat_mask = sample.unsafe_threat_mask;
     m_status.latched_candidate_id = sample.selected_candidate_id;
+    m_status.latched_candidate_input_revision =
+        sample.selected_candidate_input_revision;
     m_status.latched_input = sample.selected_input;
     return m_status;
 }

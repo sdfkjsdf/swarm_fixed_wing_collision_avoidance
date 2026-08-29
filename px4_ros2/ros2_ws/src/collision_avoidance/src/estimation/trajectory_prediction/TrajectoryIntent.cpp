@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 
 namespace collision_avoidance::estimation
@@ -26,6 +27,46 @@ bool usableInput(const PredictInput & input) noexcept
         && (std::isfinite(input.h_cmd) || std::isnan(input.h_cmd))
         && std::isfinite(input.h_dot_cmd)
         && std::isfinite(input.a_lat_cmd);
+}
+
+std::array<float, kTrajectoryIntentInputDimension> encodeInput(
+    const PredictInput & input) noexcept
+{
+    return {
+        static_cast<float>(input.V_cmd),
+        static_cast<float>(input.h_cmd),
+        static_cast<float>(input.h_dot_cmd),
+        static_cast<float>(input.a_lat_cmd)};
+}
+
+PredictInput decodeInput(
+    const std::array<float, kTrajectoryIntentInputDimension> & input) noexcept
+{
+    return {input[0], input[1], input[2], input[3]};
+}
+
+std::uint64_t inputRevision(
+    std::uint8_t candidate_id,
+    const std::array<float, kTrajectoryIntentInputDimension> & input) noexcept
+{
+    constexpr std::uint64_t offset_basis = 14695981039346656037ULL;
+    constexpr std::uint64_t prime = 1099511628211ULL;
+    std::uint64_t revision = offset_basis;
+    const auto mixByte = [&revision](std::uint8_t byte) {
+        revision ^= byte;
+        revision *= prime;
+    };
+    mixByte(candidate_id);
+    for (float value : input) {
+        std::uint32_t bits = 0;
+        static_assert(sizeof(bits) == sizeof(value));
+        std::memcpy(&bits, &value, sizeof(bits));
+        for (std::size_t byte = 0; byte < sizeof(bits); ++byte) {
+            mixByte(static_cast<std::uint8_t>(
+                (bits >> (byte * 8U)) & 0xffU));
+        }
+    }
+    return revision == 0 ? 1 : revision;
 }
 
 std::array<float, kPredictStateDimension> encodeState(
@@ -133,14 +174,47 @@ bool TrajectoryIntentSender::buildForSelectedCandidate(
     std::uint64_t selection_epoch) const
 {
     const PredictInput * input = m_candidates.find(candidate_id);
-    if (input == nullptr || !usableInput(*input) || !finiteState(initial_state)
+    if (input == nullptr) {
+        return false;
+    }
+
+    return buildForCandidateInput(
+        source_timestamp_us,
+        candidate_id,
+        *input,
+        initial_state,
+        initial_covariance,
+        packet,
+        selection_epoch);
+}
+
+bool TrajectoryIntentSender::buildForCandidateInput(
+    std::uint64_t source_timestamp_us,
+    std::uint8_t candidate_id,
+    const PredictInput & candidate_input,
+    const PredictState & initial_state,
+    const PredictStateCovariance & initial_covariance,
+    TrajectoryIntentPacket & packet,
+    std::uint64_t selection_epoch) const
+{
+    if (candidate_id >= kManeuverCandidateCount
+        || !usableInput(candidate_input) || !finiteState(initial_state)
         || !TrajectoryUncertainty::covarianceIsFiniteAndPsd(initial_covariance)) {
+        return false;
+    }
+
+    const auto encoded_input = encodeInput(candidate_input);
+    const PredictInput transmitted_input = decodeInput(encoded_input);
+    if (!usableInput(transmitted_input)) {
         return false;
     }
 
     PredictionMeanTrajectory predicted_mean{};
     m_predictor.predict(
-        initial_state, *input, kTrajectoryIntentStepSeconds, predicted_mean);
+        initial_state,
+        transmitted_input,
+        kTrajectoryIntentStepSeconds,
+        predicted_mean);
     const TrajectorySample compressed_mean =
         m_predictor.extractKeySamples(predicted_mean);
     if (!validateKeySamples(compressed_mean)) {
@@ -151,6 +225,9 @@ bool TrajectoryIntentSender::buildForSelectedCandidate(
     candidate_packet.source_timestamp_us = source_timestamp_us;
     candidate_packet.selection_epoch = selection_epoch;
     candidate_packet.candidate_id = candidate_id;
+    candidate_packet.candidate_input = encoded_input;
+    candidate_packet.candidate_input_revision = inputRevision(
+        candidate_id, encoded_input);
     candidate_packet.initial_state = encodeState(initial_state);
     std::transform(
         initial_covariance.begin(),
@@ -164,10 +241,8 @@ bool TrajectoryIntentSender::buildForSelectedCandidate(
 
 TrajectoryIntentReceiver::TrajectoryIntentReceiver(
     const TrajectoryPredict & predictor,
-    const ManeuverCandidateTable & candidates,
     const UncertaintyParams & uncertainty_params)
 : m_predictor(predictor),
-  m_candidates(candidates),
   m_uncertainty(uncertainty_params)
 {
 }
@@ -176,11 +251,15 @@ bool TrajectoryIntentReceiver::receive(
     const TrajectoryIntentPacket & packet,
     ReceivedTrajectoryIntent & received)
 {
-    const PredictInput * input = m_candidates.find(packet.candidate_id);
+    const PredictInput input = decodeInput(packet.candidate_input);
     const PredictState initial_state = decodeState(packet.initial_state);
     const PredictStateCovariance initial_covariance =
         decodeCovariance(packet.initial_covariance);
-    if (input == nullptr || !usableInput(*input) || !finiteState(initial_state)
+    if (packet.candidate_id >= kManeuverCandidateCount
+        || !usableInput(input)
+        || packet.candidate_input_revision != inputRevision(
+            packet.candidate_id, packet.candidate_input)
+        || !finiteState(initial_state)
         || !validateKeySamples(packet.compressed_mean)
         || !TrajectoryUncertainty::covarianceIsFiniteAndPsd(initial_covariance)) {
         return false;
@@ -199,16 +278,19 @@ bool TrajectoryIntentReceiver::receive(
         }
         if (point + 1 < kTrajectoryPointCount) {
             roll_state = m_predictor.stepRK4(
-                roll_state, *input, kTrajectoryIntentStepSeconds);
+                roll_state, input, kTrajectoryIntentStepSeconds);
         }
     }
 
     PredictionInputTrajectory inputs{};
-    inputs.fill(*input);
+    inputs.fill(input);
     ReceivedTrajectoryIntent candidate_received{};
     candidate_received.source_timestamp_us = packet.source_timestamp_us;
     candidate_received.selection_epoch = packet.selection_epoch;
     candidate_received.candidate_id = packet.candidate_id;
+    candidate_received.candidate_input = input;
+    candidate_received.candidate_input_revision =
+        packet.candidate_input_revision;
     candidate_received.reconstructed_mean = reconstructed_mean;
     if (!m_uncertainty.propagateAlongMean(
             m_predictor,

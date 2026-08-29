@@ -136,15 +136,40 @@ cs::ManeuverSelectionPeerDecision peerDecision(
     peer.selection_timestamp_us = decision.selection_timestamp_us;
     peer.local_selection_epoch = decision.local_selection_epoch;
     peer.selected_candidate_ids = decision.selected_candidate_ids;
+    peer.selected_candidate_input_revisions =
+        decision.selected_candidate_input_revisions;
+    peer.selected_candidate_source_timestamps_us =
+        decision.selected_candidate_source_timestamps_us;
     peer.ownship_candidate_id = decision.ownship_candidate_id;
     peer.proposal_timestamp_us = decision.proposal_timestamp_us;
     peer.proposal_epoch = decision.proposal_epoch;
     peer.proposed_candidate_ids = decision.proposed_candidate_ids;
+    peer.proposed_candidate_input_revisions =
+        decision.proposed_candidate_input_revisions;
+    peer.proposed_candidate_source_timestamps_us =
+        decision.proposed_candidate_source_timestamps_us;
     peer.proposal_valid = decision.proposal_valid;
     peer.proposal_consensus_confirmed =
         decision.proposal_consensus_confirmed;
     peer.coordination_qualified = decision.coordination_qualified;
     peer.activation_requested = decision.activation_requested;
+    return peer;
+}
+
+cs::ManeuverSelectionPeerDecision coordinatedPeerForIntent(
+    int vehicle_id,
+    const ce::TrajectoryIntentPacket & packet)
+{
+    cs::ManeuverSelectionPeerDecision peer;
+    const std::size_t vehicle_index = static_cast<std::size_t>(vehicle_id);
+    peer.vehicle_id = vehicle_id;
+    peer.coordination_qualified = true;
+    peer.ownship_candidate_id = packet.candidate_id;
+    peer.selected_candidate_ids[vehicle_index] = packet.candidate_id;
+    peer.selected_candidate_input_revisions[vehicle_index] =
+        packet.candidate_input_revision;
+    peer.selected_candidate_source_timestamps_us[vehicle_index] =
+        packet.source_timestamp_us;
     return peer;
 }
 
@@ -253,11 +278,8 @@ TEST(ManeuverSelectionWorker, V4ShadowEvaluatesFreshSelectedPeerIntent)
     for (const auto & packet : remote_output.intent_packets) {
         ASSERT_TRUE(local.pushRemoteIntent(1, packet));
     }
-    cs::ManeuverSelectionPeerDecision peer;
-    peer.vehicle_id = 1;
-    peer.coordination_qualified = true;
-    peer.ownship_candidate_id =
-        remote_output.intent_packets[0].candidate_id;
+    const auto peer = coordinatedPeerForIntent(
+        1, remote_output.intent_packets[0]);
     ASSERT_TRUE(local.pushRemoteDecision(1, peer));
     pushV4Inputs(local, timestamp_us, 20.0, -2.0);
 
@@ -325,11 +347,8 @@ TEST(ManeuverSelectionWorker, V4ShadowUsesTrimAndOmitsStaleNominal)
     for (const auto & packet : remote_output.intent_packets) {
         ASSERT_TRUE(local.pushRemoteIntent(1, packet));
     }
-    cs::ManeuverSelectionPeerDecision peer;
-    peer.vehicle_id = 1;
-    peer.coordination_qualified = true;
-    peer.ownship_candidate_id =
-        remote_output.intent_packets[0].candidate_id;
+    const auto peer = coordinatedPeerForIntent(
+        1, remote_output.intent_packets[0]);
     ASSERT_TRUE(local.pushRemoteDecision(1, peer));
     pushV4Inputs(local, source_timestamp_us, 22.0, -2.0);
 
@@ -374,11 +393,8 @@ TEST(ManeuverSelectionWorker, V4ShadowRejectsFuturePeerIntentExplicitly)
     for (const auto & packet : remote_output.intent_packets) {
         ASSERT_TRUE(local.pushRemoteIntent(1, packet));
     }
-    cs::ManeuverSelectionPeerDecision peer;
-    peer.vehicle_id = 1;
-    peer.coordination_qualified = true;
-    peer.ownship_candidate_id =
-        remote_output.intent_packets[0].candidate_id;
+    const auto peer = coordinatedPeerForIntent(
+        1, remote_output.intent_packets[0]);
     ASSERT_TRUE(local.pushRemoteDecision(1, peer));
     pushV4Inputs(local, evaluation_timestamp_us);
 
@@ -410,10 +426,8 @@ TEST(ManeuverSelectionWorker, V4ShadowClassifiesFutureTasAndInvalidNominal)
     for (const auto & packet : remote_output.intent_packets) {
         ASSERT_TRUE(local.pushRemoteIntent(1, packet));
     }
-    cs::ManeuverSelectionPeerDecision peer;
-    peer.vehicle_id = 1;
-    peer.coordination_qualified = true;
-    peer.ownship_candidate_id = remote_output.intent_packets[0].candidate_id;
+    const auto peer = coordinatedPeerForIntent(
+        1, remote_output.intent_packets[0]);
     ASSERT_TRUE(local.pushRemoteDecision(1, peer));
     ASSERT_TRUE(local.pushAirspeed(
         airspeedSnapshot(evaluation_timestamp_us + 10'000ULL, 24.0)));
@@ -788,7 +802,7 @@ TEST(ManeuverSelectionWorker, WarmsSelectionButDoesNotActivateBeforeGateOpens)
 }
 
 TEST(ManeuverSelectionWorker,
-    RejectsMismatchedProposalWithoutRelabelingTheCommittedEpoch)
+    RejectsSameRoleWithMismatchedInputRevisionWithoutRelabelingCommit)
 {
     cs::ManeuverSelectionWorker first(params());
     cs::ManeuverSelectionWorker second(params(1));
@@ -846,9 +860,10 @@ TEST(ManeuverSelectionWorker,
     ASSERT_GT(first_output.decision.proposal_epoch, committed_epoch);
 
     auto mismatched_peer = peerDecision(second_output.decision);
-    mismatched_peer.proposed_candidate_ids[0] = static_cast<std::uint8_t>(
-        (first_output.decision.proposed_candidate_ids[0] + 1U)
-        % ce::kManeuverCandidateCount);
+    ASSERT_EQ(
+        mismatched_peer.proposed_candidate_ids,
+        first_output.decision.proposed_candidate_ids);
+    mismatched_peer.proposed_candidate_input_revisions[0] ^= 1ULL;
     ASSERT_TRUE(first.pushRemoteDecision(1, mismatched_peer));
     ASSERT_TRUE(first.processPendingForTest());
     const auto rejected = first.tryPopOutput();
@@ -933,6 +948,9 @@ TEST(ManeuverSelectionWorker,
     matching_peer.vehicle_id = 1;
     matching_peer.ownship_candidate_id =
         matching_peer.proposed_candidate_ids[1];
+    // This synthetic peer is confirming the proposal before committing it;
+    // do not label the changed ownship role as an already-qualified selection.
+    matching_peer.coordination_qualified = false;
     matching_peer.activation_requested = false;
     ASSERT_TRUE(first.pushRemoteDecision(1, matching_peer));
     ASSERT_TRUE(first.processPendingForTest());
@@ -1065,6 +1083,10 @@ TEST(ManeuverSelectionWorker, FiveAircraftWorkersSelectSameJointTuple)
 
     outputs = confirmAllAircraftProposals(workers, outputs);
     const auto expected_tuple = outputs[0].decision.selected_candidate_ids;
+    const auto expected_input_revisions =
+        outputs[0].decision.selected_candidate_input_revisions;
+    const auto expected_source_timestamps =
+        outputs[0].decision.selected_candidate_source_timestamps_us;
     for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
         const auto & decision = outputs[aircraft].decision;
         ASSERT_TRUE(outputs[aircraft].has_decision);
@@ -1072,6 +1094,12 @@ TEST(ManeuverSelectionWorker, FiveAircraftWorkersSelectSameJointTuple)
         EXPECT_EQ(decision.aircraft_count, aircraft_count);
         EXPECT_EQ(decision.evaluated_combination_count, 243U);
         EXPECT_EQ(decision.selected_candidate_ids, expected_tuple);
+        EXPECT_EQ(
+            decision.selected_candidate_input_revisions,
+            expected_input_revisions);
+        EXPECT_EQ(
+            decision.selected_candidate_source_timestamps_us,
+            expected_source_timestamps);
         EXPECT_EQ(
             decision.ownship_candidate_id,
             expected_tuple[aircraft]);
@@ -1143,11 +1171,21 @@ TEST(ManeuverSelectionWorker, ExhaustiveTestModeEvaluatesAllFiveAircraftRollTupl
 
     outputs = confirmAllAircraftProposals(workers, outputs);
     const auto expected_tuple = outputs[0].decision.selected_candidate_ids;
+    const auto expected_input_revisions =
+        outputs[0].decision.selected_candidate_input_revisions;
+    const auto expected_source_timestamps =
+        outputs[0].decision.selected_candidate_source_timestamps_us;
     for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
         const auto & decision = outputs[aircraft].decision;
         ASSERT_TRUE(outputs[aircraft].has_decision);
         EXPECT_TRUE(decision.coordination_qualified);
         EXPECT_EQ(decision.evaluated_combination_count, 16'807U);
         EXPECT_EQ(decision.selected_candidate_ids, expected_tuple);
+        EXPECT_EQ(
+            decision.selected_candidate_input_revisions,
+            expected_input_revisions);
+        EXPECT_EQ(
+            decision.selected_candidate_source_timestamps_us,
+            expected_source_timestamps);
     }
 }

@@ -7,6 +7,8 @@ uint64[5] selection_epochs_by_aircraft
 uint16 selected_combination_index
 uint16 evaluated_combination_count
 uint8[5] selected_candidate_ids
+uint64[5] selected_candidate_input_revisions
+uint64[5] selected_candidate_source_timestamps_us
 uint8 ownship_candidate_id
 
 # Locally evaluated tuple awaiting the distributed cross-check.  The selected
@@ -14,6 +16,8 @@ uint8 ownship_candidate_id
 uint64 proposal_timestamp_us
 uint64 proposal_epoch
 uint8[5] proposed_candidate_ids
+uint64[5] proposed_candidate_input_revisions
+uint64[5] proposed_candidate_source_timestamps_us
 bool proposal_valid
 bool proposal_consensus_confirmed
 

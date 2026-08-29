@@ -12,6 +12,8 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
     source.selection_epoch = 42ULL;
     source.candidate_id = static_cast<std::uint8_t>(
         ce::ManeuverCandidateId::RollMinus30);
+    source.candidate_input = {19.5F, 120.0F, 0.0F, -4.25F};
+    source.candidate_input_revision = 123456789012345ULL;
     for (std::size_t index = 0; index < source.initial_state.size(); ++index) {
         source.initial_state[index] = static_cast<float>(index) + 0.25F;
     }
@@ -32,6 +34,10 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
     EXPECT_EQ(received.source_timestamp_us, source.source_timestamp_us);
     EXPECT_EQ(received.selection_epoch, source.selection_epoch);
     EXPECT_EQ(received.candidate_id, source.candidate_id);
+    EXPECT_EQ(received.candidate_input, source.candidate_input);
+    EXPECT_EQ(
+        received.candidate_input_revision,
+        source.candidate_input_revision);
     EXPECT_EQ(received.initial_state, source.initial_state);
     EXPECT_EQ(received.initial_covariance, source.initial_covariance);
     EXPECT_FLOAT_EQ(

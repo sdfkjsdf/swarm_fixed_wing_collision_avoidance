@@ -3,6 +3,11 @@ uint64 source_timestamp_us
 uint64 selection_epoch
 uint8 candidate_id
 
+# Actual dynamic predictor input: [V_cmd, h_cmd, h_dot_cmd, a_lat_cmd].
+# h_cmd may be NaN when altitude hold is intentionally unused.
+float32[4] candidate_input
+uint64 candidate_input_revision
+
 # Predictor state order: [p_n, p_e, h, V_ground, course, h_dot, roll].
 float32[7] initial_state
 

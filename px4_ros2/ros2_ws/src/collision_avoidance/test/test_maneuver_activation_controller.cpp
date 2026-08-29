@@ -24,6 +24,7 @@ cs::ManeuverActivationSample sample(
         std::numeric_limits<double>::quiet_NaN());
     value.separation_rates_mps[1] = separation_rate_mps;
     value.selected_candidate_id = candidate_id;
+    value.selected_candidate_input_revision = 1000U + candidate_id;
     value.selected_input.V_cmd = 20.0;
     value.selected_input.a_lat_cmd = static_cast<double>(candidate_id);
     return value;
@@ -38,11 +39,13 @@ TEST(ManeuverActivationController, LatchesCommandAcrossSelectionChanges)
     ASSERT_TRUE(activated.active);
     EXPECT_TRUE(activated.just_activated);
     EXPECT_EQ(activated.latched_candidate_id, 1U);
+    EXPECT_EQ(activated.latched_candidate_input_revision, 1001U);
 
     const auto held = controller.update(sample(1'250'000, -5.0, 0.0, 6));
     EXPECT_TRUE(held.active);
     EXPECT_FALSE(held.just_activated);
     EXPECT_EQ(held.latched_candidate_id, 1U);
+    EXPECT_EQ(held.latched_candidate_input_revision, 1001U);
     EXPECT_DOUBLE_EQ(held.latched_input.a_lat_cmd, 1.0);
 
     const auto positive_ad = controller.update(

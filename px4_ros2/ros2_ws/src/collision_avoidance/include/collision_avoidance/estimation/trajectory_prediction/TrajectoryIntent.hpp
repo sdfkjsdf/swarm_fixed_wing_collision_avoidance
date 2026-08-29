@@ -13,6 +13,7 @@ namespace collision_avoidance::estimation
 
 inline constexpr double kTrajectoryIntentStepSeconds = 0.1;
 inline constexpr std::size_t kManeuverCandidateCount = 7;
+inline constexpr std::size_t kTrajectoryIntentInputDimension = 4;
 
 enum class ManeuverCandidateId : std::uint8_t
 {
@@ -37,9 +38,9 @@ ManeuverCandidateTable makeLevelTurnCandidateTable(
     double height_command,
     double gravity = 9.80665) noexcept;
 
-/* Fixed-size, ROS-independent A-to-B payload. Candidate inputs, predictor
-   parameters, horizon and sample times are a preflight contract shared by
-   both vehicles and therefore are not repeated in every packet. */
+/* Fixed-size, ROS-independent A-to-B payload. Predictor parameters, horizon
+   and sample times remain a preflight contract.  The selected candidate's
+   actual input is dynamic and therefore travels with the compact mean. */
 struct TrajectoryIntentPacket
 {
     std::uint64_t source_timestamp_us{0};
@@ -50,6 +51,10 @@ struct TrajectoryIntentPacket
     TrajectorySample compressed_mean{};
     std::uint8_t candidate_id{
         static_cast<std::uint8_t>(ManeuverCandidateId::RollZero)};
+    // [V_cmd, h_cmd, h_dot_cmd, a_lat_cmd].  h_cmd may be NaN when unused.
+    std::array<float, kTrajectoryIntentInputDimension> candidate_input{};
+    // Deterministic identity of candidate_id + transmitted float32 input.
+    std::uint64_t candidate_input_revision{0};
 };
 
 static_assert(std::is_trivially_copyable_v<TrajectoryIntentPacket>);
@@ -59,12 +64,15 @@ struct ReceivedTrajectoryIntent
     std::uint64_t source_timestamp_us{0};
     std::uint64_t selection_epoch{0};
     std::uint8_t candidate_id{0};
+    PredictInput candidate_input{};
+    std::uint64_t candidate_input_revision{0};
     PredictionMeanTrajectory reconstructed_mean{};
     TrajectoryCone cone{};
 };
 
-/* A-side module: the maneuver-selection policy supplies one candidate ID.
-   This module predicts that candidate and builds the compact payload. */
+/* A-side module: legacy callers may resolve an ID through the fixed table;
+   dynamic callers supply the actual candidate input.  Both paths predict and
+   build the same compact payload. */
 class TrajectoryIntentSender
 {
 public:
@@ -75,6 +83,15 @@ public:
     bool buildForSelectedCandidate(
         std::uint64_t source_timestamp_us,
         std::uint8_t candidate_id,
+        const PredictState & initial_state,
+        const PredictStateCovariance & initial_covariance,
+        TrajectoryIntentPacket & packet,
+        std::uint64_t selection_epoch = 0) const;
+
+    bool buildForCandidateInput(
+        std::uint64_t source_timestamp_us,
+        std::uint8_t candidate_id,
+        const PredictInput & candidate_input,
         const PredictState & initial_state,
         const PredictStateCovariance & initial_covariance,
         TrajectoryIntentPacket & packet,
@@ -92,7 +109,6 @@ class TrajectoryIntentReceiver
 public:
     TrajectoryIntentReceiver(
         const TrajectoryPredict & predictor,
-        const ManeuverCandidateTable & candidates,
         const UncertaintyParams & uncertainty_params = {});
 
     bool receive(
@@ -101,7 +117,6 @@ public:
 
 private:
     TrajectoryPredict m_predictor;
-    ManeuverCandidateTable m_candidates;
     TrajectoryUncertainty m_uncertainty;
     ReconstructTrajectory m_reconstructor;
 };

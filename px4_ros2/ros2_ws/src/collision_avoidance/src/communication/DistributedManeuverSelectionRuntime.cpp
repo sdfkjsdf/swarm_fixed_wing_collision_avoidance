@@ -118,6 +118,14 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->selected_candidate_ids.begin(),
                         message->selected_candidate_ids.end(),
                         decision.selected_candidate_ids.begin());
+                    std::copy(
+                        message->selected_candidate_input_revisions.begin(),
+                        message->selected_candidate_input_revisions.end(),
+                        decision.selected_candidate_input_revisions.begin());
+                    std::copy(
+                        message->selected_candidate_source_timestamps_us.begin(),
+                        message->selected_candidate_source_timestamps_us.end(),
+                        decision.selected_candidate_source_timestamps_us.begin());
                     decision.ownship_candidate_id =
                         message->ownship_candidate_id;
                     decision.proposal_timestamp_us =
@@ -127,6 +135,14 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->proposed_candidate_ids.begin(),
                         message->proposed_candidate_ids.end(),
                         decision.proposed_candidate_ids.begin());
+                    std::copy(
+                        message->proposed_candidate_input_revisions.begin(),
+                        message->proposed_candidate_input_revisions.end(),
+                        decision.proposed_candidate_input_revisions.begin());
+                    std::copy(
+                        message->proposed_candidate_source_timestamps_us.begin(),
+                        message->proposed_candidate_source_timestamps_us.end(),
+                        decision.proposed_candidate_source_timestamps_us.begin());
                     decision.proposal_valid = message->proposal_valid;
                     decision.proposal_consensus_confirmed =
                         message->proposal_consensus_confirmed;
@@ -316,6 +332,14 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.selected_candidate_ids.begin(),
                     decision.selected_candidate_ids.end(),
                     message.selected_candidate_ids.begin());
+                std::copy(
+                    decision.selected_candidate_input_revisions.begin(),
+                    decision.selected_candidate_input_revisions.end(),
+                    message.selected_candidate_input_revisions.begin());
+                std::copy(
+                    decision.selected_candidate_source_timestamps_us.begin(),
+                    decision.selected_candidate_source_timestamps_us.end(),
+                    message.selected_candidate_source_timestamps_us.begin());
                 message.ownship_candidate_id = decision.ownship_candidate_id;
                 message.proposal_timestamp_us =
                     decision.proposal_timestamp_us;
@@ -324,6 +348,14 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.proposed_candidate_ids.begin(),
                     decision.proposed_candidate_ids.end(),
                     message.proposed_candidate_ids.begin());
+                std::copy(
+                    decision.proposed_candidate_input_revisions.begin(),
+                    decision.proposed_candidate_input_revisions.end(),
+                    message.proposed_candidate_input_revisions.begin());
+                std::copy(
+                    decision.proposed_candidate_source_timestamps_us.begin(),
+                    decision.proposed_candidate_source_timestamps_us.end(),
+                    message.proposed_candidate_source_timestamps_us.begin());
                 message.proposal_valid = decision.proposal_valid;
                 message.proposal_consensus_confirmed =
                     decision.proposal_consensus_confirmed;

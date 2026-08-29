@@ -88,7 +88,7 @@ TEST(TrajectoryIntent, TransfersReconstructedMeanAndPropagatesCone)
     ce::TrajectoryPredict predictor(params);
     const auto candidates = ce::makeLevelTurnCandidateTable(20.0, 120.0);
     ce::TrajectoryIntentSender sender(predictor, candidates);
-    ce::TrajectoryIntentReceiver receiver(predictor, candidates);
+    ce::TrajectoryIntentReceiver receiver(predictor);
 
     const ce::PredictState initial_state{
         10.0, -5.0, 120.0, 20.0, 0.25, 0.0, 0.0};
@@ -112,13 +112,17 @@ TEST(TrajectoryIntent, TransfersReconstructedMeanAndPropagatesCone)
     EXPECT_EQ(received.source_timestamp_us, source_timestamp_us);
     EXPECT_EQ(received.selection_epoch, selection_epoch);
     EXPECT_EQ(received.candidate_id, candidate_id);
+    EXPECT_EQ(
+        received.candidate_input_revision,
+        packet.candidate_input_revision);
+    EXPECT_NE(received.candidate_input_revision, 0U);
     EXPECT_NEAR(received.cone.front().time_offset_s, 0.0, 1.0e-12);
     EXPECT_NEAR(received.cone.back().time_offset_s, 4.5, 1.0e-12);
 
     ce::PredictionMeanTrajectory source_mean{};
     predictor.predict(
         initial_state,
-        *candidates.find(candidate_id),
+        received.candidate_input,
         ce::kTrajectoryIntentStepSeconds,
         source_mean);
     for (const std::size_t index : {std::size_t{0}, std::size_t{15},
@@ -147,6 +151,62 @@ TEST(TrajectoryIntent, TransfersReconstructedMeanAndPropagatesCone)
     EXPECT_GT(
         received.cone.back().position_covariance_ned[0],
         received.cone.front().position_covariance_ned[0]);
+}
+
+TEST(TrajectoryIntent, DynamicInputIsTransportedInsteadOfReconstructedFromId)
+{
+    ce::TrajectoryPredict predictor(ce::PredictParams{});
+    const auto candidates = ce::makeLevelTurnCandidateTable(20.0, 100.0);
+    ce::TrajectoryIntentSender sender(predictor, candidates);
+    ce::TrajectoryIntentReceiver receiver(predictor);
+    const ce::PredictState state{0.0, 0.0, 100.0, 20.0, 0.0, 0.0, 0.0};
+    const auto covariance = diagonalCovariance(0.04);
+    const auto candidate_id = static_cast<std::uint8_t>(
+        ce::ManeuverCandidateId::RollZero);
+    const ce::PredictInput dynamic_input{
+        19.25,
+        std::numeric_limits<double>::quiet_NaN(),
+        0.0,
+        4.2};
+
+    ce::TrajectoryIntentPacket packet;
+    ASSERT_TRUE(sender.buildForCandidateInput(
+        1'000'000ULL,
+        candidate_id,
+        dynamic_input,
+        state,
+        covariance,
+        packet,
+        4ULL));
+    ce::ReceivedTrajectoryIntent received;
+    ASSERT_TRUE(receiver.receive(packet, received));
+
+    EXPECT_EQ(received.reconstructed_mean.size(), ce::kTrajectoryPointCount);
+    EXPECT_NE(received.candidate_input_revision, 0U);
+    EXPECT_DOUBLE_EQ(received.candidate_input.V_cmd, 19.25);
+    EXPECT_TRUE(std::isnan(received.candidate_input.h_cmd));
+    EXPECT_DOUBLE_EQ(received.candidate_input.h_dot_cmd, 0.0);
+    EXPECT_NEAR(received.candidate_input.a_lat_cmd, 4.2, 1.0e-6);
+    EXPECT_GT(std::abs(received.reconstructed_mean.back().p_e), 1.0);
+
+    ce::TrajectoryIntentPacket different_packet;
+    auto different_input = dynamic_input;
+    different_input.a_lat_cmd = -4.2;
+    ASSERT_TRUE(sender.buildForCandidateInput(
+        1'000'000ULL,
+        candidate_id,
+        different_input,
+        state,
+        covariance,
+        different_packet,
+        4ULL));
+    EXPECT_NE(
+        different_packet.candidate_input_revision,
+        packet.candidate_input_revision);
+
+    auto tampered_packet = packet;
+    tampered_packet.candidate_input[3] += 1.0F;
+    EXPECT_FALSE(receiver.receive(tampered_packet, received));
 }
 
 TEST(TrajectoryIntent, RejectsUnknownCandidateAndInvalidCovariance)

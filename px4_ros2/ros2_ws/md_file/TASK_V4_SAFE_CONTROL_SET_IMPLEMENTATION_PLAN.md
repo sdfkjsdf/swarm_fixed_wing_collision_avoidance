@@ -876,3 +876,118 @@ Audit scope:
 All five axes pass for the bounded Step-3 shadow-wiring scope. Step 4 must add
 exact dynamic input/revision identity before any V4 candidate can enter the
 selection or activation path.
+
+## 16. Step 4 implementation result — 2026-08-29
+
+Step 4 is complete. Steps 5 and 6 have not started.
+
+Implemented:
+
+- The existing compact `TrajectoryIntentPacket` and ROS message now carry the
+  actual four-float `PredictInput` descriptor
+  `[V_cmd, h_cmd, h_dot_cmd, a_lat_cmd]` and a deterministic input revision.
+- The legacy fixed-LUT sender uses the same dynamic-packet builder, so legacy
+  and future V4 candidates share one transport and reconstruction path.
+- The sender predicts from the transmitted float32 representation. This keeps
+  the compressed mean and the receiver's propagated input semantics identical
+  across the ROS boundary.
+- The receiver no longer owns or consults a fixed candidate lookup table. It
+  validates the transmitted input and its revision, reconstructs the existing
+  46-point mean locally from the unchanged 18-float compressed mean, and uses
+  that input for roll-state and covariance propagation.
+- Distributed proposals now identify, for every participating aircraft:
+  candidate ID, candidate-input revision, and the exact trajectory source
+  timestamp used by the evaluator.
+- Proposal consensus requires all three arrays and the selection epoch to
+  match. A same-role proposal with a different input revision retains the last
+  coordinated selection.
+- A committed selection stores the same revision/timestamp arrays in the
+  existing decision message, making snapshot agreement rosbag-visible.
+- Activation now latches the selected candidate's input revision together
+  with its actual `PredictInput`. Active ownship and peer trajectories are
+  resolved by ID plus revision; a later same-ID/different-input trajectory is
+  not silently substituted.
+- The V4 Step-3 shadow path also resolves a peer's selected intent by ID plus
+  the peer's committed input revision.
+
+The revision is a deterministic integrity identity for the transmitted
+candidate ID and float32 input values. It is not a cryptographic authentication
+mechanism or a safety guarantee.
+
+Not changed:
+
+- V4 diagnostic candidates are not yet supplied to TPA or activation.
+- `FormationMode`, `FwSetpoint`, and every executed PX4 command are unchanged.
+- The 4 Hz selection and existing 20 Hz trajectory-refresh schedule are
+  unchanged.
+- Compressed-mean contents, 4.5 s horizon, 0.1 s grid, local 46-point
+  reconstruction, covariance equations, PMR, MASD, AD, Cost, DSD, and
+  best-unsafe fallback are unchanged.
+- No node, topic family, worker thread, estimator, evaluator, optimizer, or
+  46-point network payload was added.
+- V4 candidate cutover and headless SILS remain Steps 5 and 6.
+
+Verification:
+
+- `test_trajectory_intent`: 5/5 passed, including a dynamic input whose ID is
+  the legacy zero-roll ID, 46-point reconstruction, and rejection after input
+  tampering without a matching revision.
+- `test_trajectory_intent_transport`: ROS conversion preserves all four input
+  scalars and the revision.
+- `test_maneuver_activation_controller`: the exact input revision and command
+  remain latched across later selection changes.
+- `test_maneuver_selection_worker`: 18/18 passed, including rejection of the
+  same candidate role with a changed input revision while preserving the
+  previous committed epoch and active-ownship latching across a new epoch.
+- Two- and five-aircraft worker/runtime tests confirm identical committed role,
+  input-revision, and source-timestamp arrays on every participant.
+- Full `collision_avoidance` result: 129 tests, 0 errors, 0 failures,
+  0 skipped.
+- `git diff --check`: passed.
+- ROS runtime tests require the parent PX4 ROS workspace overlay for the PX4
+  Fast DDS type-support library, as already recorded for Step 3.
+
+Step 4 adversarial findings corrected before acceptance:
+
+1. The old receiver reconstructed a candidate's input from the local fixed
+   roll table. The table dependency was removed from the receiver, so an ID can
+   no longer overwrite the transmitted dynamic input.
+2. Candidate revision is computed after float32 wire quantization, and the
+   sender uses that same quantized input for prediction. This prevents the
+   sender mean and receiver covariance path from using subtly different input
+   values.
+3. Role tuple equality alone was insufficient. Consensus now compares the
+   per-aircraft input revisions and exact evaluated source timestamps as well.
+4. Activation previously looked the command up again by fixed candidate ID.
+   It now obtains the input from the selected reconstructed intent and latches
+   that intent's revision and input together.
+5. One old unit fixture described a peer as already coordinated while changing
+   only that peer's own candidate ID to an uncommitted proposal. The new peer
+   consistency validation correctly rejected this impossible state; the
+   fixture now labels it as proposal-before-commit.
+
+### Step 4 five-axis audit
+
+Audit scope:
+
+- Source/decision contract:
+  `reference/paper/MD_FILES/codex_v4_implementation_decisions_v2.md`, Section 5,
+  which requires a four-scalar dynamic descriptor rather than 46 transmitted
+  points.
+- Derived contract: Sections 6.5, 6.6, 9 Step 4, 10, and 11 of this plan.
+- Implementation: compact intent sender/receiver, ROS intent and decision
+  transport, proposal consensus identity, activation latch, and affected tests.
+- Excluded from a PASS claim: V4-to-TPA cutover, actual V4 command execution,
+  SILS behavior, formal invariance, DSD assurance, and cryptographic integrity.
+
+| Axis | Result | Evidence |
+|---|---|---|
+| Source accuracy | PASS | The existing source investigation explicitly requires `timestamp + candidate role + x0 + P0 + compressed mean + PredictInput`, receiver-side covariance propagation from the actual input, and no 46-point payload. The implementation preserves each listed field and does not claim that this project transport detail is a disclosed Auto ACAS wire format. |
+| No over-interpretation | PASS | Step 4 establishes transport and identity consistency only. It makes no collision-avoidance, DSD, 95% containment, forward-invariance, security, command-execution, or SILS claim. |
+| Proportional complexity | PASS | The existing packet, ROS messages, sender, receiver, runtime subscriptions, worker proposal, and activation controller are extended in place. The revision and timestamp arrays are the minimum state needed to distinguish same-role/different-input and different evaluated snapshots; no parallel transport or coordination path was added. |
+| Implementation correctness | PASS | Sender and receiver use the same float32 input, receiver rejects an input/revision mismatch, consensus compares epoch/ID/revision/source time, active lookup requires ID/revision, and activation latches the intent input. Focused, two-aircraft, five-aircraft, ROS, and full-suite tests pass. |
+| Directional alignment | PASS | The change enables the documented dynamic-candidate contract while leaving V4 cutover downstream, preserving local 46-point reconstruction and the existing TPA/PMR/MASD/AD/activation architecture. |
+
+Cross-axis dependencies: none remain for the bounded Step-4 transport and
+identity scope. Step 5 may begin only from this accepted boundary and must use
+this dynamic builder rather than reintroducing a role-to-fixed-roll lookup.

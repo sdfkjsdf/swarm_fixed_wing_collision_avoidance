@@ -31,6 +31,7 @@ struct ManeuverActivationSample
     std::uint32_t unsafe_threat_mask{0};
     std::array<double, kMaximumSelectionAircraft> separation_rates_mps{};
     std::uint8_t selected_candidate_id{0};
+    std::uint64_t selected_candidate_input_revision{0};
     estimation::PredictInput selected_input{};
 };
 
@@ -44,6 +45,7 @@ struct ManeuverActivationStatus
     std::uint64_t activation_timestamp_us{0};
     std::uint32_t affected_threat_mask{0};
     std::uint8_t latched_candidate_id{0};
+    std::uint64_t latched_candidate_input_revision{0};
     estimation::PredictInput latched_input{};
 };
 

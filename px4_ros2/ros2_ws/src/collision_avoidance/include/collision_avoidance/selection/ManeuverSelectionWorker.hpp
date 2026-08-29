@@ -121,12 +121,20 @@ struct ManeuverSelectionDecision
     std::size_t evaluated_combination_count{0};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         selected_candidate_ids{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        selected_candidate_input_revisions{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        selected_candidate_source_timestamps_us{};
     std::uint8_t ownship_candidate_id{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
     std::uint64_t proposal_timestamp_us{0};
     std::uint64_t proposal_epoch{0};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         proposed_candidate_ids{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        proposed_candidate_input_revisions{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        proposed_candidate_source_timestamps_us{};
     bool proposal_valid{false};
     bool proposal_consensus_confirmed{false};
     std::uint8_t threat_candidate_id{
@@ -178,12 +186,20 @@ struct ManeuverSelectionPeerDecision
     std::uint64_t local_selection_epoch{0};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         selected_candidate_ids{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        selected_candidate_input_revisions{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        selected_candidate_source_timestamps_us{};
     std::uint8_t ownship_candidate_id{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
     std::uint64_t proposal_timestamp_us{0};
     std::uint64_t proposal_epoch{0};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         proposed_candidate_ids{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        proposed_candidate_input_revisions{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        proposed_candidate_source_timestamps_us{};
     bool proposal_valid{false};
     bool proposal_consensus_confirmed{false};
     bool coordination_qualified{false};
@@ -279,6 +295,11 @@ private:
         std::uint64_t epoch{0};
         std::array<std::uint8_t, kMaximumSelectionAircraft>
             candidate_ids{};
+        std::array<std::uint64_t, kMaximumSelectionAircraft>
+            candidate_input_revisions{};
+        std::array<std::uint64_t, kMaximumSelectionAircraft>
+            candidate_source_timestamps_us{};
+        estimation::PredictInput ownship_input{};
         JointCombinationEvaluation evaluation{};
         std::size_t combination_index{0};
         std::size_t combination_count{0};
@@ -368,6 +389,10 @@ private:
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         m_selected_candidate_ids{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        m_selected_candidate_input_revisions{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        m_selected_candidate_source_timestamps_us{};
     ManeuverSelectionDecision m_latest_selection_decision{};
     bool m_has_selected_combination{false};
     std::uint64_t m_last_activation_monitor_timestamp_us{0};
