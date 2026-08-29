@@ -37,6 +37,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <thread>
 #include <utility>
@@ -84,6 +85,14 @@ public:
         std::function<void(bool)> callback)
     {
         m_maneuver_activation_gate_callback_mt = std::move(callback);
+    }
+
+    void setNominalSetpointCallback(
+        std::function<void(
+            const collision_avoidance::selection::
+                ManeuverSelectionNominalSetpointSnapshot &)> callback)
+    {
+        m_nominal_setpoint_callback_mt = std::move(callback);
     }
 
     /* Executor 가 Preflight 종료 시점에 캡처한 cruise altitude / 초기 코스를 주입.
@@ -172,4 +181,9 @@ private:
     bool m_has_maneuver_decision_mt{false};
     bool m_collision_avoidance_shadow_only_mt{true};
     std::function<void(bool)> m_maneuver_activation_gate_callback_mt;
+    std::function<void(
+        const collision_avoidance::selection::
+            ManeuverSelectionNominalSetpointSnapshot &)>
+        m_nominal_setpoint_callback_mt;
+    std::uint64_t m_latest_self_state_timestamp_us_mt{0};
 };

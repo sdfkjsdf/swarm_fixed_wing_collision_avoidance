@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -51,6 +52,47 @@ cs::ManeuverSelectionWorkerParams params(
     value.evaluator_params.ownship_half_wingspan_m = 1.072;
     value.evaluator_params.threat_half_wingspan_m = 1.072;
     return value;
+}
+
+cs::ManeuverSelectionAirspeedSnapshot airspeedSnapshot(
+    std::uint64_t timestamp_us,
+    double true_airspeed_mps,
+    bool valid = true)
+{
+    cs::ManeuverSelectionAirspeedSnapshot snapshot;
+    snapshot.timestamp_us = timestamp_us;
+    snapshot.true_airspeed_mps = true_airspeed_mps;
+    snapshot.px4_airspeed_source = 1;
+    snapshot.valid = valid;
+    return snapshot;
+}
+
+cs::ManeuverSelectionNominalSetpointSnapshot nominalSnapshot(
+    std::uint64_t timestamp_us,
+    double ground_speed_command_mps = 20.0,
+    double lateral_acceleration_mps2 = 0.0)
+{
+    cs::ManeuverSelectionNominalSetpointSnapshot snapshot;
+    snapshot.timestamp_us = timestamp_us;
+    snapshot.ground_speed_command_mps = ground_speed_command_mps;
+    snapshot.altitude_command_m = 100.0;
+    snapshot.lateral_acceleration_px4_mps2 =
+        lateral_acceleration_mps2;
+    snapshot.valid = true;
+    return snapshot;
+}
+
+void pushV4Inputs(
+    cs::ManeuverSelectionWorker & worker,
+    std::uint64_t timestamp_us,
+    double true_airspeed_mps = 20.0,
+    double lateral_acceleration_mps2 = 0.0)
+{
+    ASSERT_TRUE(worker.pushAirspeed(
+        airspeedSnapshot(timestamp_us, true_airspeed_mps)));
+    ASSERT_TRUE(worker.pushNominalSetpoint(
+        nominalSnapshot(
+            timestamp_us, 20.0, lateral_acceleration_mps2)));
 }
 
 cs::ManeuverSelectionWorkerOutput pushBeliefAndProcess(
@@ -164,6 +206,263 @@ confirmAllAircraftProposals(
 }
 
 }  // namespace
+
+TEST(ManeuverSelectionWorker, V4ShadowReportsMissingPeerWithoutChangingIntents)
+{
+    auto worker_params = params();
+    worker_params.v4_safe_control_enabled = true;
+    cs::ManeuverSelectionWorker worker(worker_params);
+    constexpr std::uint64_t timestamp_us = 500'000ULL;
+    pushV4Inputs(worker, timestamp_us, 21.0, 1.5);
+
+    const auto output = pushBeliefAndProcess(
+        worker,
+        beliefSnapshot(timestamp_us, 0.0, 0.0, 20.0, 0.0));
+
+    ASSERT_TRUE(output.has_decision);
+    EXPECT_EQ(output.intent_packet_count, 3U);
+    EXPECT_TRUE(output.decision.v4_enabled);
+    EXPECT_TRUE(output.decision.v4_shadow_only);
+    EXPECT_FALSE(output.decision.v4_shadow_evaluated);
+    EXPECT_EQ(
+        output.decision.v4_shadow_status,
+        cs::V4ShadowEvaluationStatus::MissingPeerDecision);
+    EXPECT_EQ(
+        output.decision.v4_airspeed_snapshot_status,
+        cs::V4SnapshotStatus::Valid);
+    EXPECT_EQ(
+        output.decision.v4_airspeed_source,
+        cs::V4AirspeedSource::ActualTas);
+    EXPECT_TRUE(output.decision.v4_nominal_available);
+    EXPECT_FALSE(output.decision.coordination_qualified);
+    EXPECT_FALSE(output.decision.activation_requested);
+}
+
+TEST(ManeuverSelectionWorker, V4ShadowEvaluatesFreshSelectedPeerIntent)
+{
+    constexpr std::uint64_t timestamp_us = 750'000ULL;
+    cs::ManeuverSelectionWorker remote(params(1));
+    const auto remote_output = pushBeliefAndProcess(
+        remote,
+        beliefSnapshot(timestamp_us, 100.0, 0.0, -20.0, 0.0));
+    ASSERT_EQ(remote_output.intent_packet_count, 3U);
+
+    auto local_params = params();
+    local_params.v4_safe_control_enabled = true;
+    cs::ManeuverSelectionWorker local(local_params);
+    for (const auto & packet : remote_output.intent_packets) {
+        ASSERT_TRUE(local.pushRemoteIntent(1, packet));
+    }
+    cs::ManeuverSelectionPeerDecision peer;
+    peer.vehicle_id = 1;
+    peer.coordination_qualified = true;
+    peer.ownship_candidate_id =
+        remote_output.intent_packets[0].candidate_id;
+    ASSERT_TRUE(local.pushRemoteDecision(1, peer));
+    pushV4Inputs(local, timestamp_us, 20.0, -2.0);
+
+    const auto output = pushBeliefAndProcess(
+        local,
+        beliefSnapshot(timestamp_us, -100.0, 0.0, 20.0, 0.0));
+
+    ASSERT_TRUE(output.has_decision);
+    EXPECT_TRUE(output.decision.v4_shadow_evaluated);
+    EXPECT_EQ(
+        output.decision.v4_shadow_status,
+        cs::V4ShadowEvaluationStatus::CoreEvaluated);
+    EXPECT_EQ(
+        output.decision.v4_safe_control.status,
+        cs::SafeControlSetStatus::Valid);
+    EXPECT_EQ(output.decision.v4_safe_control.evaluated_threat_count, 1U);
+    EXPECT_EQ(
+        output.decision.v4_airspeed_source,
+        cs::V4AirspeedSource::ActualTas);
+    EXPECT_TRUE(output.decision.v4_nominal_available);
+    ASSERT_EQ(
+        output.decision.v4_candidates.status,
+        cs::SafeControlCandidateAdapterStatus::Valid);
+    EXPECT_LE(output.decision.v4_candidates.candidate_count, 3U);
+    ASSERT_GT(output.decision.v4_candidates.candidate_count, 0U);
+    EXPECT_EQ(
+        output.decision.v4_candidates.candidates[0].role,
+        cs::SafeCandidateRole::NearNominal);
+
+    // Step 3 is diagnostic-only: legacy intent IDs and command state remain.
+    EXPECT_EQ(output.intent_packet_count, 3U);
+    EXPECT_FALSE(output.decision.coordination_qualified);
+    EXPECT_FALSE(output.decision.activation_requested);
+
+    const double first_maximum_rate =
+        output.decision.v4_safe_control.effective_max_heading_rate_radps;
+    constexpr std::uint64_t next_timestamp_us = timestamp_us + 50'000ULL;
+    pushV4Inputs(local, next_timestamp_us, 15.0, -2.0);
+    const auto next_output = pushBeliefAndProcess(
+        local,
+        beliefSnapshot(next_timestamp_us, -99.0, 0.0, 20.0, 0.0));
+    ASSERT_TRUE(next_output.has_decision);
+    EXPECT_TRUE(next_output.decision.v4_shadow_evaluated);
+    EXPECT_GT(
+        next_output.decision.v4_safe_control
+            .effective_max_heading_rate_radps,
+        first_maximum_rate);
+}
+
+TEST(ManeuverSelectionWorker, V4ShadowUsesTrimAndOmitsStaleNominal)
+{
+    constexpr std::uint64_t source_timestamp_us = 1'000'000ULL;
+    constexpr std::uint64_t evaluation_timestamp_us = 1'150'000ULL;
+    cs::ManeuverSelectionWorker remote(params(1));
+    const auto remote_output = pushBeliefAndProcess(
+        remote,
+        beliefSnapshot(source_timestamp_us, 100.0, 0.0, -20.0, 0.0));
+
+    auto local_params = params();
+    local_params.v4_safe_control_enabled = true;
+    local_params.v4_trim_airspeed_mps = 16.0;
+    local_params.v4_maximum_airspeed_age_us = 100'000;
+    local_params.v4_maximum_nominal_age_us = 100'000;
+    cs::ManeuverSelectionWorker local(local_params);
+    for (const auto & packet : remote_output.intent_packets) {
+        ASSERT_TRUE(local.pushRemoteIntent(1, packet));
+    }
+    cs::ManeuverSelectionPeerDecision peer;
+    peer.vehicle_id = 1;
+    peer.coordination_qualified = true;
+    peer.ownship_candidate_id =
+        remote_output.intent_packets[0].candidate_id;
+    ASSERT_TRUE(local.pushRemoteDecision(1, peer));
+    pushV4Inputs(local, source_timestamp_us, 22.0, -2.0);
+
+    const auto output = pushBeliefAndProcess(
+        local,
+        beliefSnapshot(
+            evaluation_timestamp_us, -97.0, 0.0, 20.0, 0.0));
+
+    ASSERT_TRUE(output.has_decision);
+    EXPECT_TRUE(output.decision.v4_shadow_evaluated);
+    EXPECT_EQ(
+        output.decision.v4_airspeed_snapshot_status,
+        cs::V4SnapshotStatus::Stale);
+    EXPECT_EQ(
+        output.decision.v4_airspeed_source,
+        cs::V4AirspeedSource::TrimFallback);
+    EXPECT_EQ(output.decision.v4_airspeed_age_us, 150'000U);
+    EXPECT_EQ(
+        output.decision.v4_nominal_snapshot_status,
+        cs::V4SnapshotStatus::Stale);
+    EXPECT_FALSE(output.decision.v4_nominal_available);
+    for (std::size_t index = 0;
+         index < output.decision.v4_candidates.candidate_count; ++index) {
+        EXPECT_NE(
+            output.decision.v4_candidates.candidates[index].role,
+            cs::SafeCandidateRole::NearNominal);
+    }
+}
+
+TEST(ManeuverSelectionWorker, V4ShadowRejectsFuturePeerIntentExplicitly)
+{
+    constexpr std::uint64_t evaluation_timestamp_us = 1'500'000ULL;
+    constexpr std::uint64_t future_timestamp_us = 1'600'000ULL;
+    cs::ManeuverSelectionWorker remote(params(1));
+    const auto remote_output = pushBeliefAndProcess(
+        remote,
+        beliefSnapshot(future_timestamp_us, 100.0, 0.0, -20.0, 0.0));
+
+    auto local_params = params();
+    local_params.v4_safe_control_enabled = true;
+    cs::ManeuverSelectionWorker local(local_params);
+    for (const auto & packet : remote_output.intent_packets) {
+        ASSERT_TRUE(local.pushRemoteIntent(1, packet));
+    }
+    cs::ManeuverSelectionPeerDecision peer;
+    peer.vehicle_id = 1;
+    peer.coordination_qualified = true;
+    peer.ownship_candidate_id =
+        remote_output.intent_packets[0].candidate_id;
+    ASSERT_TRUE(local.pushRemoteDecision(1, peer));
+    pushV4Inputs(local, evaluation_timestamp_us);
+
+    const auto output = pushBeliefAndProcess(
+        local,
+        beliefSnapshot(
+            evaluation_timestamp_us, -100.0, 0.0, 20.0, 0.0));
+
+    ASSERT_TRUE(output.has_decision);
+    EXPECT_FALSE(output.decision.v4_shadow_evaluated);
+    EXPECT_EQ(
+        output.decision.v4_shadow_status,
+        cs::V4ShadowEvaluationStatus::FuturePeerIntent);
+}
+
+TEST(ManeuverSelectionWorker, V4ShadowClassifiesFutureTasAndInvalidNominal)
+{
+    constexpr std::uint64_t evaluation_timestamp_us = 1'800'000ULL;
+    cs::ManeuverSelectionWorker remote(params(1));
+    const auto remote_output = pushBeliefAndProcess(
+        remote,
+        beliefSnapshot(
+            evaluation_timestamp_us, 100.0, 0.0, -20.0, 0.0));
+
+    auto local_params = params();
+    local_params.v4_safe_control_enabled = true;
+    local_params.v4_trim_airspeed_mps = 16.0;
+    cs::ManeuverSelectionWorker local(local_params);
+    for (const auto & packet : remote_output.intent_packets) {
+        ASSERT_TRUE(local.pushRemoteIntent(1, packet));
+    }
+    cs::ManeuverSelectionPeerDecision peer;
+    peer.vehicle_id = 1;
+    peer.coordination_qualified = true;
+    peer.ownship_candidate_id = remote_output.intent_packets[0].candidate_id;
+    ASSERT_TRUE(local.pushRemoteDecision(1, peer));
+    ASSERT_TRUE(local.pushAirspeed(
+        airspeedSnapshot(evaluation_timestamp_us + 10'000ULL, 24.0)));
+    auto invalid_nominal = nominalSnapshot(evaluation_timestamp_us);
+    invalid_nominal.ground_speed_command_mps =
+        std::numeric_limits<double>::quiet_NaN();
+    ASSERT_TRUE(local.pushNominalSetpoint(invalid_nominal));
+
+    const auto output = pushBeliefAndProcess(
+        local,
+        beliefSnapshot(
+            evaluation_timestamp_us, -100.0, 0.0, 20.0, 0.0));
+
+    ASSERT_TRUE(output.has_decision);
+    EXPECT_TRUE(output.decision.v4_shadow_evaluated);
+    EXPECT_EQ(
+        output.decision.v4_airspeed_snapshot_status,
+        cs::V4SnapshotStatus::Future);
+    EXPECT_EQ(
+        output.decision.v4_airspeed_source,
+        cs::V4AirspeedSource::TrimFallback);
+    EXPECT_EQ(
+        output.decision.v4_nominal_snapshot_status,
+        cs::V4SnapshotStatus::Invalid);
+    EXPECT_FALSE(output.decision.v4_nominal_available);
+    for (std::size_t index = 0;
+         index < output.decision.v4_candidates.candidate_count; ++index) {
+        EXPECT_NE(
+            output.decision.v4_candidates.candidates[index].role,
+            cs::SafeCandidateRole::NearNominal);
+    }
+}
+
+TEST(ManeuverSelectionWorker, V4StepThreeRejectsCommandCutoverConfiguration)
+{
+    auto invalid_params = params();
+    invalid_params.v4_safe_control_enabled = true;
+    invalid_params.v4_shadow_only = false;
+    cs::ManeuverSelectionWorker worker(invalid_params);
+    EXPECT_FALSE(worker.processPendingForTest());
+    EXPECT_FALSE(worker.start());
+    EXPECT_STREQ(
+        cs::v4ShadowEvaluationStatusName(
+            cs::V4ShadowEvaluationStatus::StalePeerIntent),
+        "stale_peer_intent");
+    EXPECT_STREQ(
+        cs::v4AirspeedSourceName(cs::V4AirspeedSource::TrimFallback),
+        "trim_fallback");
+}
 
 TEST(ManeuverSelectionWorker, ImplementsTwentyAndFourHertzCadenceWithoutSleeps)
 {

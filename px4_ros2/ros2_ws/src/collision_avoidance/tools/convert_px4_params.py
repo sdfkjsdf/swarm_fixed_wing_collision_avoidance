@@ -25,6 +25,7 @@ QGC 에서 export 한 PX4 파라미터 파일 (.params) 을 읽어서
     FW_T_CLMB_MAX                →  height_rate_max_climb
     FW_T_SINK_MAX                →  height_rate_max_sink
     FW_R_LIM                     →  max_roll_deg  (참조용)
+    FW_Y_RMAX                    →  max_yaw_rate_deg_per_s (V4 upper cap)
     (PX4 에 대응 없음)            →  accel_max_horizontal (우리가 정함, default 5.0)
     (PX4 에 대응 없음)            →  course_min_speed     (우리가 정함, default 1.0)
 
@@ -49,12 +50,26 @@ PX4_TO_YAML = {
     "FW_T_CLMB_MAX":   ("height_rate_max_climb",   "최대 climb rate [m/s]"),
     "FW_T_SINK_MAX":   ("height_rate_max_sink",    "최대 sink rate [m/s]"),
     "FW_R_LIM":        ("max_roll_deg",            "최대 roll [deg] (참조용)"),
+    "FW_Y_RMAX":       ("max_yaw_rate_deg_per_s",  "최대 yaw-rate [deg/s] (V4 upper cap)"),
 }
 
 # PX4 에 대응이 없어서 우리가 정하는 값들 (Spherical pipeline 기준)
 OUR_DEFAULTS = {
     "max_pitch_deg":               (30.0, "[deg] |γ| 한계 (Spherical state pitch 자유도)"),
     "max_pitch_rate_deg_per_sec":  (30.0, "[deg/s] dγ/dt 한계 (pitch angular rate)"),
+    "v4_margin_time_constant_s":   (5.0, "[s] V4 positive-margin time constant"),
+    "v4_candidate_guard_deg_per_s": (0.5, "[deg/s] V4 representative guard"),
+    "v4_constraint_tolerance_mps": (1.0e-5, "[m/s] V4 affine residual tolerance"),
+    "v4_interval_tolerance_radps": (1.0e-7, "[rad/s] V4 interval tolerance"),
+    "v4_speed_tolerance_mps":      (1.0e-3, "[m/s] V4 speed guard"),
+    "v4_direction_tolerance_m":    (1.0e-4, "[m] V4 geometry guard"),
+    "v4_maximum_airspeed_age_s":   (1.0, "[s] maximum TAS age"),
+    "v4_maximum_nominal_age_s":    (1.0, "[s] maximum nominal-command age"),
+}
+
+OUR_BOOL_DEFAULTS = {
+    "v4_safe_control_enabled": (True, "enable V4 shadow evaluation"),
+    "v4_shadow_only": (True, "Step-3 diagnostic-only mode"),
 }
 
 
@@ -111,6 +126,10 @@ def generate_yaml(params: dict, output_path: Path):
 
     for field, (default, comment) in OUR_DEFAULTS.items():
         lines.append(f"    {field}: {default}  # {comment}")
+
+    for field, (default, comment) in OUR_BOOL_DEFAULTS.items():
+        yaml_value = "true" if default else "false"
+        lines.append(f"    {field}: {yaml_value}  # {comment}")
 
     lines.append("")
 

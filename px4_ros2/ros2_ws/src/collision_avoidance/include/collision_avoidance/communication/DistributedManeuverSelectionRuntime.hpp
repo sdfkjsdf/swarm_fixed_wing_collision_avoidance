@@ -8,6 +8,7 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <px4_msgs/msg/estimator_trajectory_belief.hpp>
+#include <px4_msgs/msg/airspeed_validated.hpp>
 
 #include <collision_avoidance/communication/TrajectoryIntentTransport.hpp>
 #include <collision_avoidance/msg/maneuver_selection_decision.hpp>
@@ -37,10 +38,14 @@ public:
 
     bool enabled() const noexcept;
     void setActivationEnabled(bool enabled) noexcept;
+    bool pushNominalSetpoint(
+        const selection::ManeuverSelectionNominalSetpointSnapshot & snapshot)
+        noexcept;
 
 private:
     void onBelief(
         const px4_msgs::msg::EstimatorTrajectoryBelief & message);
+    void onAirspeed(const px4_msgs::msg::AirspeedValidated & message);
     void drainWorkerOutput();
 
     rclcpp::Node & m_node;
@@ -61,6 +66,8 @@ private:
         m_decision_subscriptions;
     rclcpp::Subscription<px4_msgs::msg::EstimatorTrajectoryBelief>::SharedPtr
         m_belief_subscription;
+    rclcpp::Subscription<px4_msgs::msg::AirspeedValidated>::SharedPtr
+        m_airspeed_subscription;
     rclcpp::TimerBase::SharedPtr m_output_timer;
 };
 

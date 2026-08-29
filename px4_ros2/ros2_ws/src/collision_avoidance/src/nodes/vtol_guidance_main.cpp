@@ -1,5 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <collision_avoidance/modes/VtolPreflightMode.hpp>
 #include <collision_avoidance/modes/FormationMode.hpp>
 #include <collision_avoidance/modes/VtolGuidanceExecutor.hpp>
@@ -30,6 +32,19 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("positive_margin_gamma", 0.02);
     node->declare_parameter<bool>(
         "maneuver_selection_exhaustive_test_mode", false);
+    node->declare_parameter<bool>("v4_safe_control_enabled", true);
+    node->declare_parameter<bool>("v4_shadow_only", true);
+    node->declare_parameter<double>("airspeed_cruise", 15.0);
+    node->declare_parameter<double>("max_yaw_rate_deg_per_s", 50.0);
+    node->declare_parameter<double>("v4_margin_time_constant_s", 5.0);
+    node->declare_parameter<double>("v4_candidate_guard_deg_per_s", 0.5);
+    node->declare_parameter<double>("v4_constraint_tolerance_mps", 1.0e-5);
+    node->declare_parameter<double>(
+        "v4_interval_tolerance_radps", 1.0e-7);
+    node->declare_parameter<double>("v4_speed_tolerance_mps", 1.0e-3);
+    node->declare_parameter<double>("v4_direction_tolerance_m", 1.0e-4);
+    node->declare_parameter<double>("v4_maximum_airspeed_age_s", 1.0);
+    node->declare_parameter<double>("v4_maximum_nominal_age_s", 1.0);
 
     /* [3] 두 개의 Mode 인스턴스 생성
            - VtolPreflightMode: 천이 + 순항 안정화 (안정 코드)
@@ -48,6 +63,16 @@ int main(int argc, char * argv[])
         collision_avoidance::communication::DistributedManeuverSelectionRuntime>
         maneuver_selection_runtime;
     if (node->get_parameter("maneuver_selection_enabled").as_bool()) {
+        const auto seconds_to_microseconds = [](double seconds) {
+            const double maximum_seconds = static_cast<double>(
+                std::numeric_limits<std::uint64_t>::max()) * 1.0e-6;
+            if (!std::isfinite(seconds) || seconds <= 0.0
+                || seconds > maximum_seconds) {
+                return std::uint64_t{0};
+            }
+            return static_cast<std::uint64_t>(
+                std::llround(seconds * 1.0e6));
+        };
         collision_avoidance::selection::ManeuverSelectionWorkerParams params;
         params.ground_speed_command_mps =
             node->get_parameter("maneuver_ground_speed_command").as_double();
@@ -73,6 +98,44 @@ int main(int argc, char * argv[])
         params.evaluator_params.threat_half_wingspan_m = half_wingspan;
         params.exhaustive_test_mode = node->get_parameter(
             "maneuver_selection_exhaustive_test_mode").as_bool();
+        params.v4_safe_control_enabled = node->get_parameter(
+            "v4_safe_control_enabled").as_bool();
+        params.v4_shadow_only = node->get_parameter(
+            "v4_shadow_only").as_bool();
+        params.v4_trim_airspeed_mps = node->get_parameter(
+            "airspeed_cruise").as_double();
+        params.v4_maximum_airspeed_age_us = seconds_to_microseconds(
+            node->get_parameter(
+                "v4_maximum_airspeed_age_s").as_double());
+        params.v4_maximum_nominal_age_us = seconds_to_microseconds(
+            node->get_parameter(
+                "v4_maximum_nominal_age_s").as_double());
+        params.v4_safe_control_params.margin_reference_m =
+            params.evaluator_params.desired_separation_distance_m;
+        params.v4_safe_control_params.margin_time_constant_s =
+            node->get_parameter("v4_margin_time_constant_s").as_double();
+        params.v4_safe_control_params.control_period_s =
+            static_cast<double>(params.trajectory_refresh_period_us) * 1.0e-6;
+        params.v4_safe_control_params.gravity_mps2 = params.gravity_mps2;
+        params.v4_safe_control_params.maximum_roll_rad = maximum_roll_radians;
+        params.v4_safe_control_params.maximum_yaw_rate_radps =
+            node->get_parameter("max_yaw_rate_deg_per_s").as_double()
+            * std::acos(-1.0) / 180.0;
+        params.v4_safe_control_params.tolerances.constraint_mps =
+            node->get_parameter("v4_constraint_tolerance_mps").as_double();
+        params.v4_safe_control_params.tolerances.interval_radps =
+            node->get_parameter("v4_interval_tolerance_radps").as_double();
+        params.v4_safe_control_params.tolerances.speed_mps =
+            node->get_parameter("v4_speed_tolerance_mps").as_double();
+        params.v4_safe_control_params.tolerances.direction_m =
+            node->get_parameter("v4_direction_tolerance_m").as_double();
+        params.v4_candidate_adapter_params.robustness_guard_radps =
+            node->get_parameter("v4_candidate_guard_deg_per_s").as_double()
+            * std::acos(-1.0) / 180.0;
+        params.v4_candidate_adapter_params.duplicate_tolerance_radps =
+            params.v4_safe_control_params.tolerances.interval_radps;
+        params.v4_candidate_adapter_params.speed_tolerance_mps =
+            params.v4_safe_control_params.tolerances.speed_mps;
         maneuver_selection_runtime = std::make_shared<
             collision_avoidance::communication::DistributedManeuverSelectionRuntime>(
             *node,
@@ -93,13 +156,26 @@ int main(int argc, char * argv[])
                     runtime->setActivationEnabled(enabled);
                 }
             });
+        if (params.v4_safe_control_enabled) {
+            formation->setNominalSetpointCallback(
+                [weak_runtime](
+                    const collision_avoidance::selection::
+                        ManeuverSelectionNominalSetpointSnapshot & snapshot) {
+                    if (const auto runtime = weak_runtime.lock()) {
+                        static_cast<void>(
+                            runtime->pushNominalSetpoint(snapshot));
+                    }
+                });
+        }
         RCLCPP_INFO(
             node->get_logger(),
             "[main] distributed maneuver selection: enabled=%d shadow_only=%d "
-            "exhaustive_test=%d",
+            "exhaustive_test=%d v4_enabled=%d v4_shadow_only=%d",
             maneuver_selection_runtime->enabled() ? 1 : 0,
             shadow_only ? 1 : 0,
-            params.exhaustive_test_mode ? 1 : 0);
+            params.exhaustive_test_mode ? 1 : 0,
+            params.v4_safe_control_enabled ? 1 : 0,
+            params.v4_shadow_only ? 1 : 0);
     }
 
     /* [5] PX4에 등록 — Executor 와 Formation 둘 다 doRegister() 필요 */

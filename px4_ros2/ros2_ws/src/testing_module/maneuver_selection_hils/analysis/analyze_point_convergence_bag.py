@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import math
+from collections import Counter
 from itertools import combinations
 from pathlib import Path
 
@@ -146,6 +147,55 @@ def decision_summary(decisions):
             "evaluated_16807_count": evaluated_16807,
             "valid_proposal_count": valid_proposals,
             "confirmed_proposal_count": confirmed_proposals,
+        })
+    return result
+
+
+def v4_shadow_summary(decisions):
+    result = []
+    for vehicle, records in enumerate(decisions):
+        enabled = [message for _, message in records if message.v4_enabled]
+        evaluated = [
+            message for message in enabled if message.v4_shadow_evaluated]
+        effective_rates = [
+            float(message.v4_effective_max_heading_rate_radps)
+            for message in evaluated
+            if math.isfinite(message.v4_effective_max_heading_rate_radps)]
+        result.append({
+            "vehicle_id": vehicle,
+            "enabled_record_count": len(enabled),
+            "evaluated_record_count": len(evaluated),
+            "shadow_status_counts": dict(sorted(Counter(
+                int(message.v4_shadow_status)
+                for message in enabled).items())),
+            "core_status_counts": dict(sorted(Counter(
+                int(message.v4_core_status)
+                for message in evaluated).items())),
+            "airspeed_snapshot_status_counts": dict(sorted(Counter(
+                int(message.v4_airspeed_snapshot_status)
+                for message in enabled).items())),
+            "airspeed_source_counts": dict(sorted(Counter(
+                int(message.v4_airspeed_source)
+                for message in enabled).items())),
+            "nominal_snapshot_status_counts": dict(sorted(Counter(
+                int(message.v4_nominal_snapshot_status)
+                for message in enabled).items())),
+            "candidate_count_histogram": dict(sorted(Counter(
+                int(message.v4_candidate_count)
+                for message in evaluated).items())),
+            "left_infeasible_count": sum(
+                not message.v4_left_feasible for message in evaluated),
+            "right_infeasible_count": sum(
+                not message.v4_right_feasible for message in evaluated),
+            "maximum_airspeed_age_us": max(
+                (int(message.v4_airspeed_age_us) for message in enabled),
+                default=None),
+            "maximum_nominal_age_us": max(
+                (int(message.v4_nominal_age_us) for message in enabled),
+                default=None),
+            "effective_max_heading_rate_radps_range": (
+                [min(effective_rates), max(effective_rates)]
+                if effective_rates else None),
         })
     return result
 
@@ -541,6 +591,7 @@ def analyze(args):
         "estimated_dsd_violation_duration_s": float(
             np.count_nonzero(below_dsd) * sample_dt_s),
         "decision_diagnostics": decision_summary(decisions),
+        "v4_shadow_diagnostics": v4_shadow_summary(decisions),
         "activation_state_diagnostics": activation_state_summary(decisions),
         "distributed_decision_consensus": decision_consensus_summary(
             decisions, elapsed_s),

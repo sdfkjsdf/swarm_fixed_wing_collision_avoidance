@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <utility>
 
 namespace collision_avoidance::communication
@@ -57,6 +58,9 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
     const std::string belief_topic =
         "/common/px4_" + std::to_string(m_vehicle_id)
         + "/trans_estimator_trajectory_belief";
+    const std::string airspeed_topic =
+        "/px4_" + std::to_string(m_vehicle_id)
+        + "/fmu/out/airspeed_validated_v1";
     const std::size_t intent_history_depth =
         worker_params.exhaustive_test_mode ? 16U : 5U;
 
@@ -146,6 +150,16 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                 px4_msgs::msg::EstimatorTrajectoryBelief::ConstSharedPtr message) {
                 onBelief(*message);
             });
+    if (worker_params.v4_safe_control_enabled) {
+        m_airspeed_subscription =
+            m_node.create_subscription<px4_msgs::msg::AirspeedValidated>(
+                airspeed_topic,
+                rclcpp::SensorDataQoS(),
+                [this](
+                    px4_msgs::msg::AirspeedValidated::ConstSharedPtr message) {
+                    onAirspeed(*message);
+                });
+    }
     m_output_timer = m_node.create_wall_timer(
         std::chrono::milliseconds(10),
         [this]() { drainWorkerOutput(); });
@@ -156,6 +170,7 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
             "[maneuver-selection] failed to start worker for vehicle %d",
             m_vehicle_id);
         m_output_timer.reset();
+        m_airspeed_subscription.reset();
         m_belief_subscription.reset();
         m_intent_subscriptions.clear();
         m_decision_subscriptions.clear();
@@ -167,16 +182,19 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
     m_enabled = true;
     RCLCPP_INFO(
         m_node.get_logger(),
-        "[maneuver-selection] vehicle=%d peers=%d belief='%s' tx='%s'",
+        "[maneuver-selection] vehicle=%d peers=%d belief='%s' tas='%s' "
+        "tx='%s'",
         m_vehicle_id,
         m_total_agent_count - 1,
         belief_topic.c_str(),
+        airspeed_topic.c_str(),
         own_intent_topic.c_str());
 }
 
 DistributedManeuverSelectionRuntime::~DistributedManeuverSelectionRuntime()
 {
     m_output_timer.reset();
+    m_airspeed_subscription.reset();
     m_belief_subscription.reset();
     m_intent_subscriptions.clear();
     m_decision_subscriptions.clear();
@@ -194,6 +212,19 @@ void DistributedManeuverSelectionRuntime::setActivationEnabled(
     bool enabled) noexcept
 {
     m_worker.setActivationEnabled(enabled);
+}
+
+bool DistributedManeuverSelectionRuntime::pushNominalSetpoint(
+    const selection::ManeuverSelectionNominalSetpointSnapshot & snapshot)
+    noexcept
+{
+    const bool accepted = m_worker.pushNominalSetpoint(snapshot);
+    if (!accepted) {
+        RCLCPP_WARN_THROTTLE(
+            m_node.get_logger(), *m_node.get_clock(), 1000,
+            "[maneuver-selection] nominal setpoint input queue full");
+    }
+    return accepted;
 }
 
 void DistributedManeuverSelectionRuntime::onBelief(
@@ -230,6 +261,24 @@ void DistributedManeuverSelectionRuntime::onBelief(
         RCLCPP_WARN_THROTTLE(
             m_node.get_logger(), *m_node.get_clock(), 1000,
             "[maneuver-selection] belief input queue full");
+    }
+}
+
+void DistributedManeuverSelectionRuntime::onAirspeed(
+    const px4_msgs::msg::AirspeedValidated & message)
+{
+    selection::ManeuverSelectionAirspeedSnapshot snapshot;
+    snapshot.timestamp_us = message.timestamp;
+    snapshot.true_airspeed_mps = message.true_airspeed_m_s;
+    snapshot.px4_airspeed_source = message.airspeed_source;
+    snapshot.valid = message.airspeed_source
+            != px4_msgs::msg::AirspeedValidated::SOURCE_DISABLED
+        && std::isfinite(message.true_airspeed_m_s)
+        && message.true_airspeed_m_s > 0.0F;
+    if (!m_worker.pushAirspeed(snapshot)) {
+        RCLCPP_WARN_THROTTLE(
+            m_node.get_logger(), *m_node.get_clock(), 1000,
+            "[maneuver-selection] airspeed input queue full");
     }
 }
 
@@ -297,6 +346,88 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.activation_just_started;
                 message.activation_just_ended =
                     decision.activation_just_ended;
+                message.v4_enabled = decision.v4_enabled;
+                message.v4_shadow_only = decision.v4_shadow_only;
+                message.v4_shadow_evaluated =
+                    decision.v4_shadow_evaluated;
+                message.v4_shadow_status = static_cast<std::uint8_t>(
+                    decision.v4_shadow_status);
+                message.v4_airspeed_snapshot_status =
+                    static_cast<std::uint8_t>(
+                        decision.v4_airspeed_snapshot_status);
+                message.v4_airspeed_source = static_cast<std::uint8_t>(
+                    decision.v4_airspeed_source);
+                message.v4_px4_airspeed_source =
+                    decision.v4_px4_airspeed_source;
+                message.v4_airspeed_timestamp_us =
+                    decision.v4_airspeed_timestamp_us;
+                message.v4_airspeed_age_us = decision.v4_airspeed_age_us;
+                message.v4_nominal_snapshot_status =
+                    static_cast<std::uint8_t>(
+                        decision.v4_nominal_snapshot_status);
+                message.v4_nominal_available =
+                    decision.v4_nominal_available;
+                message.v4_nominal_timestamp_us =
+                    decision.v4_nominal_timestamp_us;
+                message.v4_nominal_age_us = decision.v4_nominal_age_us;
+                message.v4_core_status = static_cast<std::uint8_t>(
+                    decision.v4_safe_control.status);
+                message.v4_longitudinal_source = static_cast<std::uint8_t>(
+                    decision.v4_safe_control.longitudinal_source);
+                message.v4_effective_max_heading_rate_radps =
+                    static_cast<float>(decision.v4_safe_control
+                        .effective_max_heading_rate_radps);
+                message.v4_left_feasible =
+                    decision.v4_safe_control.left_safe.feasible;
+                message.v4_left_lower_radps = static_cast<float>(
+                    decision.v4_safe_control.left_safe.lower_radps);
+                message.v4_left_upper_radps = static_cast<float>(
+                    decision.v4_safe_control.left_safe.upper_radps);
+                message.v4_right_feasible =
+                    decision.v4_safe_control.right_safe.feasible;
+                message.v4_right_lower_radps = static_cast<float>(
+                    decision.v4_safe_control.right_safe.lower_radps);
+                message.v4_right_upper_radps = static_cast<float>(
+                    decision.v4_safe_control.right_safe.upper_radps);
+                message.v4_first_infeasible_vehicle_id =
+                    decision.v4_safe_control.first_infeasible_vehicle_id;
+                message.v4_first_infeasible_direction =
+                    static_cast<std::uint8_t>(decision.v4_safe_control
+                        .first_infeasible_direction);
+                message.v4_first_infeasible_residual_mps = 0.0F;
+                for (std::size_t index = 0;
+                     index < decision.v4_safe_control.diagnostic_count;
+                     ++index) {
+                    const auto & diagnostic =
+                        decision.v4_safe_control.diagnostics[index];
+                    if (!diagnostic.constraint_feasible
+                        && diagnostic.vehicle_id
+                            == decision.v4_safe_control
+                                .first_infeasible_vehicle_id
+                        && diagnostic.direction
+                            == decision.v4_safe_control
+                                .first_infeasible_direction) {
+                        message.v4_first_infeasible_residual_mps =
+                            static_cast<float>(
+                                diagnostic.constraint_shortfall_mps);
+                        break;
+                    }
+                }
+                message.v4_candidate_status = static_cast<std::uint8_t>(
+                    decision.v4_candidates.status);
+                message.v4_candidate_count = static_cast<std::uint8_t>(
+                    decision.v4_candidates.candidate_count);
+                for (std::size_t index = 0;
+                     index < decision.v4_candidates.candidate_count
+                        && index < decision.v4_candidates.candidates.size();
+                     ++index) {
+                    message.v4_candidate_roles[index] =
+                        static_cast<std::uint8_t>(
+                            decision.v4_candidates.candidates[index].role);
+                    message.v4_candidate_rates_radps[index] =
+                        static_cast<float>(decision.v4_candidates
+                            .candidates[index].heading_rate_v4_radps);
+                }
                 m_decision_publisher->publish(message);
             }
             if (m_decision_callback) {

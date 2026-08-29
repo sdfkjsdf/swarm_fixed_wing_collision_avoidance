@@ -25,6 +25,14 @@ struct IntentKinematics
     std::array<double, 3> velocity_ned{};
 };
 
+enum class IntentKinematicsStatus : std::uint8_t
+{
+    Valid,
+    Future,
+    Stale,
+    Invalid,
+};
+
 bool finitePositive(double value) noexcept
 {
     return std::isfinite(value) && value > 0.0;
@@ -47,6 +55,15 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
         || !std::isfinite(
             params.activation_params.separating_rate_threshold_mps)
         || params.activation_params.separating_rate_threshold_mps < 0.0
+        || (params.v4_safe_control_enabled
+            && (!params.v4_shadow_only
+                || !finitePositive(params.v4_trim_airspeed_mps)
+                || params.v4_maximum_airspeed_age_us == 0
+                || params.v4_maximum_nominal_age_us == 0
+                || !SafeControlSetV4::validParams(
+                    params.v4_safe_control_params)
+                || !SafeControlCandidateAdapter::validParams(
+                    params.v4_candidate_adapter_params)))
         || (params.evaluator_params.positive_margin_filter_enabled
             && (!std::isfinite(
                     params.evaluator_params.positive_margin_gamma)
@@ -71,19 +88,19 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
     return seen[kRollZeroId];
 }
 
-bool interpolateIntentKinematics(
+IntentKinematicsStatus interpolateIntentKinematics(
     const estimation::ReceivedTrajectoryIntent & intent,
     std::uint64_t evaluation_timestamp_us,
     IntentKinematics & kinematics) noexcept
 {
     if (intent.source_timestamp_us > evaluation_timestamp_us) {
-        return false;
+        return IntentKinematicsStatus::Future;
     }
     const double age_s = static_cast<double>(
         evaluation_timestamp_us - intent.source_timestamp_us) * 1.0e-6;
     if (!std::isfinite(age_s) || age_s < 0.0
         || age_s > kTrajectoryHorizonSeconds) {
-        return false;
+        return IntentKinematicsStatus::Stale;
     }
 
     const double fractional_index = age_s / kTrajectoryStepSeconds;
@@ -112,7 +129,7 @@ bool interpolateIntentKinematics(
     if (!std::isfinite(p_n) || !std::isfinite(p_e) || !std::isfinite(h)
         || !std::isfinite(speed) || !std::isfinite(climb_rate)
         || !std::isfinite(course)) {
-        return false;
+        return IntentKinematicsStatus::Invalid;
     }
 
     const double horizontal_speed = std::sqrt(std::max(
@@ -122,7 +139,32 @@ bool interpolateIntentKinematics(
         horizontal_speed * std::cos(course),
         horizontal_speed * std::sin(course),
         -climb_rate};
-    return true;
+    return IntentKinematicsStatus::Valid;
+}
+
+V4SnapshotStatus classifySnapshot(
+    bool present,
+    bool value_valid,
+    std::uint64_t timestamp_us,
+    std::uint64_t evaluation_timestamp_us,
+    std::uint64_t maximum_age_us,
+    std::uint64_t & age_us) noexcept
+{
+    age_us = 0;
+    if (!present) {
+        return V4SnapshotStatus::Missing;
+    }
+    if (!value_valid) {
+        return V4SnapshotStatus::Invalid;
+    }
+    if (timestamp_us > evaluation_timestamp_us) {
+        return V4SnapshotStatus::Future;
+    }
+    age_us = evaluation_timestamp_us - timestamp_us;
+    if (age_us > maximum_age_us) {
+        return V4SnapshotStatus::Stale;
+    }
+    return V4SnapshotStatus::Valid;
 }
 
 bool relativeSeparationRate(
@@ -168,7 +210,9 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
   m_barrier_evaluator(params.evaluator_params),
   m_joint_evaluator(params.evaluator_params),
   m_exhaustive_evaluator(params.evaluator_params),
-  m_activation_controller(params.activation_params)
+  m_activation_controller(params.activation_params),
+  m_v4_safe_control(params.v4_safe_control_params),
+  m_v4_candidate_adapter(params.v4_candidate_adapter_params)
 {
     m_selected_candidate_ids.fill(kRollZeroId);
     m_latest_selection_decision.selected_candidate_ids.fill(kRollZeroId);
@@ -212,6 +256,32 @@ bool ManeuverSelectionWorker::pushOwnshipBelief(
     WorkerInput input;
     input.kind = InputKind::OwnshipBelief;
     input.belief = snapshot;
+    if (!m_input_queue.try_push(input)) {
+        m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
+
+bool ManeuverSelectionWorker::pushAirspeed(
+    const ManeuverSelectionAirspeedSnapshot & snapshot) noexcept
+{
+    WorkerInput input;
+    input.kind = InputKind::Airspeed;
+    input.airspeed = snapshot;
+    if (!m_input_queue.try_push(input)) {
+        m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
+
+bool ManeuverSelectionWorker::pushNominalSetpoint(
+    const ManeuverSelectionNominalSetpointSnapshot & snapshot) noexcept
+{
+    WorkerInput input;
+    input.kind = InputKind::NominalSetpoint;
+    input.nominal = snapshot;
     if (!m_input_queue.try_push(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -302,6 +372,10 @@ bool ManeuverSelectionWorker::processPending()
         consumed_input = true;
         if (input->kind == InputKind::OwnshipBelief) {
             acceptOwnshipBelief(input->belief);
+        } else if (input->kind == InputKind::Airspeed) {
+            acceptAirspeed(input->airspeed);
+        } else if (input->kind == InputKind::NominalSetpoint) {
+            acceptNominalSetpoint(input->nominal);
         } else if (input->kind == InputKind::RemoteIntent) {
             acceptRemoteIntent(input->remote_vehicle_id, input->packet);
         } else {
@@ -342,6 +416,9 @@ bool ManeuverSelectionWorker::processPending()
     bool trajectory_refreshed = false;
     if (now_us >= m_next_trajectory_refresh_timestamp_us) {
         buildCurrentIntentSet(now_us, output);
+        if (m_params.v4_safe_control_enabled) {
+            evaluateV4Shadow(now_us, output);
+        }
         trajectory_refreshed = true;
         do {
             m_next_trajectory_refresh_timestamp_us +=
@@ -398,6 +475,30 @@ bool ManeuverSelectionWorker::acceptOwnshipBelief(
     m_latest_covariance = covariance;
     m_latest_state_timestamp_us = snapshot.timestamp_us;
     m_has_latest_state = true;
+    return true;
+}
+
+bool ManeuverSelectionWorker::acceptAirspeed(
+    const ManeuverSelectionAirspeedSnapshot & snapshot)
+{
+    if (m_has_latest_airspeed
+        && snapshot.timestamp_us < m_latest_airspeed.timestamp_us) {
+        return false;
+    }
+    m_latest_airspeed = snapshot;
+    m_has_latest_airspeed = true;
+    return true;
+}
+
+bool ManeuverSelectionWorker::acceptNominalSetpoint(
+    const ManeuverSelectionNominalSetpointSnapshot & snapshot)
+{
+    if (m_has_latest_nominal
+        && snapshot.timestamp_us < m_latest_nominal.timestamp_us) {
+        return false;
+    }
+    m_latest_nominal = snapshot;
+    m_has_latest_nominal = true;
     return true;
 }
 
@@ -742,6 +843,220 @@ bool ManeuverSelectionWorker::buildCurrentIntentSet(
     return true;
 }
 
+void ManeuverSelectionWorker::evaluateV4Shadow(
+    std::uint64_t now_us,
+    ManeuverSelectionWorkerOutput & output)
+{
+    ManeuverSelectionDecision decision = output.has_decision
+        ? output.decision
+        : m_latest_selection_decision;
+    decision.vehicle_id = m_params.vehicle_id;
+    decision.aircraft_count = static_cast<std::size_t>(
+        m_params.total_agent_count);
+    decision.v4_enabled = true;
+    decision.v4_shadow_only = m_params.v4_shadow_only;
+    decision.v4_shadow_evaluated = false;
+    decision.v4_shadow_status = V4ShadowEvaluationStatus::Disabled;
+    decision.v4_airspeed_source = V4AirspeedSource::Unavailable;
+    decision.v4_px4_airspeed_source = m_has_latest_airspeed
+        ? m_latest_airspeed.px4_airspeed_source
+        : -1;
+    decision.v4_airspeed_timestamp_us = m_has_latest_airspeed
+        ? m_latest_airspeed.timestamp_us
+        : 0;
+    decision.v4_nominal_timestamp_us = m_has_latest_nominal
+        ? m_latest_nominal.timestamp_us
+        : 0;
+    decision.v4_nominal_available = false;
+    decision.v4_safe_control = SafeControlSetV4Result{};
+    decision.v4_candidates = SafeControlCandidateAdapterResult{};
+
+    const auto publishDiagnostics = [&]() {
+        m_latest_selection_decision = decision;
+        output.decision = decision;
+        output.has_decision = true;
+    };
+
+    const bool airspeed_value_valid = m_has_latest_airspeed
+        && m_latest_airspeed.valid
+        && finitePositive(m_latest_airspeed.true_airspeed_mps);
+    decision.v4_airspeed_snapshot_status = classifySnapshot(
+        m_has_latest_airspeed,
+        airspeed_value_valid,
+        decision.v4_airspeed_timestamp_us,
+        now_us,
+        m_params.v4_maximum_airspeed_age_us,
+        decision.v4_airspeed_age_us);
+
+    double true_airspeed_mps = m_params.v4_trim_airspeed_mps;
+    if (decision.v4_airspeed_snapshot_status == V4SnapshotStatus::Valid) {
+        true_airspeed_mps = m_latest_airspeed.true_airspeed_mps;
+        decision.v4_airspeed_source = V4AirspeedSource::ActualTas;
+    } else {
+        decision.v4_airspeed_source = V4AirspeedSource::TrimFallback;
+    }
+
+    const bool nominal_value_valid = m_has_latest_nominal
+        && m_latest_nominal.valid
+        && finitePositive(m_latest_nominal.ground_speed_command_mps)
+        && (std::isfinite(m_latest_nominal.altitude_command_m)
+            || std::isnan(m_latest_nominal.altitude_command_m))
+        && std::isfinite(
+            m_latest_nominal.lateral_acceleration_px4_mps2);
+    decision.v4_nominal_snapshot_status = classifySnapshot(
+        m_has_latest_nominal,
+        nominal_value_valid,
+        decision.v4_nominal_timestamp_us,
+        now_us,
+        m_params.v4_maximum_nominal_age_us,
+        decision.v4_nominal_age_us);
+    decision.v4_nominal_available =
+        decision.v4_nominal_snapshot_status == V4SnapshotStatus::Valid;
+
+    SafeControlSetV4Input safe_input;
+    safe_input.ownship.timestamp_us = now_us;
+    safe_input.ownship.north_m = m_latest_state.p_n;
+    safe_input.ownship.east_m = m_latest_state.p_e;
+    safe_input.ownship.heading_ned_rad = m_latest_state.psi;
+    safe_input.ownship.true_airspeed_mps = true_airspeed_mps;
+    safe_input.ownship.longitudinal_acceleration_mps2 = 0.0;
+    safe_input.ownship.longitudinal_source =
+        LongitudinalDriftSource::LocalOneStepFreeze;
+
+    const std::size_t required_candidate_count = activeCandidateCount();
+    for (int remote_id = 0;
+         remote_id < m_params.total_agent_count; ++remote_id) {
+        if (remote_id == m_params.vehicle_id) {
+            continue;
+        }
+        const std::size_t remote_index = static_cast<std::size_t>(remote_id);
+        const RemoteDecisionCache & peer_decision =
+            m_remote_decision_caches[remote_index];
+        if (!peer_decision.valid
+            || !peer_decision.decision.coordination_qualified) {
+            decision.v4_shadow_status =
+                V4ShadowEvaluationStatus::MissingPeerDecision;
+            publishDiagnostics();
+            return;
+        }
+
+        const std::uint8_t candidate_id =
+            peer_decision.decision.ownship_candidate_id;
+        const RemoteCandidateCache * selected_cache = nullptr;
+        const estimation::ReceivedTrajectoryIntent * selected_intent = nullptr;
+        for (const RemoteCandidateCache * cache : {
+                 &m_remote_caches[remote_index],
+                 &m_remote_previous_caches[remote_index]}) {
+            if (cache->count != required_candidate_count) {
+                continue;
+            }
+            const auto found = std::find_if(
+                cache->candidates.begin(),
+                cache->candidates.begin()
+                    + static_cast<std::ptrdiff_t>(required_candidate_count),
+                [candidate_id](const auto & candidate) {
+                    return candidate.candidate_id == candidate_id;
+                });
+            if (found != cache->candidates.begin()
+                    + static_cast<std::ptrdiff_t>(required_candidate_count)) {
+                selected_cache = cache;
+                selected_intent = &(*found);
+                break;
+            }
+        }
+        if (selected_cache == nullptr || selected_intent == nullptr) {
+            decision.v4_shadow_status =
+                V4ShadowEvaluationStatus::MissingPeerIntent;
+            publishDiagnostics();
+            return;
+        }
+        if (selected_intent->source_timestamp_us
+                != selected_cache->source_timestamp_us
+            || selected_intent->selection_epoch
+                != selected_cache->selection_epoch) {
+            decision.v4_shadow_status =
+                V4ShadowEvaluationStatus::InvalidPeerIntent;
+            publishDiagnostics();
+            return;
+        }
+
+        IntentKinematics kinematics;
+        const IntentKinematicsStatus interpolation_status =
+            interpolateIntentKinematics(
+                *selected_intent, now_us, kinematics);
+        if (interpolation_status != IntentKinematicsStatus::Valid) {
+            decision.v4_shadow_status = interpolation_status
+                    == IntentKinematicsStatus::Future
+                ? V4ShadowEvaluationStatus::FuturePeerIntent
+                : interpolation_status == IntentKinematicsStatus::Stale
+                    ? V4ShadowEvaluationStatus::StalePeerIntent
+                    : V4ShadowEvaluationStatus::InvalidPeerIntent;
+            publishDiagnostics();
+            return;
+        }
+
+        auto & threat = safe_input.threats[safe_input.threat_count++];
+        threat.vehicle_id = remote_id;
+        // The intent was interpolated to the common ownship time above.
+        threat.timestamp_us = now_us;
+        threat.north_m = kinematics.position_ned[0];
+        threat.east_m = kinematics.position_ned[1];
+        threat.velocity_north_mps = kinematics.velocity_ned[0];
+        threat.velocity_east_mps = kinematics.velocity_ned[1];
+        threat.physical_clearance_m =
+            m_params.evaluator_params.ownship_half_wingspan_m
+            + m_params.evaluator_params.threat_half_wingspan_m;
+    }
+
+    decision.v4_safe_control = m_v4_safe_control.evaluate(safe_input);
+    decision.v4_shadow_evaluated = true;
+    decision.v4_shadow_status = V4ShadowEvaluationStatus::CoreEvaluated;
+
+    if (decision.v4_safe_control.status == SafeControlSetStatus::Valid
+        || decision.v4_safe_control.status
+            == SafeControlSetStatus::SearchSetInfeasible) {
+        SafeControlCandidateAdapterInput candidate_input;
+        candidate_input.safe_set = decision.v4_safe_control;
+        candidate_input.true_airspeed_mps = true_airspeed_mps;
+        candidate_input.nominal_rate_available =
+            decision.v4_nominal_available;
+        if (decision.v4_nominal_available) {
+            candidate_input.nominal_heading_rate_v4_radps =
+                SafeControlCandidateAdapter::
+                    px4LateralAccelerationToV4HeadingRate(
+                        true_airspeed_mps,
+                        m_latest_nominal.lateral_acceleration_px4_mps2,
+                        m_params.v4_candidate_adapter_params
+                            .speed_tolerance_mps);
+            if (!std::isfinite(
+                    candidate_input.nominal_heading_rate_v4_radps)) {
+                candidate_input.nominal_rate_available = false;
+                decision.v4_nominal_available = false;
+                decision.v4_nominal_snapshot_status =
+                    V4SnapshotStatus::Invalid;
+            }
+        }
+        candidate_input.ground_speed_command_mps =
+            decision.v4_nominal_available
+            ? m_latest_nominal.ground_speed_command_mps
+            : m_params.ground_speed_command_mps;
+        candidate_input.altitude_command_m = decision.v4_nominal_available
+            ? m_latest_nominal.altitude_command_m
+            : std::numeric_limits<double>::quiet_NaN();
+        decision.v4_candidates =
+            m_v4_candidate_adapter.generate(candidate_input);
+        if (decision.v4_candidates.status
+                != SafeControlCandidateAdapterStatus::Valid
+            && decision.v4_candidates.status
+                != SafeControlCandidateAdapterStatus::SearchSetInfeasible) {
+            decision.v4_shadow_status =
+                V4ShadowEvaluationStatus::CandidateGenerationFailed;
+        }
+    }
+
+    publishDiagnostics();
+}
+
 void ManeuverSelectionWorker::evaluateCurrentSet(
     std::uint64_t now_us,
     ManeuverSelectionWorkerOutput & output)
@@ -1070,8 +1385,9 @@ bool ManeuverSelectionWorker::buildActivationSample(
         m_candidate_table.find(ownship_candidate_id);
     IntentKinematics ownship_kinematics;
     if (ownship_intent == nullptr || ownship_input == nullptr
-        || !interpolateIntentKinematics(
-            *ownship_intent, now_us, ownship_kinematics)) {
+        || interpolateIntentKinematics(
+            *ownship_intent, now_us, ownship_kinematics)
+            != IntentKinematicsStatus::Valid) {
         return false;
     }
 
@@ -1132,6 +1448,7 @@ bool ManeuverSelectionWorker::buildActivationSample(
             std::numeric_limits<double>::quiet_NaN();
         if (interpolateIntentKinematics(
                 *remote_intent, now_us, remote_kinematics)
+                == IntentKinematicsStatus::Valid
             && relativeSeparationRate(
                 ownship_kinematics,
                 remote_kinematics,
@@ -1223,6 +1540,60 @@ bool ManeuverSelectionWorker::publishOutput(
         return false;
     }
     return true;
+}
+
+const char * v4ShadowEvaluationStatusName(
+    V4ShadowEvaluationStatus status) noexcept
+{
+    switch (status) {
+    case V4ShadowEvaluationStatus::Disabled:
+        return "disabled";
+    case V4ShadowEvaluationStatus::MissingPeerDecision:
+        return "missing_peer_decision";
+    case V4ShadowEvaluationStatus::MissingPeerIntent:
+        return "missing_peer_intent";
+    case V4ShadowEvaluationStatus::FuturePeerIntent:
+        return "future_peer_intent";
+    case V4ShadowEvaluationStatus::StalePeerIntent:
+        return "stale_peer_intent";
+    case V4ShadowEvaluationStatus::InvalidPeerIntent:
+        return "invalid_peer_intent";
+    case V4ShadowEvaluationStatus::CoreEvaluated:
+        return "core_evaluated";
+    case V4ShadowEvaluationStatus::CandidateGenerationFailed:
+        return "candidate_generation_failed";
+    }
+    return "unknown";
+}
+
+const char * v4SnapshotStatusName(V4SnapshotStatus status) noexcept
+{
+    switch (status) {
+    case V4SnapshotStatus::Missing:
+        return "missing";
+    case V4SnapshotStatus::Valid:
+        return "valid";
+    case V4SnapshotStatus::Invalid:
+        return "invalid";
+    case V4SnapshotStatus::Future:
+        return "future";
+    case V4SnapshotStatus::Stale:
+        return "stale";
+    }
+    return "unknown";
+}
+
+const char * v4AirspeedSourceName(V4AirspeedSource source) noexcept
+{
+    switch (source) {
+    case V4AirspeedSource::Unavailable:
+        return "unavailable";
+    case V4AirspeedSource::ActualTas:
+        return "actual_tas";
+    case V4AirspeedSource::TrimFallback:
+        return "trim_fallback";
+    }
+    return "unknown";
 }
 
 }  // namespace collision_avoidance::selection

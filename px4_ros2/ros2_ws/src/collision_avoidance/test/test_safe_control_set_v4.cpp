@@ -179,6 +179,7 @@ TEST(SafeControlSetV4, DegenerateRateCoefficientRejectsViolatedConstraint)
     ASSERT_GE(result.diagnostic_count, 1U);
     EXPECT_TRUE(result.diagnostics[0].constraint_degenerate);
     EXPECT_FALSE(result.diagnostics[0].constraint_feasible);
+    EXPECT_GT(result.diagnostics[0].constraint_shortfall_mps, 0.0);
 }
 
 TEST(SafeControlSetV4, ExactPhysicalBoundaryRemainsAFeasiblePoint)

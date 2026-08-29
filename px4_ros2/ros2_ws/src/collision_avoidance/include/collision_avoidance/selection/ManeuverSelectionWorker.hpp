@@ -12,6 +12,7 @@
 #include <collision_avoidance/selection/HeuristicCandidateSelector.hpp>
 #include <collision_avoidance/selection/ManeuverActivationController.hpp>
 #include <collision_avoidance/selection/ManeuverCombinationEvaluator.hpp>
+#include <collision_avoidance/selection/SafeControlCandidateAdapter.hpp>
 
 namespace collision_avoidance::selection
 {
@@ -19,6 +20,34 @@ namespace collision_avoidance::selection
 inline constexpr std::size_t kEligibleLateralCandidateCount = 7;
 inline constexpr std::size_t kSelectionWorkerInputCapacity = 64;
 inline constexpr std::size_t kSelectionWorkerOutputCapacity = 16;
+
+enum class V4ShadowEvaluationStatus : std::uint8_t
+{
+    Disabled,
+    MissingPeerDecision,
+    MissingPeerIntent,
+    FuturePeerIntent,
+    StalePeerIntent,
+    InvalidPeerIntent,
+    CoreEvaluated,
+    CandidateGenerationFailed,
+};
+
+enum class V4SnapshotStatus : std::uint8_t
+{
+    Missing,
+    Valid,
+    Invalid,
+    Future,
+    Stale,
+};
+
+enum class V4AirspeedSource : std::uint8_t
+{
+    Unavailable,
+    ActualTas,
+    TrimFallback,
+};
 
 struct ManeuverSelectionWorkerParams
 {
@@ -35,6 +64,14 @@ struct ManeuverSelectionWorkerParams
     std::uint64_t maximum_belief_delay_us{1'000'000};
     ManeuverActivationControllerParams activation_params{};
     bool exhaustive_test_mode{false};
+    bool v4_safe_control_enabled{false};
+    // Step 3 supports diagnostics only. Command cutover remains Step 5.
+    bool v4_shadow_only{true};
+    double v4_trim_airspeed_mps{15.0};
+    std::uint64_t v4_maximum_airspeed_age_us{1'000'000};
+    std::uint64_t v4_maximum_nominal_age_us{1'000'000};
+    SafeControlSetV4Params v4_safe_control_params{};
+    SafeControlCandidateAdapterParams v4_candidate_adapter_params{};
     std::array<std::uint8_t, kEligibleLateralCandidateCount> eligible_candidate_ids{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero),
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollMinus15),
@@ -50,6 +87,24 @@ struct ManeuverSelectionBeliefSnapshot
     std::uint64_t timestamp_us{0};
     std::uint64_t timestamp_sample_us{0};
     estimation::EstimatorTrajectoryBelief belief{};
+    bool valid{false};
+};
+
+struct ManeuverSelectionAirspeedSnapshot
+{
+    std::uint64_t timestamp_us{0};
+    double true_airspeed_mps{0.0};
+    std::int8_t px4_airspeed_source{-1};
+    bool valid{false};
+};
+
+struct ManeuverSelectionNominalSetpointSnapshot
+{
+    std::uint64_t timestamp_us{0};
+    double ground_speed_command_mps{0.0};
+    // Predictor convention: altitude is positive Up.
+    double altitude_command_m{0.0};
+    double lateral_acceleration_px4_mps2{0.0};
     bool valid{false};
 };
 
@@ -90,6 +145,27 @@ struct ManeuverSelectionDecision
     bool activation_requested{false};
     bool activation_just_started{false};
     bool activation_just_ended{false};
+
+    // V4 Step-3 diagnostics. These fields are shadow-only and do not
+    // participate in the legacy selection or activation state machine.
+    bool v4_enabled{false};
+    bool v4_shadow_only{true};
+    bool v4_shadow_evaluated{false};
+    V4ShadowEvaluationStatus v4_shadow_status{
+        V4ShadowEvaluationStatus::Disabled};
+    V4SnapshotStatus v4_airspeed_snapshot_status{
+        V4SnapshotStatus::Missing};
+    V4AirspeedSource v4_airspeed_source{V4AirspeedSource::Unavailable};
+    std::int8_t v4_px4_airspeed_source{-1};
+    std::uint64_t v4_airspeed_timestamp_us{0};
+    std::uint64_t v4_airspeed_age_us{0};
+    V4SnapshotStatus v4_nominal_snapshot_status{
+        V4SnapshotStatus::Missing};
+    bool v4_nominal_available{false};
+    std::uint64_t v4_nominal_timestamp_us{0};
+    std::uint64_t v4_nominal_age_us{0};
+    SafeControlSetV4Result v4_safe_control{};
+    SafeControlCandidateAdapterResult v4_candidates{};
 };
 
 /* ROS-independent subset of a peer's published decision.  A peer owns only
@@ -142,6 +218,10 @@ public:
 
     bool pushOwnshipBelief(
         const ManeuverSelectionBeliefSnapshot & snapshot) noexcept;
+    bool pushAirspeed(
+        const ManeuverSelectionAirspeedSnapshot & snapshot) noexcept;
+    bool pushNominalSetpoint(
+        const ManeuverSelectionNominalSetpointSnapshot & snapshot) noexcept;
     bool pushRemoteIntent(
         int remote_vehicle_id,
         const estimation::TrajectoryIntentPacket & packet) noexcept;
@@ -161,6 +241,8 @@ private:
     enum class InputKind : std::uint8_t
     {
         OwnshipBelief,
+        Airspeed,
+        NominalSetpoint,
         RemoteIntent,
         RemoteDecision,
     };
@@ -170,6 +252,8 @@ private:
         InputKind kind{InputKind::OwnshipBelief};
         int remote_vehicle_id{-1};
         ManeuverSelectionBeliefSnapshot belief{};
+        ManeuverSelectionAirspeedSnapshot airspeed{};
+        ManeuverSelectionNominalSetpointSnapshot nominal{};
         estimation::TrajectoryIntentPacket packet{};
         ManeuverSelectionPeerDecision decision{};
     };
@@ -205,6 +289,10 @@ private:
     void workerLoop();
     bool processPending();
     bool acceptOwnshipBelief(const ManeuverSelectionBeliefSnapshot & snapshot);
+    bool acceptAirspeed(
+        const ManeuverSelectionAirspeedSnapshot & snapshot);
+    bool acceptNominalSetpoint(
+        const ManeuverSelectionNominalSetpointSnapshot & snapshot);
     bool acceptRemoteIntent(
         int remote_vehicle_id,
         const estimation::TrajectoryIntentPacket & packet);
@@ -217,6 +305,9 @@ private:
     std::array<CandidateSafetyScore, estimation::kManeuverCandidateCount>
         scoreEligibleCandidates(std::uint64_t now_us);
     bool buildCurrentIntentSet(
+        std::uint64_t now_us,
+        ManeuverSelectionWorkerOutput & output);
+    void evaluateV4Shadow(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
     void evaluateCurrentSet(
@@ -249,6 +340,8 @@ private:
     ExhaustiveManeuverCombinationEvaluator m_exhaustive_evaluator;
     HeuristicCandidateSelector m_candidate_selector;
     ManeuverActivationController m_activation_controller;
+    SafeControlSetV4 m_v4_safe_control;
+    SafeControlCandidateAdapter m_v4_candidate_adapter;
 
     common::SpscQueue<WorkerInput, kSelectionWorkerInputCapacity> m_input_queue{};
     common::SpscQueue<
@@ -263,6 +356,11 @@ private:
     estimation::PredictStateCovariance m_latest_covariance{};
     std::uint64_t m_latest_state_timestamp_us{0};
     bool m_has_latest_state{false};
+
+    ManeuverSelectionAirspeedSnapshot m_latest_airspeed{};
+    bool m_has_latest_airspeed{false};
+    ManeuverSelectionNominalSetpointSnapshot m_latest_nominal{};
+    bool m_has_latest_nominal{false};
 
     std::array<std::uint8_t, kExhaustiveCandidatesPerAircraft>
         m_held_candidate_ids{};
@@ -292,5 +390,12 @@ private:
         m_remote_decision_caches{};
     PendingSelectionProposal m_pending_proposal{};
 };
+
+const char * v4ShadowEvaluationStatusName(
+    V4ShadowEvaluationStatus status) noexcept;
+
+const char * v4SnapshotStatusName(V4SnapshotStatus status) noexcept;
+
+const char * v4AirspeedSourceName(V4AirspeedSource source) noexcept;
 
 }  // namespace collision_avoidance::selection

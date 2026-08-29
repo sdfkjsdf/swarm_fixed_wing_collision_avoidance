@@ -33,6 +33,19 @@
     gravity: 9.80665                # 중력가속도 [m/s^2]
 
     max_roll_deg: 50.0              # PX4 FW_R_LIM (coordinated turn 계산용)
+    max_yaw_rate_deg_per_s: 50.0    # PX4 FW_Y_RMAX (V4 conservative cap)
+
+    # V4 safe-control Step-3 shadow configuration
+    v4_safe_control_enabled: true
+    v4_shadow_only: true
+    v4_margin_time_constant_s: 5.0
+    v4_candidate_guard_deg_per_s: 0.5
+    v4_constraint_tolerance_mps: 0.00001
+    v4_interval_tolerance_radps: 0.0000001
+    v4_speed_tolerance_mps: 0.001
+    v4_direction_tolerance_m: 0.0001
+    v4_maximum_airspeed_age_s: 1.0
+    v4_maximum_nominal_age_s: 1.0
 
     # ═══════════════════════════════════════════════════════════
     # PX4 직접 대응 없음 — 우리가 정한 값

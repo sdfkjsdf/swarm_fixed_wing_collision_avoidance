@@ -2,6 +2,8 @@
 
 #include <collision_avoidance/control/GroundToEasAdapter.hpp>
 
+#include <limits>
+
 using namespace px4_msgs::msg;
 
 
@@ -47,6 +49,9 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
                 m_state_for_control_mt[n].position_variance = msg->position_variance;
                 m_state_for_control_mt[n].velocity_variance = msg->velocity_variance;
                 m_state_for_control_mt[n].timestamp         = 0.0;
+                if (n == m_vehicle_id) {
+                    m_latest_self_state_timestamp_us_mt = msg->timestamp;
+                }
 
                 /* ── alt_hold P-제어 reference 캡처 ──
                    self 의 첫 유효 odometry 시 한 번만 캡처. onActivate 가 valid=false
@@ -284,6 +289,25 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
         /* (2) queue 비었지만 이전에 한 번이라도 받아본 적 있음 → hold last (ZOH) */
         RCLCPP_WARN_THROTTLE(_node.get_logger(), *_node.get_clock(), 1000,
             "[Formation] output_queue 비어있음 → hold last (ZOH)");
+    }
+
+    if (m_nominal_setpoint_callback_mt) {
+        collision_avoidance::selection::
+            ManeuverSelectionNominalSetpointSnapshot snapshot;
+        snapshot.timestamp_us = m_latest_self_state_timestamp_us_mt;
+        snapshot.valid = m_has_last_output_mt
+            && !m_last_output_mt.is_fallback
+            && snapshot.timestamp_us > 0;
+        if (snapshot.valid) {
+            snapshot.ground_speed_command_mps = m_last_output_mt.airspeed;
+            snapshot.altitude_command_m =
+                std::isfinite(m_last_output_mt.height_setpoint)
+                ? -static_cast<double>(m_last_output_mt.height_setpoint)
+                : std::numeric_limits<double>::quiet_NaN();
+            snapshot.lateral_acceleration_px4_mps2 =
+                m_last_output_mt.lateral_acceleration;
+        }
+        m_nominal_setpoint_callback_mt(snapshot);
     }
 
     const bool avoidance_override =

@@ -620,8 +620,8 @@ and the adversarial audit after tests and SILS evidence are available.
 
 ## 13. Step 1 implementation result — 2026-08-29
 
-Step 1 is complete. Step 2 is recorded in Section 14. Steps 3 through 6 have
-not started.
+Step 1 is complete. Steps 2 and 3 are recorded in Sections 14 and 15.
+Steps 4 through 6 have not started.
 
 Implemented:
 
@@ -687,7 +687,8 @@ Step 2 may begin only from this accepted core boundary.
 
 ## 14. Step 2 implementation result — 2026-08-29
 
-Step 2 is complete. Steps 3 through 6 have not started.
+Step 2 is complete. Step 3 is recorded in Section 15. Steps 4 through 6 have
+not started.
 
 Implemented:
 
@@ -763,3 +764,115 @@ Audit scope:
 Cross-axis dependencies: none remain. All evidence required for Step 2 is
 available, and every applicable axis passes. Runtime correctness and SILS
 safety remain explicitly unevaluated until Steps 3 through 6.
+
+## 15. Step 3 implementation result — 2026-08-29
+
+Step 3 is complete. Steps 4 through 6 have not started.
+
+Implemented:
+
+- The existing distributed runtime conditionally subscribes to ownship PX4
+  `AirspeedValidated` only when V4 is enabled and forwards timestamped TAS,
+  PX4 source, and validity to the existing worker queue.
+- `FormationMode::updateSetpoint()` forwards the latest pre-avoidance nominal
+  ground-speed, altitude, and lateral-acceleration command from the main ROS
+  executor thread. The RT loop remains a single producer of its existing
+  control-output queue and does not push the worker queue.
+- The worker classifies TAS and nominal snapshots as Missing, Valid, Invalid,
+  Future, or Stale. Invalid/non-current TAS uses the configured trim fallback
+  with a distinct source status; invalid/non-current nominal input omits only
+  `NearNominal`.
+- At the existing 20 Hz trajectory refresh, the worker resolves every verified
+  peer's selected fixed-LUT candidate from the current/previous complete intent
+  cache, reuses the existing interpolation helper to align it to current
+  ownship time, and rejects missing, future, stale, or invalid peer data with an
+  explicit shadow status.
+- The aligned common-NED planar state is passed to the Step-1 core with
+  `LOCAL_ONE_STEP_FREEZE` and `a_V_ext=0`. Current TAS recomputes the effective
+  heading-rate limit every update.
+- The Step-2 adapter produces at most three diagnostic candidates after a
+  valid/infeasible core evaluation. These candidates are not supplied to the
+  legacy TPA or command path in Step 3.
+- The existing `ManeuverSelectionDecision` ROS message carries rosbag-visible
+  V4 validity, input source/age, core intervals, effective limit, first
+  infeasible residual, and candidate role/rate diagnostics.
+- The existing point-convergence bag analyzer summarizes the new fields. No
+  new node, topic family, worker thread, threat estimator, coordinate frame, or
+  trajectory evaluator was added.
+- `FW_Y_RMAX` is mapped through the existing PX4-export converter and is used
+  only as the documented project upper cap. Existing DSD, half-wingspan,
+  gravity, roll, trim-airspeed, and YAML paths are reused.
+
+Not changed:
+
+- Executed `FwSetpoint`/PX4 commands, activation, and legacy candidate choice.
+- Fixed-LUT candidate IDs or trajectory-intent packet/message contents.
+- Trajectory reconstruction, covariance propagation, PMR, MASD, AD, Cost, and
+  uncertainty placement.
+- V3 sampled positive-margin filtering.
+- Wind-aware air/ground conversion, TAS acceleration estimation, robust V4
+  covariance margins, or vertical avoidance.
+- Dynamic candidate input/revision transport (Step 4), V4 candidate cutover
+  (Step 5), and headless SILS evidence (Step 6).
+
+Verification:
+
+- `test_maneuver_selection_worker`: 18/18 passed, including actual/trim TAS,
+  stale/future inputs, invalid nominal, selected-peer alignment, 20 Hz
+  TAS-dependent limit refresh, and rejection of command-cutover configuration.
+- `test_distributed_maneuver_selection_runtime`: ROS TAS input and serialized
+  V4 decision diagnostics passed; the complete binary passed 10/10 repeated
+  executions after the timing fixture correction below.
+- Full `collision_avoidance` result: 128 tests, 0 errors, 0 failures, 0 skipped.
+- Bag analyzer `py_compile`: passed.
+- `git diff --check`: passed.
+- Runtime tests require the parent PX4 ROS workspace to be sourced before this
+  overlay so the PX4 Fast DDS type-support library is available. This is a
+  test environment dependency, not a V4 fallback.
+
+Step 3 adversarial findings corrected before acceptance:
+
+1. The first wiring subscribed/pushed TAS and nominal inputs even when V4 was
+   disabled. Both paths are now conditional on `v4_safe_control_enabled`.
+2. The initial tests covered stale TAS but not future TAS or the next-cycle
+   TAS-dependent limit update. Explicit future/invalid classification and
+   20 Hz `r_max_eff` recomputation checks were added.
+3. The first ROS integration fixture stopped belief updates immediately after
+   coordination. In some schedules, the verified peer decision arrived after
+   the last 20 Hz evaluation, so the last diagnostic correctly remained
+   `MISSING_PEER_DECISION`. The fixture now supplies two post-consensus refresh
+   ticks; 10 repeated runs pass.
+4. Step-3 rosbag diagnostics require the first infeasible residual, but the
+   pure core previously exposed only the imposed bound. A fixed-size positive
+   constraint-shortfall diagnostic was added without altering interval results.
+5. The Step-2 adapter target was linkable inside the build tree but absent from
+   the install target list. Runtime wiring now links it explicitly and installs
+   the same existing library target.
+
+### Step 3 five-axis audit
+
+Audit scope:
+
+- Source/decision contract:
+  `reference/paper/MD_FILES/codex_v4_implementation_decisions_v2.md`, especially
+  the investigated TAS, one-step-freeze, nominal, threat-alignment, physical
+  clearance, and downstream uncertainty decisions.
+- Derived contract: Sections 6.1 through 6.4, 7, 9 Step 3, 10, and 11 of this
+  plan.
+- Implementation: worker/runtime/Formation wiring, V4 decision diagnostics,
+  parameter mapping, analyzer, and affected tests.
+- Excluded from a PASS claim: dynamic candidate identity/transport, command
+  cutover, SILS behavior, formal invariance, uncertainty robustness, and 10 m
+  separation assurance.
+
+| Axis | Result | Evidence |
+|---|---|---|
+| Source accuracy | PASS | The runtime uses `true_airspeed_m_s` with PX4 source/timestamp, identifies trim fallback separately, does not use IAS derivative, supplies explicit one-step freeze, reuses the investigated nominal sign adapter, selected reconstructed intent, physical half-wingspan sum, and existing DSD parameter. Uncertainty remains downstream in MASD. |
+| No over-interpretation | PASS | Results are named shadow diagnostics and are never described as a safety proof. The documented no-wind/level threat approximation, non-robust core, trim fallback, and one-step acceleration freeze remain limitations. Dynamic candidates and SILS claims are explicitly deferred. |
+| Proportional complexity | PASS | The change reuses the existing node, runtime, worker thread, SPSC queue, common belief, remote intent cache, interpolation, decision topic, YAML converter, and analyzer. Conditional input wiring avoids V4-disabled overhead; no new node/thread/topic family/estimator/evaluator was created. |
+| Implementation correctness | PASS | Focused tests cover valid, stale, future, missing, and invalid inputs; actual versus trim TAS; nominal omission; selected-peer time alignment; per-cycle limit recomputation; ROS serialization; shadow-only enforcement; and repeated runtime scheduling. The full 128-test suite passes. |
+| Directional alignment | PASS | Step 3 preserves the separate Left/Right core intervals and only publishes maximum-three adapter candidates. It does not feed them into TPA, alter legacy commands, move uncertainty into V4, rename V3 as V4, or bypass downstream PMR/MASD/AD/activation. |
+
+All five axes pass for the bounded Step-3 shadow-wiring scope. Step 4 must add
+exact dynamic input/revision identity before any V4 candidate can enter the
+selection or activation path.

@@ -29,3 +29,38 @@ bool previous_best_retained
 bool activation_requested
 bool activation_just_started
 bool activation_just_ended
+
+# V4 Step-3 shadow diagnostics. These values never command the aircraft.
+bool v4_enabled
+bool v4_shadow_only
+bool v4_shadow_evaluated
+uint8 v4_shadow_status
+
+uint8 v4_airspeed_snapshot_status
+uint8 v4_airspeed_source
+int8 v4_px4_airspeed_source
+uint64 v4_airspeed_timestamp_us
+uint64 v4_airspeed_age_us
+
+uint8 v4_nominal_snapshot_status
+bool v4_nominal_available
+uint64 v4_nominal_timestamp_us
+uint64 v4_nominal_age_us
+
+uint8 v4_core_status
+uint8 v4_longitudinal_source
+float32 v4_effective_max_heading_rate_radps
+bool v4_left_feasible
+float32 v4_left_lower_radps
+float32 v4_left_upper_radps
+bool v4_right_feasible
+float32 v4_right_lower_radps
+float32 v4_right_upper_radps
+int32 v4_first_infeasible_vehicle_id
+uint8 v4_first_infeasible_direction
+float32 v4_first_infeasible_residual_mps
+
+uint8 v4_candidate_status
+uint8 v4_candidate_count
+uint8[3] v4_candidate_roles
+float32[3] v4_candidate_rates_radps

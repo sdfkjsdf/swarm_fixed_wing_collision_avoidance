@@ -111,6 +111,9 @@ struct SafeControlThreatDiagnostic
     double rate_coefficient_m{0.0};
     double required_control_term_mps{0.0};
     double imposed_bound_radps{0.0};
+    // Positive amount by which the current physical/intersected interval
+    // cannot meet the affine constraint [m/s].
+    double constraint_shortfall_mps{0.0};
     bool constraint_degenerate{false};
     bool constraint_feasible{false};
 };

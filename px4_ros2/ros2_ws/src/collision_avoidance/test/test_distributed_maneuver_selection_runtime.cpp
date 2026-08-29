@@ -12,6 +12,8 @@
 
 #include <collision_avoidance/communication/DistributedManeuverSelectionRuntime.hpp>
 #include <collision_avoidance/msg/trajectory_intent.hpp>
+#include <collision_avoidance/msg/maneuver_selection_decision.hpp>
+#include <px4_msgs/msg/airspeed_validated.hpp>
 #include <px4_msgs/msg/estimator_trajectory_belief.hpp>
 
 namespace cc = collision_avoidance::communication;
@@ -50,6 +52,32 @@ px4_msgs::msg::EstimatorTrajectoryBelief beliefMessage(
     return message;
 }
 
+px4_msgs::msg::AirspeedValidated airspeedMessage(
+    std::uint64_t timestamp_us,
+    float true_airspeed_mps)
+{
+    px4_msgs::msg::AirspeedValidated message;
+    message.timestamp = timestamp_us;
+    message.true_airspeed_m_s = true_airspeed_mps;
+    message.airspeed_source =
+        px4_msgs::msg::AirspeedValidated::SOURCE_SENSOR_1;
+    return message;
+}
+
+cs::ManeuverSelectionNominalSetpointSnapshot nominalSnapshot(
+    std::uint64_t timestamp_us,
+    double lateral_acceleration_mps2)
+{
+    cs::ManeuverSelectionNominalSetpointSnapshot snapshot;
+    snapshot.timestamp_us = timestamp_us;
+    snapshot.ground_speed_command_mps = 20.0;
+    snapshot.altitude_command_m = 100.0;
+    snapshot.lateral_acceleration_px4_mps2 =
+        lateral_acceleration_mps2;
+    snapshot.valid = true;
+    return snapshot;
+}
+
 void spinFor(
     rclcpp::executors::SingleThreadedExecutor & executor,
     std::chrono::milliseconds duration)
@@ -81,6 +109,14 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
         node->create_publisher<px4_msgs::msg::EstimatorTrajectoryBelief>(
             "/common/px4_1/trans_estimator_trajectory_belief",
             rclcpp::SensorDataQoS());
+    auto airspeed_a_publisher =
+        node->create_publisher<px4_msgs::msg::AirspeedValidated>(
+            "/px4_0/fmu/out/airspeed_validated_v1",
+            rclcpp::SensorDataQoS());
+    auto airspeed_b_publisher =
+        node->create_publisher<px4_msgs::msg::AirspeedValidated>(
+            "/px4_1/fmu/out/airspeed_validated_v1",
+            rclcpp::SensorDataQoS());
 
     std::size_t intent_a_count = 0;
     std::size_t intent_b_count = 0;
@@ -100,6 +136,17 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
                 collision_avoidance::msg::TrajectoryIntent::ConstSharedPtr) {
                 ++intent_b_count;
             });
+    std::optional<collision_avoidance::msg::ManeuverSelectionDecision>
+        decision_message_a;
+    auto decision_a_subscription = node->create_subscription<
+        collision_avoidance::msg::ManeuverSelectionDecision>(
+        "/common/px4_0/maneuver_selection_decision",
+        rclcpp::SensorDataQoS(),
+        [&decision_message_a](
+            collision_avoidance::msg::ManeuverSelectionDecision::
+                ConstSharedPtr message) {
+            decision_message_a = *message;
+        });
 
     cs::ManeuverSelectionWorkerParams params;
     params.predictor_params.V_min = 10.0;
@@ -107,6 +154,7 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
     params.evaluator_params.desired_separation_distance_m = 10.0;
     params.evaluator_params.ownship_half_wingspan_m = 1.072;
     params.evaluator_params.threat_half_wingspan_m = 1.072;
+    params.v4_safe_control_enabled = true;
 
     std::optional<cs::ManeuverSelectionDecision> decision_a;
     std::optional<cs::ManeuverSelectionDecision> decision_b;
@@ -132,8 +180,17 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
     constexpr std::uint64_t start = 10'000'000ULL;
     for (const std::uint64_t offset : {
              0ULL, 50'000ULL, 100'000ULL,
-             150'000ULL, 200'000ULL, 250'000ULL}) {
+             150'000ULL, 200'000ULL, 250'000ULL,
+             300'000ULL, 350'000ULL, 400'000ULL, 450'000ULL}) {
         const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
+        airspeed_a_publisher->publish(airspeedMessage(
+            start + offset, 20.0F));
+        airspeed_b_publisher->publish(airspeedMessage(
+            start + offset, 20.0F));
+        ASSERT_TRUE(runtime_a->pushNominalSetpoint(
+            nominalSnapshot(start + offset, 0.0)));
+        ASSERT_TRUE(runtime_b->pushNominalSetpoint(
+            nominalSnapshot(start + offset, 0.0)));
         belief_a_publisher->publish(beliefMessage(
             start + offset, -45.0 + 20.0 * elapsed_s, 20.0));
         belief_b_publisher->publish(beliefMessage(
@@ -154,12 +211,32 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
     EXPECT_GE(intent_b_count, 15U);
     EXPECT_EQ(decision_a->local_selection_epoch, 40U);
     EXPECT_EQ(decision_b->local_selection_epoch, 40U);
+    EXPECT_TRUE(decision_a->v4_shadow_evaluated);
+    EXPECT_TRUE(decision_b->v4_shadow_evaluated);
+    EXPECT_EQ(
+        decision_a->v4_shadow_status,
+        cs::V4ShadowEvaluationStatus::CoreEvaluated);
+    EXPECT_EQ(
+        decision_a->v4_airspeed_source,
+        cs::V4AirspeedSource::ActualTas);
+    ASSERT_TRUE(decision_message_a.has_value());
+    EXPECT_TRUE(decision_message_a->v4_enabled);
+    EXPECT_TRUE(decision_message_a->v4_shadow_only);
+    EXPECT_TRUE(decision_message_a->v4_shadow_evaluated);
+    EXPECT_EQ(
+        decision_message_a->v4_shadow_status,
+        static_cast<std::uint8_t>(
+            cs::V4ShadowEvaluationStatus::CoreEvaluated));
+    EXPECT_EQ(
+        decision_message_a->v4_candidate_count,
+        decision_a->v4_candidates.candidate_count);
 
     executor.remove_node(node);
     runtime_b.reset();
     runtime_a.reset();
     static_cast<void>(intent_a_subscription);
     static_cast<void>(intent_b_subscription);
+    static_cast<void>(decision_a_subscription);
     rclcpp::shutdown();
 }
 

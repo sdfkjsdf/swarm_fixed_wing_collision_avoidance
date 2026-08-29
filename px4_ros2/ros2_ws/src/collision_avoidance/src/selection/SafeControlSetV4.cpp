@@ -99,6 +99,8 @@ bool intersectAffineConstraint(
         diagnostic.constraint_feasible =
             required_mps <= tolerances.constraint_mps;
         if (!diagnostic.constraint_feasible) {
+            diagnostic.constraint_shortfall_mps = std::max(
+                0.0, required_mps);
             markInfeasible(interval, threat, direction, result);
         }
         return diagnostic.constraint_feasible;
@@ -112,6 +114,9 @@ bool intersectAffineConstraint(
         return false;
     }
 
+    const double maximum_available_control_mps = coefficient_m > 0.0
+        ? coefficient_m * interval.upper_radps
+        : coefficient_m * interval.lower_radps;
     if (coefficient_m > 0.0) {
         interval.lower_radps = std::max(
             interval.lower_radps, bound_radps);
@@ -123,6 +128,8 @@ bool intersectAffineConstraint(
     if (interval.lower_radps
         > interval.upper_radps + tolerances.interval_radps) {
         diagnostic.constraint_feasible = false;
+        diagnostic.constraint_shortfall_mps = std::max(
+            0.0, required_mps - maximum_available_control_mps);
         markInfeasible(interval, threat, direction, result);
         return false;
     }

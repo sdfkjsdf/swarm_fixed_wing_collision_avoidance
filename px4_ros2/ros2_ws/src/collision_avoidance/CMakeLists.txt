@@ -154,6 +154,7 @@ target_include_directories(maneuver_selection_worker PUBLIC
 )
 target_link_libraries(maneuver_selection_worker PUBLIC
     maneuver_combination_evaluator
+    safe_control_candidate_adapter
     Threads::Threads
 )
 
@@ -194,6 +195,7 @@ install(TARGETS
     common_coordinate_transform
     ground_to_eas_adapter
     safe_control_set_v4
+    safe_control_candidate_adapter
     trajectory_prediction_core
     trajectory_reconstruction
     trajectory_intent
