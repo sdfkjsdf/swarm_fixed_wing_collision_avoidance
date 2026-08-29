@@ -52,6 +52,9 @@ collision_avoidance::msg::TrajectoryIntent toRosMessage(
     message.source_timestamp_us = packet.source_timestamp_us;
     message.selection_epoch = packet.selection_epoch;
     message.candidate_id = packet.candidate_id;
+    message.candidate_set_size = packet.candidate_set_size;
+    message.candidate_set_kind = static_cast<std::uint8_t>(
+        packet.candidate_set_kind);
     std::copy(
         packet.candidate_input.begin(),
         packet.candidate_input.end(),
@@ -80,6 +83,9 @@ estimation::TrajectoryIntentPacket fromRosMessage(
     packet.source_timestamp_us = message.source_timestamp_us;
     packet.selection_epoch = message.selection_epoch;
     packet.candidate_id = message.candidate_id;
+    packet.candidate_set_size = message.candidate_set_size;
+    packet.candidate_set_kind = static_cast<estimation::CandidateSetKind>(
+        message.candidate_set_kind);
     std::copy(
         message.candidate_input.begin(),
         message.candidate_input.end(),

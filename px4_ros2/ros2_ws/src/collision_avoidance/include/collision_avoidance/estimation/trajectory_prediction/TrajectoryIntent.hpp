@@ -26,6 +26,12 @@ enum class ManeuverCandidateId : std::uint8_t
     RollPlus50,
 };
 
+enum class CandidateSetKind : std::uint8_t
+{
+    LegacyRoll = 0,
+    V4SafeControl = 1,
+};
+
 struct ManeuverCandidateTable
 {
     std::array<PredictInput, kManeuverCandidateCount> inputs{};
@@ -51,6 +57,9 @@ struct TrajectoryIntentPacket
     TrajectorySample compressed_mean{};
     std::uint8_t candidate_id{
         static_cast<std::uint8_t>(ManeuverCandidateId::RollZero)};
+    // Shared metadata for one (selection epoch, source timestamp) set.
+    std::uint8_t candidate_set_size{1};
+    CandidateSetKind candidate_set_kind{CandidateSetKind::LegacyRoll};
     // [V_cmd, h_cmd, h_dot_cmd, a_lat_cmd].  h_cmd may be NaN when unused.
     std::array<float, kTrajectoryIntentInputDimension> candidate_input{};
     // Deterministic identity of candidate_id + transmitted float32 input.
@@ -64,6 +73,8 @@ struct ReceivedTrajectoryIntent
     std::uint64_t source_timestamp_us{0};
     std::uint64_t selection_epoch{0};
     std::uint8_t candidate_id{0};
+    std::uint8_t candidate_set_size{0};
+    CandidateSetKind candidate_set_kind{CandidateSetKind::LegacyRoll};
     PredictInput candidate_input{};
     std::uint64_t candidate_input_revision{0};
     PredictionMeanTrajectory reconstructed_mean{};

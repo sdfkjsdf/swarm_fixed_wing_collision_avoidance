@@ -548,6 +548,42 @@ TEST(JointManeuverCombinationEvaluator, EvaluatesAllFiveAircraftCombinations)
     }
 }
 
+TEST(JointManeuverCombinationEvaluator, UsesPerAircraftV4CandidateCounts)
+{
+    constexpr std::uint64_t timestamp_us = 7'500'000ULL;
+    cs::MultiAircraftCandidateIntentSets candidate_sets{};
+    for (std::size_t aircraft = 0;
+         aircraft < cs::kMaximumSelectionAircraft; ++aircraft) {
+        const double base_east = static_cast<double>(aircraft) * 100.0;
+        candidate_sets[aircraft] = parallelCandidates(
+            timestamp_us,
+            {base_east, base_east + 5.0, base_east + 10.0});
+    }
+    const std::array<std::size_t, cs::kMaximumSelectionAircraft>
+        candidate_counts{1, 2, 3, 1, 2};
+
+    cs::JointManeuverCombinationEvaluator evaluator;
+    cs::JointManeuverEvaluation evaluation;
+    ASSERT_TRUE(evaluator.evaluate(
+        timestamp_us,
+        candidate_sets,
+        candidate_counts,
+        cs::kMaximumSelectionAircraft,
+        evaluation));
+    EXPECT_EQ(evaluation.combination_count, 12U);
+    for (std::size_t combination_index = 0;
+         combination_index < evaluation.combination_count;
+         ++combination_index) {
+        for (std::size_t aircraft = 0;
+             aircraft < cs::kMaximumSelectionAircraft; ++aircraft) {
+            EXPECT_LT(
+                evaluation.combinations[combination_index]
+                    .candidate_slots[aircraft],
+                candidate_counts[aircraft]);
+        }
+    }
+}
+
 TEST(JointManeuverCombinationEvaluator, UsesMaximinFallbackWhenAllAreUnsafe)
 {
     constexpr std::uint64_t timestamp_us = 8'000'000ULL;

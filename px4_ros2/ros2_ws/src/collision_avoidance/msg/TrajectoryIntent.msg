@@ -2,6 +2,8 @@
 uint64 source_timestamp_us
 uint64 selection_epoch
 uint8 candidate_id
+uint8 candidate_set_size
+uint8 candidate_set_kind
 
 # Actual dynamic predictor input: [V_cmd, h_cmd, h_dot_cmd, a_lat_cmd].
 # h_cmd may be NaN when altitude hold is intentionally unused.

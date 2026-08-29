@@ -991,3 +991,136 @@ Audit scope:
 Cross-axis dependencies: none remain for the bounded Step-4 transport and
 identity scope. Step 5 may begin only from this accepted boundary and must use
 this dynamic builder rather than reintroducing a role-to-fixed-roll lookup.
+
+## 17. Step 5 implementation result — 2026-08-29
+
+Step 5 is complete. Headless SILS remains Step 6 and has not been run as part
+of this step.
+
+Implemented:
+
+- `v4_shadow_only=false` now enables an explicit V4 cutover mode. The worker
+  uses the existing 20 Hz V4 core/adapter output as the candidate source for
+  the existing trajectory reconstruction, joint PMR/MASD/AD scoring,
+  coordination, and activation path.
+- V4 candidate IDs retain their role meaning
+  `NearNominal/RobustLeft/RobustRight`; the transmitted input and revision are
+  still the executable identity. No role is converted back through the fixed
+  roll lookup table.
+- The compact intent packet carries two set-level fields: candidate-set kind
+  (`legacy` or `V4`) and unique set size. This is required because duplicate
+  suppression produces one to three V4 candidates rather than a fixed three.
+- The existing joint evaluator has a candidate-count overload. It evaluates
+  the product of the actual per-aircraft counts while using the unchanged
+  pair evaluator and unchanged PMR/MASD/AD equations.
+- Proposal/selection decisions identify whether the tuple is a V4 cutover
+  tuple. Consensus now requires that mode flag together with the existing
+  epoch, role IDs, input revisions, and source timestamps.
+- Before the first verified peer selection exists, cutover mode retains the
+  existing legacy candidate exchange only as a non-executing bootstrap. A
+  legacy bootstrap tuple is never eligible for activation in cutover mode.
+  Once one valid V4 set has been generated, the worker never falls back to
+  legacy candidates.
+- A V4 `SEARCH_SET_INFEASIBLE` result supplies zero new candidates. Therefore
+  the downstream evaluator cannot revive it through its best-unsafe AD
+  fallback. An already-active V4 command is the only exception: its exact
+  latched role/input/revision continues to be published and constrained, as
+  required by the existing activation hold semantics.
+- During the legacy-to-V4 handoff, the remote cache retains the exact
+  peer-selected trajectory input until the peer publishes a coordinated V4
+  selection. This prevents the 20 Hz V4 refresh from erasing the trajectory
+  that the peer decision still names.
+- Configuration validation rejects V4 cutover together with the legacy V3
+  sampled positive-margin filter. It also rejects cutover together with the
+  exhaustive seven-roll test mode; both legacy paths remain available when
+  cutover is not enabled.
+
+Not changed:
+
+- Shadow mode remains the default in both checked-in YAML files.
+- The V4 scalar core, candidate projection/sign conversion, ground-kinematic
+  predictor, 4.5 s horizon, 0.1 s grid, compressed 18-float mean, local
+  46-point reconstruction, and covariance propagation are unchanged.
+- PMR window search, physical-size margin, DSD, 95% covariance projection,
+  MASD, AD, reciprocal cost, and the feasible-candidate best-unsafe fallback
+  are unchanged.
+- No ROS node, topic family, worker thread, estimator, Track Manager,
+  optimizer, or parallel evaluator was added.
+- This step does not establish formal invariance, robust uncertainty
+  guarantees, 10 m separation assurance, 95% trajectory containment, or SILS
+  behavior.
+
+Verification:
+
+- `test_maneuver_selection_worker` now covers:
+  - legacy bootstrap consensus without activation;
+  - transition to V4 role/input/revision consensus;
+  - downstream activation only after a V4 tuple is committed;
+  - exact active V4 input revision retention across a changed nominal input;
+  - explicit V4 infeasibility with zero emitted candidate packets and no
+    legacy/best-unsafe revival;
+  - rejection of V4 cutover plus the legacy positive-margin gate.
+- `test_maneuver_combination_evaluator` verifies mixed per-aircraft candidate
+  counts and the exact product-sized combination space.
+- `test_trajectory_intent_transport` verifies candidate-set size/kind through
+  the ROS conversion together with the dynamic input and revision.
+- Full `collision_avoidance` result: 132 tests, 0 errors, 0 failures,
+  0 skipped.
+- `git diff --check`: passed.
+- As in Steps 3 and 4, ROS runtime tests require the parent PX4 ROS workspace
+  overlay to be sourced so the PX4 Fast DDS type-support library is visible.
+
+### Step 5 adversarial audit
+
+| Attack | Result | Evidence |
+|---|---|---|
+| Core returns `SEARCH_SET_INFEASIBLE`, but legacy or AD best-unsafe candidates reappear | PASS | After the first V4 set, invalid/infeasible generation clears current selection candidates and emits no packets. The dedicated three-aircraft worker test verifies zero candidate count, zero packet count, no proposal, and no activation. |
+| A legacy bootstrap tuple commands the aircraft before V4 is ready | PASS | Cutover activation resets/returns unless the committed tuple carries `selected_v4_cutover=true`; the two-aircraft test commits a legacy bootstrap tuple and observes no activation. |
+| Two nodes agree on IDs but one evaluates legacy semantics and the other V4 roles | PASS | Candidate-set kind is transported, all evaluated sets must have one kind, and proposal consensus compares `proposed_v4_cutover`. |
+| Duplicate suppression silently restores a fixed three-candidate assumption | PASS | Packet set size is validated, remote completion uses that size, and the joint evaluator decodes mixed-radix slots from per-aircraft counts. |
+| An active role keeps its ID but changes its actual input at 20 Hz | PASS | V4 set construction replaces the regenerated role input with the activation controller's exact latched input; the test changes nominal input and observes the original selected revision. |
+| V3 sampled filtering and V4 interval filtering both gate the same cutover | PASS | Parameter validation rejects the simultaneous configuration. The legacy V3 code remains available only outside V4 cutover. |
+| V4 uncertainty is added and then subtracted again in MASD | PASS | Step 5 does not alter `evaluatePairImpl()` or the core constraints; covariance remains only in the existing MASD calculation. |
+| A malformed V4 packet claims more than three roles or a non-V4 role ID | PASS | Remote packet validation requires set size 1..3 and role ID 0..2 before reconstruction/cache admission. |
+
+### Step 5 five-axis source audit
+
+Audit scope:
+
+- Project-authoritative decision source:
+  `reference/paper/MD_FILES/codex_v4_implementation_decisions_v2.md`,
+  especially the investigated existing TPA interface, dynamic descriptor
+  contract, sign decision, uncertainty placement, and final implementation
+  boundary.
+- Derived requirements: Sections 6.4 through 6.7, 9 Step 5, 10, and 11 of
+  this plan.
+- Implementation: compact intent set metadata, worker cutover/readiness/cache
+  logic, variable-count joint-evaluator overload, decision transport, and
+  focused/full regression tests.
+- Exclusions: Step-6 SILS, formal or robust safety proofs, disclosed Auto ACAS
+  wire-format equivalence, DSD guarantee, and 95% containment claims.
+
+Evidence baseline:
+
+1. The decision source requires maximum-three safe candidates to enter the
+   existing TPA/AD/activation hierarchy through the actual dynamic
+   `PredictInput`, while keeping 46-point reconstruction local and uncertainty
+   in downstream MASD.
+2. The derived Step-5 contract requires V4 infeasibility to remain terminal
+   for candidate generation, disables the V3 sampled gate in cutover, and
+   preserves exact role/input/revision coordination plus active input latching.
+3. The implementation supplies only validated V4 sets to the existing joint
+   evaluator, preserves feasible-set best-unsafe AD behavior, blocks fallback
+   when no V4 set exists, and retains the exact active input.
+
+| Axis | Status | Source evidence | Implementation evidence | Reason / impact | Confidence |
+|---:|---|---|---|---|---|
+| 1. Source accuracy and traceability | PASS | The decision source Section 5 states `timestamp + candidate role + x0 + P0 + compressed mean + PredictInput`; its final boundary requires existing worker/TPA/AD integration. Plan Sections 6.4–6.7 make the cutover and infeasibility gates explicit. | Intent packets retain the compact mean and add only set metadata; V4 roles use the Step-4 dynamic input builder; existing evaluator/activation objects are reused. | The implementation follows the project-authoritative contract and does not misrepresent these project-specific transport details as a published Auto ACAS packet format. | High |
+| 2. Interpretation fidelity | PASS | The source and plan limit the baseline to non-robust safe intervals upstream of uncertainty-aware MASD and require explicit infeasibility rather than a guarantee. | Cutover diagnostics retain `v4_shadow_only`; documentation excludes proofs/SILS/DSD guarantees; infeasible sets emit no new candidates, while feasible candidates still use existing AD policy. | No example or qualitative source statement is promoted to a safety guarantee. The non-executing legacy bootstrap is identified as a project readiness mechanism, not a source requirement. | High |
+| 3. Complexity proportionality | PASS | Variable 0..3 candidates, exact dynamic identity, selected-peer time alignment, and retained active input are named integration constraints. | Existing packet/message/cache/worker/evaluator are extended in place. No new node, topic, thread, estimator, optimizer, or duplicate PMR/MASD/AD path exists. Set size/kind and one evaluator overload are the minimum additions needed to avoid fixed-three and semantic-alias errors. | The added state is justified by cold-start readiness, variable candidate count, and exact active-command consistency; no materially separate architecture was introduced. | High |
+| 4. Correct implementation under aligned direction | PASS | The gate requires no V3/V4 double filtering, exact tuple/role/revision agreement, unchanged uncertainty logic, and no infeasible fallback. | Parameter validation enforces mutual exclusion; cache/evaluator use actual counts; consensus compares V4 mode plus ID/revision/source; active refresh retains the selected revision; focused tests and the 132-test suite pass. | Timing, candidate identity, candidate-count indexing, fallback, and activation boundary conditions have direct regression evidence. PMR/MASD/AD formulas were not modified. | High |
+| 5. Directional alignment | PASS | The governing direction is continuous Left/Right V4 safe-set generation first, then candidate representation, existing TPA/PMR/MASD/AD/Cost, coordination, and activation. | `SafeControlSetV4` remains upstream; its adapter supplies V4 role/input packets; the existing downstream evaluators and activation controller remain authoritative. | The implementation neither relabels V3 as V4 nor replaces the source-directed hierarchy with a new optimizer or trajectory-level uncertainty gate. | High |
+
+Cross-axis dependencies: none remain for the bounded Step-5 code cutover.
+All applicable axes pass. The next admissible step is Step 6 headless SILS and
+offline evidence collection; a passing Step 5 does not prejudge that result.

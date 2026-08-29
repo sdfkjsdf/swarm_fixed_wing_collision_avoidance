@@ -256,6 +256,11 @@ bool TrajectoryIntentReceiver::receive(
     const PredictStateCovariance initial_covariance =
         decodeCovariance(packet.initial_covariance);
     if (packet.candidate_id >= kManeuverCandidateCount
+        || packet.candidate_set_size == 0
+        || packet.candidate_set_size > kManeuverCandidateCount
+        || (packet.candidate_set_kind != CandidateSetKind::LegacyRoll
+            && packet.candidate_set_kind
+                != CandidateSetKind::V4SafeControl)
         || !usableInput(input)
         || packet.candidate_input_revision != inputRevision(
             packet.candidate_id, packet.candidate_input)
@@ -288,6 +293,8 @@ bool TrajectoryIntentReceiver::receive(
     candidate_received.source_timestamp_us = packet.source_timestamp_us;
     candidate_received.selection_epoch = packet.selection_epoch;
     candidate_received.candidate_id = packet.candidate_id;
+    candidate_received.candidate_set_size = packet.candidate_set_size;
+    candidate_received.candidate_set_kind = packet.candidate_set_kind;
     candidate_received.candidate_input = input;
     candidate_received.candidate_input_revision =
         packet.candidate_input_revision;

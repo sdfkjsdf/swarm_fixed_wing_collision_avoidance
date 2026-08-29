@@ -65,7 +65,7 @@ struct ManeuverSelectionWorkerParams
     ManeuverActivationControllerParams activation_params{};
     bool exhaustive_test_mode{false};
     bool v4_safe_control_enabled{false};
-    // Step 3 supports diagnostics only. Command cutover remains Step 5.
+    // True keeps V4 diagnostic-only; false supplies V4 candidates downstream.
     bool v4_shadow_only{true};
     double v4_trim_airspeed_mps{15.0};
     std::uint64_t v4_maximum_airspeed_age_us{1'000'000};
@@ -125,6 +125,7 @@ struct ManeuverSelectionDecision
         selected_candidate_input_revisions{};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         selected_candidate_source_timestamps_us{};
+    bool selected_v4_cutover{false};
     std::uint8_t ownship_candidate_id{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
     std::uint64_t proposal_timestamp_us{0};
@@ -135,6 +136,7 @@ struct ManeuverSelectionDecision
         proposed_candidate_input_revisions{};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         proposed_candidate_source_timestamps_us{};
+    bool proposed_v4_cutover{false};
     bool proposal_valid{false};
     bool proposal_consensus_confirmed{false};
     std::uint8_t threat_candidate_id{
@@ -154,8 +156,8 @@ struct ManeuverSelectionDecision
     bool activation_just_started{false};
     bool activation_just_ended{false};
 
-    // V4 Step-3 diagnostics. These fields are shadow-only and do not
-    // participate in the legacy selection or activation state machine.
+    // V4 diagnostics. They are observation-only in shadow mode; in cutover
+    // mode v4_candidates is the source of the downstream candidate set.
     bool v4_enabled{false};
     bool v4_shadow_only{true};
     bool v4_shadow_evaluated{false};
@@ -190,6 +192,7 @@ struct ManeuverSelectionPeerDecision
         selected_candidate_input_revisions{};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         selected_candidate_source_timestamps_us{};
+    bool selected_v4_cutover{false};
     std::uint8_t ownship_candidate_id{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
     std::uint64_t proposal_timestamp_us{0};
@@ -200,6 +203,7 @@ struct ManeuverSelectionPeerDecision
         proposed_candidate_input_revisions{};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         proposed_candidate_source_timestamps_us{};
+    bool proposed_v4_cutover{false};
     bool proposal_valid{false};
     bool proposal_consensus_confirmed{false};
     bool coordination_qualified{false};
@@ -278,6 +282,9 @@ private:
     {
         std::uint64_t selection_epoch{0};
         std::uint64_t source_timestamp_us{0};
+        estimation::CandidateSetKind candidate_set_kind{
+            estimation::CandidateSetKind::LegacyRoll};
+        std::size_t expected_count{0};
         ExhaustiveCandidateIntentSet candidates{};
         std::array<bool, kExhaustiveCandidatesPerAircraft> occupied{};
         std::size_t count{0};
@@ -299,6 +306,7 @@ private:
             candidate_input_revisions{};
         std::array<std::uint64_t, kMaximumSelectionAircraft>
             candidate_source_timestamps_us{};
+        bool v4_cutover{false};
         estimation::PredictInput ownship_input{};
         JointCombinationEvaluation evaluation{};
         std::size_t combination_index{0};
@@ -328,14 +336,20 @@ private:
     bool buildCurrentIntentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
-    void evaluateV4Shadow(
+    bool buildV4IntentSet(
+        std::uint64_t now_us,
+        const SafeControlCandidateAdapterResult & candidates,
+        ManeuverSelectionWorkerOutput & output);
+    void evaluateV4(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
     void evaluateCurrentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
     bool constrainActiveAircraftCandidates(
-        MultiAircraftExhaustiveCandidateIntentSets & candidate_sets) const;
+        MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
+        const std::array<std::size_t, kMaximumSelectionAircraft>
+            & candidate_counts) const;
     bool finalizePendingCoordination(
         ManeuverSelectionWorkerOutput & output);
     bool buildActivationSample(
@@ -347,6 +361,7 @@ private:
         bool force_decision_output,
         ManeuverSelectionWorkerOutput & output);
     std::size_t activeCandidateCount() const noexcept;
+    bool v4CutoverMode() const noexcept;
     bool publishOutput(const ManeuverSelectionWorkerOutput & output) noexcept;
 
     ManeuverSelectionWorkerParams m_params;
@@ -405,6 +420,11 @@ private:
 
     ExhaustiveCandidateIntentSet m_ownship_candidates{};
     bool m_ownship_candidates_complete{false};
+    std::size_t m_ownship_candidate_count{0};
+    estimation::CandidateSetKind m_ownship_candidate_set_kind{
+        estimation::CandidateSetKind::LegacyRoll};
+    bool m_v4_cutover_ready{false};
+    bool m_selected_v4_cutover{false};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
         m_remote_caches{};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>

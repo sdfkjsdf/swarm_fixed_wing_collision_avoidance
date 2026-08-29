@@ -126,6 +126,8 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->selected_candidate_source_timestamps_us.begin(),
                         message->selected_candidate_source_timestamps_us.end(),
                         decision.selected_candidate_source_timestamps_us.begin());
+                    decision.selected_v4_cutover =
+                        message->selected_v4_cutover;
                     decision.ownship_candidate_id =
                         message->ownship_candidate_id;
                     decision.proposal_timestamp_us =
@@ -143,6 +145,8 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->proposed_candidate_source_timestamps_us.begin(),
                         message->proposed_candidate_source_timestamps_us.end(),
                         decision.proposed_candidate_source_timestamps_us.begin());
+                    decision.proposed_v4_cutover =
+                        message->proposed_v4_cutover;
                     decision.proposal_valid = message->proposal_valid;
                     decision.proposal_consensus_confirmed =
                         message->proposal_consensus_confirmed;
@@ -340,6 +344,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.selected_candidate_source_timestamps_us.begin(),
                     decision.selected_candidate_source_timestamps_us.end(),
                     message.selected_candidate_source_timestamps_us.begin());
+                message.selected_v4_cutover =
+                    decision.selected_v4_cutover;
                 message.ownship_candidate_id = decision.ownship_candidate_id;
                 message.proposal_timestamp_us =
                     decision.proposal_timestamp_us;
@@ -356,6 +362,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.proposed_candidate_source_timestamps_us.begin(),
                     decision.proposed_candidate_source_timestamps_us.end(),
                     message.proposed_candidate_source_timestamps_us.begin());
+                message.proposed_v4_cutover =
+                    decision.proposed_v4_cutover;
                 message.proposal_valid = decision.proposal_valid;
                 message.proposal_consensus_confirmed =
                     decision.proposal_consensus_confirmed;

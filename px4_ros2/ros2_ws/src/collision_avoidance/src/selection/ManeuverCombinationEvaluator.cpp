@@ -959,6 +959,24 @@ bool JointManeuverCombinationEvaluator::evaluate(
     std::size_t aircraft_count,
     JointManeuverEvaluation & evaluation) const
 {
+    std::array<std::size_t, kMaximumSelectionAircraft> candidate_counts{};
+    candidate_counts.fill(kCandidatesPerAircraft);
+    return evaluate(
+        evaluation_timestamp_us,
+        candidate_sets,
+        candidate_counts,
+        aircraft_count,
+        evaluation);
+}
+
+bool JointManeuverCombinationEvaluator::evaluate(
+    std::uint64_t evaluation_timestamp_us,
+    const MultiAircraftCandidateIntentSets & candidate_sets,
+    const std::array<std::size_t, kMaximumSelectionAircraft>
+        & candidate_counts,
+    std::size_t aircraft_count,
+    JointManeuverEvaluation & evaluation) const
+{
     JointManeuverEvaluation candidate_evaluation{};
     candidate_evaluation.evaluation_timestamp_us = evaluation_timestamp_us;
     candidate_evaluation.aircraft_count = aircraft_count;
@@ -969,7 +987,12 @@ bool JointManeuverCombinationEvaluator::evaluate(
 
     std::size_t combination_count = 1;
     for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
-        combination_count *= kCandidatesPerAircraft;
+        if (candidate_counts[aircraft] == 0
+            || candidate_counts[aircraft] > kCandidatesPerAircraft) {
+            evaluation = candidate_evaluation;
+            return false;
+        }
+        combination_count *= candidate_counts[aircraft];
     }
     candidate_evaluation.combination_count = combination_count;
 
@@ -1002,8 +1025,9 @@ bool JointManeuverCombinationEvaluator::evaluate(
         for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
             const std::size_t reverse_aircraft = aircraft_count - 1 - aircraft;
             combination.candidate_slots[reverse_aircraft] =
-                static_cast<std::uint8_t>(encoded % kCandidatesPerAircraft);
-            encoded /= kCandidatesPerAircraft;
+                static_cast<std::uint8_t>(
+                    encoded % candidate_counts[reverse_aircraft]);
+            encoded /= candidate_counts[reverse_aircraft];
         }
 
         combination.valid = true;

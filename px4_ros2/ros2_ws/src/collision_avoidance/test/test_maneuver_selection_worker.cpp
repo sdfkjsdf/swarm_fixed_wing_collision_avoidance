@@ -140,6 +140,7 @@ cs::ManeuverSelectionPeerDecision peerDecision(
         decision.selected_candidate_input_revisions;
     peer.selected_candidate_source_timestamps_us =
         decision.selected_candidate_source_timestamps_us;
+    peer.selected_v4_cutover = decision.selected_v4_cutover;
     peer.ownship_candidate_id = decision.ownship_candidate_id;
     peer.proposal_timestamp_us = decision.proposal_timestamp_us;
     peer.proposal_epoch = decision.proposal_epoch;
@@ -148,6 +149,7 @@ cs::ManeuverSelectionPeerDecision peerDecision(
         decision.proposed_candidate_input_revisions;
     peer.proposed_candidate_source_timestamps_us =
         decision.proposed_candidate_source_timestamps_us;
+    peer.proposed_v4_cutover = decision.proposed_v4_cutover;
     peer.proposal_valid = decision.proposal_valid;
     peer.proposal_consensus_confirmed =
         decision.proposal_consensus_confirmed;
@@ -170,6 +172,8 @@ cs::ManeuverSelectionPeerDecision coordinatedPeerForIntent(
         packet.candidate_input_revision;
     peer.selected_candidate_source_timestamps_us[vehicle_index] =
         packet.source_timestamp_us;
+    peer.selected_v4_cutover = packet.candidate_set_kind
+        == ce::CandidateSetKind::V4SafeControl;
     return peer;
 }
 
@@ -461,11 +465,12 @@ TEST(ManeuverSelectionWorker, V4ShadowClassifiesFutureTasAndInvalidNominal)
     }
 }
 
-TEST(ManeuverSelectionWorker, V4StepThreeRejectsCommandCutoverConfiguration)
+TEST(ManeuverSelectionWorker, V4CutoverRejectsLegacyPositiveMarginGate)
 {
     auto invalid_params = params();
     invalid_params.v4_safe_control_enabled = true;
     invalid_params.v4_shadow_only = false;
+    invalid_params.evaluator_params.positive_margin_filter_enabled = true;
     cs::ManeuverSelectionWorker worker(invalid_params);
     EXPECT_FALSE(worker.processPendingForTest());
     EXPECT_FALSE(worker.start());
@@ -476,6 +481,238 @@ TEST(ManeuverSelectionWorker, V4StepThreeRejectsCommandCutoverConfiguration)
     EXPECT_STREQ(
         cs::v4AirspeedSourceName(cs::V4AirspeedSource::TrimFallback),
         "trim_fallback");
+}
+
+TEST(ManeuverSelectionWorker,
+    V4CutoverUsesDynamicCandidatesOnlyAfterLegacyBootstrapConsensus)
+{
+    auto first_params = params();
+    first_params.v4_safe_control_enabled = true;
+    first_params.v4_shadow_only = false;
+    first_params.evaluator_params.desired_separation_distance_m = 200.0;
+    auto second_params = params(1);
+    second_params.v4_safe_control_enabled = true;
+    second_params.v4_shadow_only = false;
+    second_params.evaluator_params.desired_separation_distance_m = 200.0;
+    cs::ManeuverSelectionWorker first(first_params);
+    cs::ManeuverSelectionWorker second(second_params);
+    constexpr std::uint64_t start = 20'000'000ULL;
+
+    cs::ManeuverSelectionWorkerOutput first_output;
+    cs::ManeuverSelectionWorkerOutput second_output;
+    for (const std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
+        pushV4Inputs(first, start + offset);
+        pushV4Inputs(second, start + offset);
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                start + offset,
+                -100.0 + 20.0 * elapsed_s,
+                0.0,
+                20.0,
+                0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                start + offset,
+                100.0 - 20.0 * elapsed_s,
+                0.0,
+                -20.0,
+                0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+
+    pushV4Inputs(first, start + 250'000ULL);
+    pushV4Inputs(second, start + 250'000ULL);
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(start + 250'000ULL, -95.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second,
+        beliefSnapshot(start + 250'000ULL, 95.0, 0.0, -20.0, 0.0));
+    auto bootstrap_commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    ASSERT_TRUE(bootstrap_commits[0].decision.coordination_qualified);
+    ASSERT_TRUE(bootstrap_commits[1].decision.coordination_qualified);
+    EXPECT_FALSE(bootstrap_commits[0].decision.selected_v4_cutover);
+    EXPECT_FALSE(bootstrap_commits[1].decision.selected_v4_cutover);
+    EXPECT_FALSE(bootstrap_commits[0].decision.activation_requested);
+    EXPECT_FALSE(bootstrap_commits[1].decision.activation_requested);
+    ASSERT_TRUE(first.pushRemoteDecision(
+        1, peerDecision(bootstrap_commits[1].decision)));
+    ASSERT_TRUE(second.pushRemoteDecision(
+        0, peerDecision(bootstrap_commits[0].decision)));
+
+    for (const std::uint64_t offset : {
+             300'000ULL, 350'000ULL, 400'000ULL, 450'000ULL}) {
+        const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
+        pushV4Inputs(first, start + offset);
+        pushV4Inputs(second, start + offset);
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                start + offset,
+                -100.0 + 20.0 * elapsed_s,
+                0.0,
+                20.0,
+                0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                start + offset,
+                100.0 - 20.0 * elapsed_s,
+                0.0,
+                -20.0,
+                0.0));
+        ASSERT_GT(first_output.intent_packet_count, 0U);
+        ASSERT_GT(second_output.intent_packet_count, 0U);
+        EXPECT_LE(first_output.intent_packet_count, 3U);
+        EXPECT_LE(second_output.intent_packet_count, 3U);
+        EXPECT_EQ(
+            first_output.intent_packets[0].candidate_set_kind,
+            ce::CandidateSetKind::V4SafeControl);
+        EXPECT_EQ(
+            second_output.intent_packets[0].candidate_set_kind,
+            ce::CandidateSetKind::V4SafeControl);
+        exchangePackets(first, second, first_output, second_output);
+    }
+
+    pushV4Inputs(first, start + 500'000ULL);
+    pushV4Inputs(second, start + 500'000ULL);
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(start + 500'000ULL, -90.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second,
+        beliefSnapshot(start + 500'000ULL, 90.0, 0.0, -20.0, 0.0));
+    ASSERT_TRUE(first_output.decision.proposal_valid);
+    ASSERT_TRUE(second_output.decision.proposal_valid);
+    EXPECT_TRUE(first_output.decision.proposed_v4_cutover);
+    EXPECT_TRUE(second_output.decision.proposed_v4_cutover);
+
+    const auto v4_commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    ASSERT_TRUE(v4_commits[0].decision.coordination_qualified);
+    ASSERT_TRUE(v4_commits[1].decision.coordination_qualified);
+    EXPECT_TRUE(v4_commits[0].decision.selected_v4_cutover);
+    EXPECT_TRUE(v4_commits[1].decision.selected_v4_cutover);
+    EXPECT_TRUE(v4_commits[0].decision.activation_requested);
+    EXPECT_TRUE(v4_commits[1].decision.activation_requested);
+    EXPECT_EQ(
+        v4_commits[0].decision.selected_candidate_ids,
+        v4_commits[1].decision.selected_candidate_ids);
+    EXPECT_EQ(
+        v4_commits[0].decision.selected_candidate_input_revisions,
+        v4_commits[1].decision.selected_candidate_input_revisions);
+
+    const std::uint8_t latched_role =
+        v4_commits[0].decision.ownship_candidate_id;
+    const std::uint64_t latched_revision =
+        v4_commits[0].decision.selected_candidate_input_revisions[0];
+    pushV4Inputs(first, start + 550'000ULL, 20.0, 4.0);
+    const auto refreshed = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(start + 550'000ULL, -89.0, 0.0, 20.0, 0.0));
+    ASSERT_GT(refreshed.intent_packet_count, 0U);
+    const auto retained = std::find_if(
+        refreshed.intent_packets.begin(),
+        refreshed.intent_packets.begin()
+            + static_cast<std::ptrdiff_t>(refreshed.intent_packet_count),
+        [latched_role](const ce::TrajectoryIntentPacket & packet) {
+            return packet.candidate_id == latched_role;
+        });
+    ASSERT_NE(
+        retained,
+        refreshed.intent_packets.begin()
+            + static_cast<std::ptrdiff_t>(refreshed.intent_packet_count));
+    EXPECT_EQ(retained->candidate_input_revision, latched_revision);
+    EXPECT_EQ(
+        retained->candidate_set_kind,
+        ce::CandidateSetKind::V4SafeControl);
+}
+
+TEST(ManeuverSelectionWorker,
+    V4InfeasibilityDoesNotFallBackToLegacyOrBestUnsafeCandidates)
+{
+    auto local_params = params(0, 3);
+    local_params.v4_safe_control_enabled = true;
+    local_params.v4_shadow_only = false;
+    auto local = std::make_unique<cs::ManeuverSelectionWorker>(local_params);
+    auto west_remote = std::make_unique<cs::ManeuverSelectionWorker>(
+        params(1, 3));
+    auto east_remote = std::make_unique<cs::ManeuverSelectionWorker>(
+        params(2, 3));
+    constexpr std::uint64_t start = 30'000'000ULL;
+
+    const auto west_far = pushBeliefAndProcess(
+        *west_remote,
+        beliefSnapshot(start, -200.0, -100.0, -20.0, 0.0));
+    const auto east_far = pushBeliefAndProcess(
+        *east_remote,
+        beliefSnapshot(start, -200.0, 100.0, -20.0, 0.0));
+    ASSERT_GT(west_far.intent_packet_count, 0U);
+    ASSERT_GT(east_far.intent_packet_count, 0U);
+    for (const auto & packet : west_far.intent_packets) {
+        ASSERT_TRUE(local->pushRemoteIntent(1, packet));
+    }
+    for (const auto & packet : east_far.intent_packets) {
+        ASSERT_TRUE(local->pushRemoteIntent(2, packet));
+    }
+    ASSERT_TRUE(local->pushRemoteDecision(
+        1, coordinatedPeerForIntent(1, west_far.intent_packets[0])));
+    ASSERT_TRUE(local->pushRemoteDecision(
+        2, coordinatedPeerForIntent(2, east_far.intent_packets[0])));
+    pushV4Inputs(*local, start);
+    const auto initially_valid = pushBeliefAndProcess(
+        *local,
+        beliefSnapshot(start, 0.0, 0.0, 20.0, 0.0));
+    ASSERT_TRUE(initially_valid.has_decision);
+    ASSERT_EQ(
+        initially_valid.decision.v4_safe_control.status,
+        cs::SafeControlSetStatus::Valid);
+    ASSERT_GT(initially_valid.intent_packet_count, 0U);
+    EXPECT_EQ(
+        initially_valid.intent_packets[0].candidate_set_kind,
+        ce::CandidateSetKind::V4SafeControl);
+
+    constexpr std::uint64_t close_time = start + 50'000ULL;
+    const auto west_close = pushBeliefAndProcess(
+        *west_remote,
+        beliefSnapshot(close_time, 20.0, -20.0, -20.0, 0.0));
+    const auto east_close = pushBeliefAndProcess(
+        *east_remote,
+        beliefSnapshot(close_time, 20.0, 20.0, -20.0, 0.0));
+    ASSERT_GT(west_close.intent_packet_count, 0U);
+    ASSERT_GT(east_close.intent_packet_count, 0U);
+    for (const auto & packet : west_close.intent_packets) {
+        ASSERT_TRUE(local->pushRemoteIntent(1, packet));
+    }
+    for (const auto & packet : east_close.intent_packets) {
+        ASSERT_TRUE(local->pushRemoteIntent(2, packet));
+    }
+    ASSERT_TRUE(local->pushRemoteDecision(
+        1, coordinatedPeerForIntent(1, west_close.intent_packets[0])));
+    ASSERT_TRUE(local->pushRemoteDecision(
+        2, coordinatedPeerForIntent(2, east_close.intent_packets[0])));
+    pushV4Inputs(*local, close_time);
+    const auto infeasible = pushBeliefAndProcess(
+        *local,
+        beliefSnapshot(close_time, 0.0, 0.0, 20.0, 0.0));
+
+    ASSERT_TRUE(infeasible.has_decision);
+    EXPECT_TRUE(infeasible.decision.v4_shadow_evaluated);
+    EXPECT_EQ(
+        infeasible.decision.v4_safe_control.status,
+        cs::SafeControlSetStatus::SearchSetInfeasible);
+    EXPECT_EQ(
+        infeasible.decision.v4_candidates.status,
+        cs::SafeControlCandidateAdapterStatus::SearchSetInfeasible);
+    EXPECT_EQ(infeasible.decision.v4_candidates.candidate_count, 0U);
+    EXPECT_EQ(infeasible.intent_packet_count, 0U);
+    EXPECT_FALSE(infeasible.decision.proposal_valid);
+    EXPECT_FALSE(infeasible.decision.activation_requested);
 }
 
 TEST(ManeuverSelectionWorker, ImplementsTwentyAndFourHertzCadenceWithoutSleeps)

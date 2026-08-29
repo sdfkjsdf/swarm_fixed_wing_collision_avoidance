@@ -222,6 +222,14 @@ public:
         std::size_t aircraft_count,
         JointManeuverEvaluation & evaluation) const;
 
+    bool evaluate(
+        std::uint64_t evaluation_timestamp_us,
+        const MultiAircraftCandidateIntentSets & candidate_sets,
+        const std::array<std::size_t, kMaximumSelectionAircraft>
+            & candidate_counts,
+        std::size_t aircraft_count,
+        JointManeuverEvaluation & evaluation) const;
+
 private:
     ManeuverCombinationEvaluator m_pair_evaluator;
     PositiveMarginBarrierEvaluator m_barrier_evaluator;

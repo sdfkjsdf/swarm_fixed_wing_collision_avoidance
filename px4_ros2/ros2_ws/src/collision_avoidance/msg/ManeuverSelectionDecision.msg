@@ -9,6 +9,7 @@ uint16 evaluated_combination_count
 uint8[5] selected_candidate_ids
 uint64[5] selected_candidate_input_revisions
 uint64[5] selected_candidate_source_timestamps_us
+bool selected_v4_cutover
 uint8 ownship_candidate_id
 
 # Locally evaluated tuple awaiting the distributed cross-check.  The selected
@@ -18,6 +19,7 @@ uint64 proposal_epoch
 uint8[5] proposed_candidate_ids
 uint64[5] proposed_candidate_input_revisions
 uint64[5] proposed_candidate_source_timestamps_us
+bool proposed_v4_cutover
 bool proposal_valid
 bool proposal_consensus_confirmed
 
@@ -34,7 +36,7 @@ bool activation_requested
 bool activation_just_started
 bool activation_just_ended
 
-# V4 Step-3 shadow diagnostics. These values never command the aircraft.
+# V4 diagnostics. v4_shadow_only distinguishes observation from cutover mode.
 bool v4_enabled
 bool v4_shadow_only
 bool v4_shadow_evaluated
