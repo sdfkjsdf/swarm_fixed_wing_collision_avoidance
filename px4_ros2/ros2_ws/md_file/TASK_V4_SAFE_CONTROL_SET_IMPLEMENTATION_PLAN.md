@@ -620,7 +620,8 @@ and the adversarial audit after tests and SILS evidence are available.
 
 ## 13. Step 1 implementation result — 2026-08-29
 
-Step 1 is complete. Steps 2 through 6 have not started.
+Step 1 is complete. Step 2 is recorded in Section 14. Steps 3 through 6 have
+not started.
 
 Implemented:
 
@@ -683,3 +684,82 @@ Step 1 adversarial findings corrected before acceptance:
 | Directional alignment | PASS | The output remains the two separate Left/Right intervals; downstream candidate and Auto ACAS layers were not pulled into the core. |
 
 Step 2 may begin only from this accepted core boundary.
+
+## 14. Step 2 implementation result — 2026-08-29
+
+Step 2 is complete. Steps 3 through 6 have not started.
+
+Implemented:
+
+- A separate ROS-independent `safe_control_candidate_adapter` static library.
+- Fixed-size output with no allocation and at most three candidates in stable
+  role order: `NearNominal`, `RobustLeft`, `RobustRight`.
+- Projection of a valid nominal V4 heading rate onto the union of the still
+  separate Left/Right safe intervals.
+- Deterministic projection tie-breaking by distance, absolute rate, then Left
+  before Right.
+- Left `upper - delta_r` and Right `lower + delta_r` robust representatives.
+- Midpoint fallback when an interval is narrower than `2 * delta_r`.
+- Duplicate suppression without manufacturing a replacement candidate.
+- Explicit `SEARCH_SET_INFEASIBLE` propagation with zero candidates.
+- V4/PX4 sign conversion in the adapter only:
+  `a_lat_cmd = -V_TAS * r_v4` and its inverse.
+- Preservation of the existing ground-speed and altitude commands with
+  `h_dot_cmd=0` for every generated candidate.
+- Validation for non-finite commands, airspeed, interval bounds, family signs,
+  physical rate bounds, conversion overflow, and adapter parameters.
+
+Not changed:
+
+- ROS subscriptions, worker queues, and runtime scheduling.
+- `FormationMode` or any executed PX4 command.
+- Trajectory intent packets/messages or dynamic candidate transport.
+- TPA, PMR, MASD, AD, Cost, coordination, and activation.
+- V3 sampled positive-margin filtering.
+- TAS/nominal snapshot acquisition and shadow diagnostics; these remain Step 3.
+
+Verification:
+
+- `test_safe_control_candidate_adapter`: 15/15 passed.
+- Full `collision_avoidance` result: 122 tests, 0 errors, 0 failures,
+  0 skipped.
+- `git diff --check`: passed.
+- The adapter header/source contain no ROS or PX4 message include.
+- Existing `PredictTypes.hpp` received only its missing direct `<cstddef>`
+  include so it remains self-contained when the adapter uses `PredictInput`.
+
+Step 2 adversarial findings corrected before acceptance:
+
+1. The first CMake draft compiled the adapter into the Step 1 core target.
+   The adapter is now a separate static library linked to the unchanged core
+   target, preserving the core/candidate boundary.
+2. A zero robustness guard and tolerance-sized family-sign violations were
+   initially accepted. The guard must now be positive and feasible intervals
+   must remain strictly inside their Left or Right physical domains.
+3. The first inverse sign-conversion implementation could return infinity for
+   finite but extreme inputs. Both conversion directions now reject non-finite
+   results with `NaN`, and the overflow boundary is tested.
+
+### Step 2 five-axis audit
+
+Audit scope:
+
+- Source: `codex_v4_implementation_decisions_v2.md`, especially the nominal
+  projection, maximum-three candidate, guard, and sign-contract sections.
+- Derived contract: Sections 4, 5, 9, and 10 of this plan.
+- Implementation: `SafeControlCandidateAdapter.hpp/.cpp`, its CMake target,
+  and `test_safe_control_candidate_adapter.cpp`.
+- Excluded: runtime data acquisition, packet transport, downstream scoring,
+  activation, and SILS claims.
+
+| Axis | Result | Evidence |
+|---|---|---|
+| Source accuracy | PASS | The implementation uses the documented project design of nominal projection plus separate Left/Right representatives, and the locally investigated sign equations `a_lat=-V_TAS*r_v4` and `r_v4=-a_lat/V_TAS`. It does not label this projection as an original Auto ACAS equation. |
+| No over-interpretation | PASS | The adapter returns discrete predictor inputs only. It makes no claim of forward invariance, uncertainty robustness, DSD satisfaction, activation behavior, or SILS safety. Missing nominal input omits only `NearNominal`. |
+| Proportional complexity | PASS | One pure fixed-size adapter library and one test target were added. It reuses `SafeControlSetV4Result` and the existing `PredictInput`; there is no ROS node, allocation, optimizer, packet path, trajectory generator, or downstream evaluator duplication. |
+| Implementation correctness | PASS | Tests cover safe/unsafe-gap projection, deterministic tie handling, guarded endpoints, midpoint fallback, duplicate suppression, one-family and no-family cases, maximum-three count, exact sign/round-trip, command preservation, no climb, NaN fallback, invalid input, and conversion overflow. The complete 122-test package suite passes. |
+| Directional alignment | PASS | Left and Right intervals are never merged; every candidate remains within one feasible family, and candidate selection remains an adapter downstream of the V4 core and upstream of the unchanged TPA/AD layers. |
+
+Cross-axis dependencies: none remain. All evidence required for Step 2 is
+available, and every applicable axis passes. Runtime correctness and SILS
+safety remain explicitly unevaluated until Steps 3 through 6.

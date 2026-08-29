@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 /* ═══════════════════════════════════════════════════════════════
    PredictTypes.hpp — trajectory prediction 알고리즘 입출력 POD 정의
 

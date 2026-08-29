@@ -57,6 +57,21 @@ target_include_directories(safe_control_set_v4 PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
+# ROS-independent adapter from V4 intervals to existing predictor inputs.
+add_library(safe_control_candidate_adapter STATIC
+    src/selection/SafeControlCandidateAdapter.cpp
+)
+add_library(collision_avoidance::safe_control_candidate_adapter ALIAS
+    safe_control_candidate_adapter
+)
+target_include_directories(safe_control_candidate_adapter PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(safe_control_candidate_adapter PUBLIC
+    safe_control_set_v4
+)
+
 # Pure C++ trajectory predictor. This is the production source of truth used by
 # both the onboard runtime and the HILS verification packages.
 add_library(trajectory_prediction_core STATIC
@@ -362,6 +377,15 @@ if(BUILD_TESTING)
         safe_control_set_v4
     )
     target_include_directories(test_safe_control_set_v4 PRIVATE include)
+
+    ament_add_gtest(test_safe_control_candidate_adapter
+        test/test_safe_control_candidate_adapter.cpp
+    )
+    target_link_libraries(test_safe_control_candidate_adapter
+        safe_control_candidate_adapter
+    )
+    target_include_directories(
+        test_safe_control_candidate_adapter PRIVATE include)
 endif()
 
 ament_package()
