@@ -45,6 +45,18 @@ target_include_directories(ground_to_eas_adapter PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
+# ROS-independent V4 scalar safe-control interval core.
+add_library(safe_control_set_v4 STATIC
+    src/selection/SafeControlSetV4.cpp
+)
+add_library(collision_avoidance::safe_control_set_v4 ALIAS
+    safe_control_set_v4
+)
+target_include_directories(safe_control_set_v4 PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
 # Pure C++ trajectory predictor. This is the production source of truth used by
 # both the onboard runtime and the HILS verification packages.
 add_library(trajectory_prediction_core STATIC
@@ -166,6 +178,7 @@ target_link_libraries(distributed_maneuver_selection_runtime
 install(TARGETS
     common_coordinate_transform
     ground_to_eas_adapter
+    safe_control_set_v4
     trajectory_prediction_core
     trajectory_reconstruction
     trajectory_intent
@@ -341,6 +354,14 @@ if(BUILD_TESTING)
         ground_to_eas_adapter
     )
     target_include_directories(test_ground_to_eas_adapter PRIVATE include)
+
+    ament_add_gtest(test_safe_control_set_v4
+        test/test_safe_control_set_v4.cpp
+    )
+    target_link_libraries(test_safe_control_set_v4
+        safe_control_set_v4
+    )
+    target_include_directories(test_safe_control_set_v4 PRIVATE include)
 endif()
 
 ament_package()
