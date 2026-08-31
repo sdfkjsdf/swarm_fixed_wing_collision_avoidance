@@ -219,6 +219,10 @@ cs::ManeuverSelectionPeerDecision peerDecision(
     peer.activation_requested = decision.activation_requested;
     peer.command_execution_requested =
         decision.command_execution_requested;
+    peer.handoff_evaluation_epoch = decision.handoff_evaluation_epoch;
+    peer.handoff_ready = decision.handoff_ready;
+    peer.handoff_consensus_confirmed =
+        decision.handoff_consensus_confirmed;
     peer.v4_horizon_local_gate_active =
         decision.v4_horizon_local_gate_active;
     peer.v4_cutover_candidate_ready =
@@ -317,7 +321,10 @@ TEST(ManeuverSelectionWorker, V4ShadowReportsMissingPeerWithoutChangingIntents)
         beliefSnapshot(timestamp_us, 0.0, 0.0, 20.0, 0.0));
 
     ASSERT_TRUE(output.has_decision);
-    EXPECT_EQ(output.intent_packet_count, 3U);
+    ASSERT_EQ(output.intent_packet_count, 4U);
+    EXPECT_EQ(
+        output.intent_packets[3].candidate_set_kind,
+        ce::CandidateSetKind::FlockingHandoff);
     EXPECT_TRUE(output.decision.v4_enabled);
     EXPECT_TRUE(output.decision.v4_shadow_only);
     EXPECT_FALSE(output.decision.v4_shadow_evaluated);
@@ -382,7 +389,10 @@ TEST(ManeuverSelectionWorker, V4ShadowEvaluatesFreshSelectedPeerIntent)
         cs::SafeCandidateRole::NearNominal);
 
     // Step 3 is diagnostic-only: legacy intent IDs and command state remain.
-    EXPECT_EQ(output.intent_packet_count, 3U);
+    ASSERT_EQ(output.intent_packet_count, 4U);
+    EXPECT_EQ(
+        output.intent_packets[3].candidate_set_kind,
+        ce::CandidateSetKind::FlockingHandoff);
     EXPECT_FALSE(output.decision.coordination_qualified);
     EXPECT_FALSE(output.decision.activation_requested);
 
@@ -1189,6 +1199,164 @@ TEST(ManeuverSelectionWorker, MonitorsActivationBetweenSelectionEvents)
     EXPECT_TRUE(second_output.decision.activation_just_started);
     EXPECT_EQ(first_output.decision.local_selection_epoch, selected_epoch);
     EXPECT_EQ(second_output.decision.local_selection_epoch, selected_epoch);
+}
+
+TEST(ManeuverSelectionWorker,
+    CoordinatesCpaAndSafeFlockingHandoffBeforeDeactivation)
+{
+    auto first_params = params();
+    first_params.v4_safe_control_enabled = true;
+    auto second_params = params(1);
+    second_params.v4_safe_control_enabled = true;
+    cs::ManeuverSelectionWorker first(first_params);
+    cs::ManeuverSelectionWorker second(second_params);
+    constexpr std::uint64_t start = 6'500'000ULL;
+
+    cs::ManeuverSelectionWorkerOutput first_output;
+    cs::ManeuverSelectionWorkerOutput second_output;
+    for (const std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
+        pushV4Inputs(first, start + offset);
+        pushV4Inputs(second, start + offset);
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                start + offset, -45.0 + 20.0 * elapsed_s,
+                0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                start + offset, 45.0 - 20.0 * elapsed_s,
+                0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+
+    pushV4Inputs(first, start + 250'000ULL);
+    pushV4Inputs(second, start + 250'000ULL);
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(start + 250'000ULL, -40.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second,
+        beliefSnapshot(start + 250'000ULL, 40.0, 0.0, -20.0, 0.0));
+    auto commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    first_output = commits[0];
+    second_output = commits[1];
+    ASSERT_TRUE(first_output.decision.activation_requested);
+    ASSERT_TRUE(second_output.decision.activation_requested);
+
+    bool first_ended = false;
+    bool second_ended = false;
+    for (std::size_t step = 0; step < 5; ++step) {
+        const std::uint64_t timestamp_us =
+            start + 300'000ULL + step * 50'000ULL;
+        ASSERT_TRUE(first.pushRemoteDecision(
+            1, peerDecision(second_output.decision)));
+        ASSERT_TRUE(second.pushRemoteDecision(
+            0, peerDecision(first_output.decision)));
+        pushV4Inputs(first, timestamp_us);
+        pushV4Inputs(second, timestamp_us);
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                timestamp_us,
+                -100.0 - static_cast<double>(step),
+                0.0, -20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                timestamp_us,
+                100.0 + static_cast<double>(step),
+                0.0, 20.0, 0.0));
+        ASSERT_TRUE(first_output.has_decision);
+        ASSERT_TRUE(second_output.has_decision);
+        exchangePackets(first, second, first_output, second_output);
+        first_ended = first_ended
+            || first_output.decision.activation_just_ended;
+        second_ended = second_ended
+            || second_output.decision.activation_just_ended;
+        if (!first_output.decision.activation_requested
+            && !second_output.decision.activation_requested) {
+            break;
+        }
+    }
+
+    EXPECT_TRUE(first_ended);
+    EXPECT_TRUE(second_ended);
+    EXPECT_FALSE(first_output.decision.activation_requested);
+    EXPECT_FALSE(second_output.decision.activation_requested);
+    EXPECT_TRUE(first_output.decision.handoff_cpa_clear);
+    EXPECT_TRUE(second_output.decision.handoff_cpa_clear);
+    EXPECT_TRUE(first_output.decision.handoff_post_ad_safe);
+    EXPECT_TRUE(second_output.decision.handoff_post_ad_safe);
+    EXPECT_EQ(
+        first_output.decision.deactivation_reason,
+        cs::ManeuverDeactivationReason::CoordinatedPostHandoffSafe);
+    EXPECT_EQ(
+        second_output.decision.deactivation_reason,
+        cs::ManeuverDeactivationReason::CoordinatedPostHandoffSafe);
+
+    // No time lockout is used. The verified Flocking tuple remains inactive
+    // while its own post-handoff AD is safe, then a newly unsafe Flocking
+    // tuple permits activation immediately on that same update.
+    constexpr std::uint64_t safe_follow_timestamp_us =
+        start + 550'000ULL;
+    ASSERT_TRUE(first.pushRemoteDecision(
+        1, peerDecision(second_output.decision)));
+    ASSERT_TRUE(second.pushRemoteDecision(
+        0, peerDecision(first_output.decision)));
+    pushV4Inputs(first, safe_follow_timestamp_us);
+    pushV4Inputs(second, safe_follow_timestamp_us);
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(
+            safe_follow_timestamp_us, -110.0, 0.0, -20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second,
+        beliefSnapshot(
+            safe_follow_timestamp_us, 110.0, 0.0, 20.0, 0.0));
+    exchangePackets(first, second, first_output, second_output);
+    ASSERT_TRUE(first_output.has_decision);
+    ASSERT_TRUE(second_output.has_decision);
+    EXPECT_TRUE(first_output.decision.handoff_post_ad_safe);
+    EXPECT_TRUE(second_output.decision.handoff_post_ad_safe);
+    EXPECT_FALSE(first_output.decision.activation_requested);
+    EXPECT_FALSE(second_output.decision.activation_requested);
+
+    constexpr std::uint64_t unsafe_follow_timestamp_us =
+        start + 600'000ULL;
+    pushV4Inputs(first, unsafe_follow_timestamp_us);
+    pushV4Inputs(second, unsafe_follow_timestamp_us);
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(
+            unsafe_follow_timestamp_us, -5.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second,
+        beliefSnapshot(
+            unsafe_follow_timestamp_us, 5.0, 0.0, -20.0, 0.0));
+    exchangePackets(first, second, first_output, second_output);
+
+    constexpr std::uint64_t unsafe_evaluation_timestamp_us =
+        start + 650'000ULL;
+    pushV4Inputs(first, unsafe_evaluation_timestamp_us);
+    pushV4Inputs(second, unsafe_evaluation_timestamp_us);
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(
+            unsafe_evaluation_timestamp_us, -4.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second,
+        beliefSnapshot(
+            unsafe_evaluation_timestamp_us, 4.0, 0.0, -20.0, 0.0));
+    ASSERT_TRUE(first_output.has_decision);
+    ASSERT_TRUE(second_output.has_decision);
+    EXPECT_FALSE(first_output.decision.handoff_post_ad_safe);
+    EXPECT_FALSE(second_output.decision.handoff_post_ad_safe);
+    EXPECT_TRUE(first_output.decision.activation_requested);
+    EXPECT_TRUE(second_output.decision.activation_requested);
 }
 
 TEST(ManeuverSelectionWorker, WarmsSelectionButDoesNotActivateBeforeGateOpens)

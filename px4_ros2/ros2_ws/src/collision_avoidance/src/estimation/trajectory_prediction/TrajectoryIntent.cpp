@@ -260,7 +260,9 @@ bool TrajectoryIntentReceiver::receive(
         || packet.candidate_set_size > kManeuverCandidateCount
         || (packet.candidate_set_kind != CandidateSetKind::LegacyRoll
             && packet.candidate_set_kind
-                != CandidateSetKind::V4SafeControl)
+                != CandidateSetKind::V4SafeControl
+            && packet.candidate_set_kind
+                != CandidateSetKind::FlockingHandoff)
         || !usableInput(input)
         || packet.candidate_input_revision != inputRevision(
             packet.candidate_id, packet.candidate_input)

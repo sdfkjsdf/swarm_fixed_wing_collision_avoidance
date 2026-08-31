@@ -28,8 +28,11 @@ scripts/run_flocking_case.sh avoidance
 # Reuse the 250 m-radius pentagon spawn and run FlockingGuidance only.
 FLOCKING_LAYOUT=pentagon scripts/run_flocking_case.sh baseline
 
-# Test-only: evaluate all 7^5 = 16,807 roll combinations.
-MANEUVER_SEARCH_MODE=exhaustive scripts/run_point_convergence_case.sh avoidance
+# The HILS default evaluates all 7^5 = 16,807 roll combinations.
+scripts/run_point_convergence_case.sh avoidance
+
+# Explicit comparison only: restore Current Best + two alternates.
+MANEUVER_SEARCH_MODE=heuristic scripts/run_point_convergence_case.sh avoidance
 ```
 
 The opposite-edge mapping is cyclic: vehicle 0 targets the midpoint of the
@@ -91,23 +94,27 @@ To rebuild the plot and video without rerunning Gazebo:
 scripts/process_point_convergence_bag.sh <run_id>
 ```
 
-The heuristic candidate selector is deliberately replaceable. It retains the
-current best candidate and ranks two alternates by worst pairwise AD, using a
-deterministic right-turn tie break before useful remote information exists.
-The actual joint evaluator still evaluates all `3^5 = 243` combinations and all
-ten aircraft pairs per combination.
+HILS validation publishes all seven lateral candidates per aircraft and
+evaluates all `7^5 = 16,807` combinations by default. Pair trajectory
+calculations are cached as ten aircraft pairs times `7 x 7 = 490` unique pair
+evaluations before the joint combinations are reduced to the best result.
 
-`MANEUVER_SEARCH_MODE=exhaustive` is a diagnostic HILS mode, not the production
-datalink policy. It publishes all seven lateral candidates per aircraft and
-evaluates all `7^5 = 16,807` combinations. Pair trajectory calculations are
-cached as ten aircraft pairs times `7 x 7 = 490` unique pair evaluations before
-the joint combinations are reduced to the best result.
+`MANEUVER_SEARCH_MODE=heuristic` is retained only for an explicit comparison.
+It keeps the current best candidate and ranks two alternates by worst pairwise
+AD, then evaluates `3^5 = 243` joint combinations. It is not used implicitly by
+the HILS runner.
 
 Selection and execution are separate. Selection proposals are refreshed at
 4 Hz, while the existing 20 Hz trajectory refresh monitors ownship-versus-
 threat AD. Under `amac_ad_threshold`, once activated the ownship command
-remains active until every affected pair is non-closing. Elapsed time cannot
-end that conflict episode. Under `continuous_v4`, AMAC activation and latching stay
+does not end on CPA clearance alone. Each node also predicts the actual
+Flocking command for 4.5 s, evaluates all ten post-handoff pairs, and requires
+`AD_post >= 0`. The five nodes exchange readiness and confirmation before the
+coordinated return to Flocking. There is no elapsed-time termination or
+reactivation lockout. After return, activation supervision follows the actual
+Flocking tuple that was verified; a negative or unavailable post-handoff AD
+releases that state immediately and permits avoidance activation in the same
+update. Under `continuous_v4`, AMAC activation and latching stay
 disabled; every newly coordinated V4 tuple is eligible for execution.
 Under `horizon_gated_v4`, AMAC activation remains separate and V4 execution is
 controlled by the 4.5 s robust-cone horizon gate described above. V4

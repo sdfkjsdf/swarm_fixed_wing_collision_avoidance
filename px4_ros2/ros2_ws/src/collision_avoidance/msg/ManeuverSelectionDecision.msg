@@ -43,6 +43,15 @@ bool command_execution_requested
 bool activation_just_started
 bool activation_just_ended
 
+# Two-phase coordinated return to the actual nominal Flocking command.
+uint64 handoff_evaluation_epoch
+bool handoff_cpa_clear
+bool handoff_post_ad_evaluated
+bool handoff_post_ad_safe
+float32 handoff_post_minimum_ad_m
+bool handoff_ready
+bool handoff_consensus_confirmed
+
 # Robust 4.5 s near-nominal cone supervisor used only by horizon_gated_v4.
 bool v4_horizon_gate_evaluated
 bool v4_horizon_gate_valid

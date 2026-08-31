@@ -156,6 +156,11 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->activation_requested;
                     decision.command_execution_requested =
                         message->command_execution_requested;
+                    decision.handoff_evaluation_epoch =
+                        message->handoff_evaluation_epoch;
+                    decision.handoff_ready = message->handoff_ready;
+                    decision.handoff_consensus_confirmed =
+                        message->handoff_consensus_confirmed;
                     decision.v4_horizon_local_gate_active =
                         message->v4_horizon_local_gate_active;
                     decision.v4_cutover_candidate_ready =
@@ -437,6 +442,18 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.activation_just_started;
                 message.activation_just_ended =
                     decision.activation_just_ended;
+                message.handoff_evaluation_epoch =
+                    decision.handoff_evaluation_epoch;
+                message.handoff_cpa_clear = decision.handoff_cpa_clear;
+                message.handoff_post_ad_evaluated =
+                    decision.handoff_post_ad_evaluated;
+                message.handoff_post_ad_safe =
+                    decision.handoff_post_ad_safe;
+                message.handoff_post_minimum_ad_m = static_cast<float>(
+                    decision.handoff_post_minimum_ad_m);
+                message.handoff_ready = decision.handoff_ready;
+                message.handoff_consensus_confirmed =
+                    decision.handoff_consensus_confirmed;
                 message.v4_enabled = decision.v4_enabled;
                 message.v4_shadow_only = decision.v4_shadow_only;
                 message.v4_shadow_evaluated =
@@ -530,7 +547,10 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 "proposal_epoch=%llu remote_epoch=%llu qualified=%d "
                 "proposal_confirmed=%d switch_eval=%d superior=%d "
                 "accepted=%d own=%u threat=%u AD=%.3f active=%d "
-                "execute=%d h_local=%d h_gate=%d h_worst=%.3f start=%d end=%d reason=%u",
+                "execute=%d h_local=%d h_gate=%d h_worst=%.3f "
+                "handoff_cpa=%d post_eval=%d post_safe=%d post_ad=%.3f "
+                "handoff_ready=%d handoff_confirmed=%d "
+                "start=%d end=%d reason=%u",
                 m_vehicle_id,
                 static_cast<unsigned long long>(
                     output->decision.local_selection_epoch),
@@ -551,6 +571,12 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 output->decision.v4_horizon_local_gate_active ? 1 : 0,
                 output->decision.v4_horizon_gate_active ? 1 : 0,
                 output->decision.v4_horizon_h_worst_m,
+                output->decision.handoff_cpa_clear ? 1 : 0,
+                output->decision.handoff_post_ad_evaluated ? 1 : 0,
+                output->decision.handoff_post_ad_safe ? 1 : 0,
+                output->decision.handoff_post_minimum_ad_m,
+                output->decision.handoff_ready ? 1 : 0,
+                output->decision.handoff_consensus_confirmed ? 1 : 0,
                 output->decision.activation_just_started ? 1 : 0,
                 output->decision.activation_just_ended ? 1 : 0,
                 static_cast<unsigned>(output->decision.deactivation_reason));

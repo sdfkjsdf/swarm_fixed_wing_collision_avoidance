@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <thread>
 
@@ -21,6 +22,8 @@ namespace collision_avoidance::selection
 inline constexpr std::size_t kEligibleLateralCandidateCount = 7;
 inline constexpr std::size_t kSelectionWorkerInputCapacity = 64;
 inline constexpr std::size_t kSelectionWorkerOutputCapacity = 16;
+inline constexpr std::size_t kMaximumIntentPacketsPerOutput =
+    kExhaustiveCandidatesPerAircraft + 1;
 
 enum class V4ShadowEvaluationStatus : std::uint8_t
 {
@@ -187,6 +190,15 @@ struct ManeuverSelectionDecision
     bool activation_just_started{false};
     bool activation_just_ended{false};
 
+    std::uint64_t handoff_evaluation_epoch{0};
+    bool handoff_cpa_clear{false};
+    bool handoff_post_ad_evaluated{false};
+    bool handoff_post_ad_safe{false};
+    double handoff_post_minimum_ad_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    bool handoff_ready{false};
+    bool handoff_consensus_confirmed{false};
+
     // Horizon-gated V4 supervision. This is distinct from AMAC AD activation.
     bool v4_horizon_gate_evaluated{false};
     bool v4_horizon_gate_valid{false};
@@ -254,6 +266,9 @@ struct ManeuverSelectionPeerDecision
     bool coordination_qualified{false};
     bool activation_requested{false};
     bool command_execution_requested{false};
+    std::uint64_t handoff_evaluation_epoch{0};
+    bool handoff_ready{false};
+    bool handoff_consensus_confirmed{false};
     bool v4_horizon_local_gate_active{false};
     // Derived from the peer's published V4 diagnostics. This advertises only
     // bootstrap readiness; it is neither a command nor a committed cutover.
@@ -331,7 +346,7 @@ struct ManeuverSelectionWorkerOutput
     std::uint64_t selection_epoch{0};
     std::array<
         estimation::TrajectoryIntentPacket,
-        kExhaustiveCandidatesPerAircraft> intent_packets{};
+        kMaximumIntentPacketsPerOutput> intent_packets{};
     std::size_t intent_packet_count{0};
     ManeuverSelectionDecision decision{};
     bool has_decision{false};
@@ -462,6 +477,9 @@ private:
     bool buildCurrentIntentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
+    bool appendFlockingHandoffIntent(
+        std::uint64_t now_us,
+        ManeuverSelectionWorkerOutput & output);
     bool buildV4IntentSet(
         std::uint64_t now_us,
         const SafeControlCandidateAdapterResult & candidates,
@@ -505,6 +523,12 @@ private:
         std::uint64_t now_us,
         ManeuverActivationSample & sample,
         ManeuverSelectionDecision & decision) const;
+    bool evaluatePostHandoffTuple(
+        std::uint64_t now_us,
+        double & minimum_ad_m) const;
+    bool allPeerHandoffReady(
+        std::uint64_t epoch,
+        bool require_consensus) const noexcept;
     void updateActivationState(
         std::uint64_t now_us,
         bool force_decision_output,
@@ -586,6 +610,11 @@ private:
     std::uint64_t m_v4_horizon_latched_input_revision{0};
     estimation::PredictInput m_v4_horizon_latched_input{};
     bool m_v4_horizon_latch_valid{false};
+    // After a coordinated return, the actual nominal Flocking trajectory is
+    // the executed plan. Continue supervising that plan without a time-based
+    // reactivation lockout; leave this state immediately if its AD turns
+    // negative or cannot be evaluated.
+    bool m_following_verified_flocking_handoff{false};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
         m_remote_caches{};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
@@ -595,6 +624,11 @@ private:
     // 4 Hz coordination race without duplicating another full trajectory set.
     std::array<RemoteSelectedIntentCache, kMaximumSelectionAircraft>
         m_remote_selected_caches{};
+    // Keep the five full reconstructed handoff cones off the worker's stack.
+    // They are allocated once at construction and reused at 20 Hz.
+    std::unique_ptr<std::array<
+        RemoteSelectedIntentCache, kMaximumSelectionAircraft>>
+        m_handoff_intents;
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
         m_remote_staging_caches{};
     std::array<RemoteDecisionCache, kMaximumSelectionAircraft>

@@ -101,16 +101,20 @@ def interpolate_tracks(messages, sample_hz: float, evaluation_start_ns: int):
         times_ns = np.asarray([record[0] for record in records], dtype=np.int64)
         positions = np.asarray(
             [record[1].position for record in records], dtype=np.float64)
+        velocities = np.asarray(
+            [record[1].velocity for record in records], dtype=np.float64)
         headings = np.asarray(
             [quaternion_yaw_ned(record[1].q) for record in records],
             dtype=np.float64)
         order = np.argsort(times_ns, kind="stable")
         times_ns = times_ns[order]
         positions = positions[order]
+        velocities = velocities[order]
         headings = headings[order]
         unique = np.concatenate(([True], np.diff(times_ns) > 0))
         raw_tracks.append(
-            (times_ns[unique], positions[unique], headings[unique]))
+            (times_ns[unique], positions[unique], velocities[unique],
+             headings[unique]))
 
     common_stream_start_ns = max(track[0][0] for track in raw_tracks)
     start_ns = max(common_stream_start_ns, evaluation_start_ns)
@@ -120,14 +124,20 @@ def interpolate_tracks(messages, sample_hz: float, evaluation_start_ns: int):
     step_ns = max(1, int(round(1.0e9 / sample_hz)))
     grid_ns = np.arange(start_ns, end_ns + 1, step_ns, dtype=np.int64)
     tracks = np.empty((AIRCRAFT_COUNT, len(grid_ns), 3), dtype=np.float64)
+    velocities = np.empty_like(tracks)
     body_headings = np.empty(
         (AIRCRAFT_COUNT, len(grid_ns)), dtype=np.float64)
-    for vehicle, (times_ns, positions, headings) in enumerate(raw_tracks):
+    for vehicle, (times_ns, positions, raw_velocities, headings) in enumerate(
+            raw_tracks):
         for axis in range(3):
             tracks[vehicle, :, axis] = np.interp(
                 grid_ns.astype(np.float64),
                 times_ns.astype(np.float64),
                 positions[:, axis])
+            velocities[vehicle, :, axis] = np.interp(
+                grid_ns.astype(np.float64),
+                times_ns.astype(np.float64),
+                raw_velocities[:, axis])
         finite_heading = np.isfinite(headings)
         if np.count_nonzero(finite_heading) < 2:
             raise RuntimeError(
@@ -137,7 +147,14 @@ def interpolate_tracks(messages, sample_hz: float, evaluation_start_ns: int):
             times_ns[finite_heading].astype(np.float64),
             np.unwrap(headings[finite_heading]))
     elapsed_s = (grid_ns - grid_ns[0]).astype(np.float64) * 1.0e-9
-    return grid_ns, elapsed_s, tracks, body_headings
+    return grid_ns, elapsed_s, tracks, velocities, body_headings
+
+
+def fleet_standard_deviations(tracks, velocities):
+    """Return population 3-D spread about the five-aircraft centroid."""
+    position_sigma = np.linalg.norm(np.std(tracks, axis=0), axis=1)
+    velocity_sigma = np.linalg.norm(np.std(velocities, axis=0), axis=1)
+    return position_sigma, velocity_sigma
 
 
 def separation_history(tracks):
@@ -341,11 +358,28 @@ def activation_state_summary(decisions):
         active_revision_switch_count = 0
         repeated_start_flag_count = 0
         repeated_end_flag_count = 0
+        handoff_cpa_clear_count = 0
+        handoff_post_safe_count = 0
+        handoff_ready_count = 0
+        handoff_consensus_count = 0
+        handoff_post_ad_values = []
         previous_active = False
         previous_active_candidate = None
         previous_active_revision = None
         for time_s, message in records:
             active = command_execution_requested(message)
+            handoff_cpa_clear_count += int(bool(
+                getattr(message, "handoff_cpa_clear", False)))
+            handoff_post_safe_count += int(bool(
+                getattr(message, "handoff_post_ad_safe", False)))
+            handoff_ready_count += int(bool(
+                getattr(message, "handoff_ready", False)))
+            handoff_consensus_count += int(bool(
+                getattr(message, "handoff_consensus_confirmed", False)))
+            handoff_post_ad = float(getattr(
+                message, "handoff_post_minimum_ad_m", math.nan))
+            if math.isfinite(handoff_post_ad):
+                handoff_post_ad_values.append(handoff_post_ad)
             if active and not previous_active:
                 starts.append({
                     "time_s": float(time_s),
@@ -387,6 +421,13 @@ def activation_state_summary(decisions):
             "active_revision_switch_count": active_revision_switch_count,
             "repeated_start_flag_count": repeated_start_flag_count,
             "repeated_end_flag_count": repeated_end_flag_count,
+            "handoff_cpa_clear_record_count": handoff_cpa_clear_count,
+            "handoff_post_safe_record_count": handoff_post_safe_count,
+            "handoff_ready_record_count": handoff_ready_count,
+            "handoff_consensus_record_count": handoff_consensus_count,
+            "handoff_post_ad_m_range": (
+                [min(handoff_post_ad_values), max(handoff_post_ad_values)]
+                if handoff_post_ad_values else None),
             "starts": starts,
             "ends": ends,
         })
@@ -827,13 +868,14 @@ def distributed_tuple_label(decisions, elapsed_s):
 
 
 def save_summary_plot(
-        path, elapsed_s, tracks, body_headings, minimum_distance, dsd_m,
-        target_norths, target_easts, scenario_label, show_targets):
+        path, elapsed_s, tracks, body_headings, minimum_distance,
+        position_sigma, velocity_sigma, dsd_m, target_norths, target_easts,
+        scenario_label, show_targets):
     figure = plt.figure(figsize=(15, 9), constrained_layout=True)
     grid = figure.add_gridspec(2, 2)
     map_axis = figure.add_subplot(grid[:, 0])
     separation_axis = figure.add_subplot(grid[0, 1])
-    heading_axis = figure.add_subplot(grid[1, 1])
+    dispersion_axis = figure.add_subplot(grid[1, 1])
     heading_stride = max(
         1, int(round(3.0 / max(float(np.median(np.diff(elapsed_s))), 1e-6))))
     heading_indices = np.arange(0, len(elapsed_s), heading_stride)
@@ -859,9 +901,6 @@ def save_summary_plot(
             angles="xy", scale_units="xy", scale=1.0,
             color=COLORS[vehicle], alpha=0.72, width=0.0035,
             headwidth=4.0, headlength=5.0)
-        heading_axis.plot(
-            elapsed_s, np.rad2deg(body_headings[vehicle]),
-            color=COLORS[vehicle], label=f"aircraft {vehicle}")
     if show_targets:
         map_axis.scatter(
             target_easts, target_norths, marker="*", c=COLORS, s=160,
@@ -885,11 +924,37 @@ def save_summary_plot(
     separation_axis.grid(True, alpha=0.3)
     separation_axis.legend(loc="best")
 
-    heading_axis.set_title("Actual body heading from odometry attitude")
-    heading_axis.set_xlabel("Scenario elapsed time [s]")
-    heading_axis.set_ylabel("Unwrapped NED heading [deg]")
-    heading_axis.grid(True, alpha=0.3)
-    heading_axis.legend(loc="best", fontsize=8)
+    position_line, = dispersion_axis.plot(
+        elapsed_s, position_sigma, color="tab:blue",
+        label=r"position $\sigma_{3D}$")
+    dispersion_axis.set_title(
+        "Fleet position and velocity standard deviation\n"
+        "population spread about the five-aircraft centroid")
+    dispersion_axis.set_xlabel("Scenario elapsed time [s]")
+    dispersion_axis.set_ylabel(
+        r"3D position standard deviation $\sigma_p$ [m]",
+        color="tab:blue")
+    dispersion_axis.tick_params(axis="y", labelcolor="tab:blue")
+    dispersion_axis.grid(True, alpha=0.3)
+    velocity_axis = dispersion_axis.twinx()
+    velocity_line, = velocity_axis.plot(
+        elapsed_s, velocity_sigma, color="tab:orange",
+        label=r"velocity $\sigma_{3D}$")
+    velocity_axis.set_ylabel(
+        r"3D velocity standard deviation $\sigma_v$ [m/s]",
+        color="tab:orange")
+    velocity_axis.tick_params(axis="y", labelcolor="tab:orange")
+    dispersion_axis.legend(
+        [position_line, velocity_line],
+        [position_line.get_label(), velocity_line.get_label()],
+        loc="best", fontsize=8)
+    dispersion_axis.text(
+        0.02, 0.04,
+        f"final $\\sigma_p$ = {position_sigma[-1]:.2f} m\n"
+        f"final $\\sigma_v$ = {velocity_sigma[-1]:.2f} m/s",
+        transform=dispersion_axis.transAxes, va="bottom", ha="left",
+        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.82},
+        fontsize=9)
     figure.savefig(path, dpi=160)
     plt.close(figure)
 
@@ -1005,8 +1070,10 @@ def save_video(
 
 def analyze(args):
     messages = read_bag(args.bag)
-    grid_ns, elapsed_s, tracks, body_headings = interpolate_tracks(
+    grid_ns, elapsed_s, tracks, velocities, body_headings = interpolate_tracks(
         messages, args.sample_hz, args.evaluation_start_ns)
+    position_sigma, velocity_sigma = fleet_standard_deviations(
+        tracks, velocities)
     (pair_list, pair_distance, minimum_distance, minimum_horizontal,
      nearest_pair_index) = separation_history(tracks)
     decisions = decision_records(messages, int(grid_ns[0]))
@@ -1059,6 +1126,10 @@ def analyze(args):
         "dsd_violation_sample_count": int(np.count_nonzero(below_dsd)),
         "estimated_dsd_violation_duration_s": float(
             np.count_nonzero(below_dsd) * sample_dt_s),
+        "fleet_standard_deviation_definition": (
+            "population 3-D spread about the five-aircraft centroid"),
+        "final_position_standard_deviation_m": float(position_sigma[-1]),
+        "final_velocity_standard_deviation_mps": float(velocity_sigma[-1]),
         "decision_diagnostics": decision_summary(decisions),
         "v4_shadow_diagnostics": v4_shadow_summary(decisions),
         "v4_horizon_gate_diagnostics": v4_horizon_gate_summary(decisions),
@@ -1081,18 +1152,21 @@ def analyze(args):
         writer.writerow([
             "elapsed_s", "minimum_3d_separation_m",
             "minimum_horizontal_separation_m", "closest_aircraft_a",
-            "closest_aircraft_b", "below_dsd"])
+            "closest_aircraft_b", "below_dsd",
+            "position_standard_deviation_m",
+            "velocity_standard_deviation_mps"])
         for index, time_s in enumerate(elapsed_s):
             first, second = pair_list[int(nearest_pair_index[index])]
             writer.writerow([
                 f"{time_s:.3f}", f"{minimum_distance[index]:.6f}",
                 f"{minimum_horizontal[index]:.6f}", first, second,
-                int(below_dsd[index])])
+                int(below_dsd[index]), f"{position_sigma[index]:.6f}",
+                f"{velocity_sigma[index]:.6f}"])
 
     save_summary_plot(
         args.plot_dir / "actual_maneuver_overview.png",
         elapsed_s, tracks, body_headings, minimum_distance,
-        args.desired_separation_distance,
+        position_sigma, velocity_sigma, args.desired_separation_distance,
         target_norths, target_easts, args.scenario_label,
         args.show_targets)
     save_video(

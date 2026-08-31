@@ -30,6 +30,7 @@ enum class CandidateSetKind : std::uint8_t
 {
     LegacyRoll = 0,
     V4SafeControl = 1,
+    FlockingHandoff = 2,
 };
 
 struct ManeuverCandidateTable

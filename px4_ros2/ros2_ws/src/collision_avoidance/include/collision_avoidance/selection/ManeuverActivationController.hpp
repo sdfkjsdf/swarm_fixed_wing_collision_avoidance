@@ -12,13 +12,16 @@ namespace collision_avoidance::selection
 enum class ManeuverDeactivationReason : std::uint8_t
 {
     None = 0,
-    Separating,
+    FutureCpaClear,
+    CoordinatedPostHandoffSafe,
 };
 
 struct ManeuverActivationControllerParams
 {
-    // Project deactivation policy: every affected pair must be non-closing.
-    double separating_rate_threshold_mps{0.0};
+    // Project reconstruction for the unpublished Lockheed CPA special case.
+    // Below this squared relative speed, future relative position is treated
+    // as constant instead of dividing by a near-zero denominator.
+    double relative_speed_squared_epsilon_m2ps2{1.0e-12};
 };
 
 struct ManeuverActivationSample
@@ -27,10 +30,15 @@ struct ManeuverActivationSample
     bool valid{false};
     double minimum_ad_m{0.0};
     std::uint32_t unsafe_threat_mask{0};
-    std::array<double, kMaximumSelectionAircraft> separation_rates_mps{};
+    std::array<double, kMaximumSelectionAircraft> activation_criteria_m{};
+    std::array<std::array<double, 3>, kMaximumSelectionAircraft>
+        relative_positions_ned_m{};
+    std::array<std::array<double, 3>, kMaximumSelectionAircraft>
+        relative_velocities_ned_mps{};
     std::uint8_t selected_candidate_id{0};
     std::uint64_t selected_candidate_input_revision{0};
     estimation::PredictInput selected_input{};
+    bool coordinated_handoff_authorized{false};
 };
 
 struct ManeuverActivationStatus
@@ -42,6 +50,7 @@ struct ManeuverActivationStatus
         ManeuverDeactivationReason::None};
     std::uint64_t activation_timestamp_us{0};
     std::uint32_t affected_threat_mask{0};
+    std::array<double, kMaximumSelectionAircraft> activation_criteria_m{};
     std::uint8_t latched_candidate_id{0};
     std::uint64_t latched_candidate_input_revision{0};
     estimation::PredictInput latched_input{};
@@ -58,6 +67,8 @@ public:
 
     ManeuverActivationStatus update(
         const ManeuverActivationSample & sample) noexcept;
+    bool futureCpaClear(
+        const ManeuverActivationSample & sample) const noexcept;
     bool replaceActiveCommand(
         std::uint8_t candidate_id,
         std::uint64_t candidate_input_revision,
@@ -66,8 +77,12 @@ public:
     void reset() noexcept;
 
 private:
-    bool allAffectedThreatsSeparating(
-        const ManeuverActivationSample & sample) const noexcept;
+    void addNewAffectedThreats(
+        const ManeuverActivationSample & sample) noexcept;
+    bool futureCpaDistance(
+        const std::array<double, 3> & relative_position_ned_m,
+        const std::array<double, 3> & relative_velocity_ned_mps,
+        double & distance_m) const noexcept;
 
     ManeuverActivationControllerParams m_params;
     ManeuverActivationStatus m_status{};

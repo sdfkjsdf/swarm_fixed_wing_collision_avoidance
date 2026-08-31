@@ -15,7 +15,9 @@ FORMATION_HILS=${FORMATION_HILS:-${ROS2_WS}/src/testing_module/formation_hils}
 RESULT_ROOT=${RESULT_ROOT:-${HILS_ROOT}/result}
 RUN_DURATION_SECONDS=${RUN_DURATION_SECONDS:-55}
 MODE=${1:-avoidance}
-SEARCH_MODE=${MANEUVER_SEARCH_MODE:-heuristic}
+# HILS validation evaluates every configured roll candidate.  The heuristic
+# three-candidate reduction remains available only as an explicit comparison.
+SEARCH_MODE=${MANEUVER_SEARCH_MODE:-exhaustive}
 V4_MODE=${V4_MODE:-shadow}
 EXECUTION_POLICY=${AVOIDANCE_EXECUTION_POLICY:-amac_ad_threshold}
 AMAC_POLICY_CONFIG=${AMAC_POLICY_CONFIG:-${HILS_ROOT}/config/amac_dynamic_best.yaml}
