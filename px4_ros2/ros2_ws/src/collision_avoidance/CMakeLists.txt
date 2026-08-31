@@ -57,6 +57,36 @@ target_include_directories(safe_control_set_v4 PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
+# ROS-independent Mode-B fixed-direction backup dynamics and rollouts.
+add_library(backup_control_model_v4 STATIC
+    src/selection/BackupControlModelV4.cpp
+)
+add_library(collision_avoidance::backup_control_model_v4 ALIAS
+    backup_control_model_v4
+)
+target_include_directories(backup_control_model_v4 PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(backup_control_model_v4 PUBLIC
+    safe_control_set_v4
+)
+
+# Phase-1 Mode-B path and terminal-turn branch certifier.
+add_library(backup_safety_certifier_v4 STATIC
+    src/selection/BackupSafetyCertifierV4.cpp
+)
+add_library(collision_avoidance::backup_safety_certifier_v4 ALIAS
+    backup_safety_certifier_v4
+)
+target_include_directories(backup_safety_certifier_v4 PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(backup_safety_certifier_v4 PUBLIC
+    backup_control_model_v4
+)
+
 # ROS-independent adapter from V4 intervals to existing predictor inputs.
 add_library(safe_control_candidate_adapter STATIC
     src/selection/SafeControlCandidateAdapter.cpp
@@ -195,6 +225,8 @@ install(TARGETS
     common_coordinate_transform
     ground_to_eas_adapter
     safe_control_set_v4
+    backup_control_model_v4
+    backup_safety_certifier_v4
     safe_control_candidate_adapter
     trajectory_prediction_core
     trajectory_reconstruction
@@ -379,6 +411,15 @@ if(BUILD_TESTING)
         safe_control_set_v4
     )
     target_include_directories(test_safe_control_set_v4 PRIVATE include)
+
+    ament_add_gtest(test_backup_safety_certifier_v4
+        test/test_backup_safety_certifier_v4.cpp
+    )
+    target_link_libraries(test_backup_safety_certifier_v4
+        backup_safety_certifier_v4
+    )
+    target_include_directories(
+        test_backup_safety_certifier_v4 PRIVATE include)
 
     ament_add_gtest(test_safe_control_candidate_adapter
         test/test_safe_control_candidate_adapter.cpp
