@@ -211,7 +211,8 @@ each phase; this plan verdict is not a safety or runtime-performance claim.
 
 ## 8. Phase-1 implementation result - 2026-08-31
 
-Phase 1 is complete. Phase 2 has not started.
+Phase 1 is complete. This subsection records the Phase-1 acceptance gate;
+the later Phase-2 result is recorded in Section 9.
 
 Implemented artifacts:
 
@@ -281,4 +282,94 @@ Cross-axis dependencies: none remain for the bounded Phase-1 claim.
 
 Overall Phase-1 verdict: PASS. This is a software conformance result, not a
 formal safety proof or HILS performance result. Phase 2 is the next permitted
-implementation phase, but remains deferred pending an explicit next action.
+implementation phase.
+
+## 9. Phase-2 implementation result - 2026-08-31
+
+Phase 2 is complete as a ROS-independent computation layer. It is not wired
+to candidate management, a ROS node, or PX4 command output.
+
+Implemented artifacts:
+
+- `BackupControlInterpolatorV4` first runs the Phase-1 certifier and only
+  evaluates branches that Phase 1 certified.
+- For each certified branch, `q_nom(0)=f(x)+g(x)r_nom` and
+  `q_backup(0)=f(x)+g(x)r_backup` are propagated under the Jacobian of that
+  same fixed-direction backup flow.
+- Path-separation and terminal-turn directional rates form independent scalar
+  constraints `a_i+b_i*mu>=0` for LEFT and RIGHT.
+- Every constraint is explicitly intersected with `[0,1]`; positive,
+  negative, and degenerate `b_i` cases have explicit handling. The code does
+  not assume that `mu=1` is feasible.
+- Each feasible branch returns the minimum feasible `mu` and
+  `r_safe=(1-mu)r_nom+mu*r_backup`, along with bound and infeasibility
+  diagnostics.
+- The state-dependent turn-rate and turn-radius speed derivatives were added
+  to `BackupControlModelV4` so longitudinal drift is represented in both the
+  sensitivity flow and terminal gradient.
+- Existing legacy `SafeControlSetV4`, candidate generation, Auto-ACAS worker,
+  ROS communication, and PX4 command paths remain unchanged.
+
+The position-separation function is not directly affected by heading-rate at
+the initial instant. Accordingly, Phase 1 still checks the `t=0` physical
+margin, while Phase-2 directional constraints begin at the first propagated
+sample. This follows the reference OI implementation's relative-degree guard
+rather than making an uncontrollable `t=0` first-order constraint.
+
+Verification evidence:
+
+- Release package build: PASS.
+- Focused Phase-2 suite: 11/11 tests PASS.
+- Full `collision_avoidance` suite: 171 tests, 0 errors, 0 failures, 0 skipped.
+- `git diff --check`: PASS.
+- Modified/new sources under
+  `-Wall -Wextra -Wpedantic -Werror -fsyntax-only`: PASS.
+
+The focused suite covers nominal-safe `mu=0`, positive and negative scalar
+bounds, degenerate constraints, empty intersections, certified-only
+interpolation, increasing geometric danger, independent LEFT/RIGHT results,
+safe-rate bounds, finite-difference validation of directional rates,
+bank/yaw-limited speed derivatives, conflicting threats, invalid nominal
+commands, and invalid configuration.
+
+### Phase-2 adversarial findings
+
+One defect was found and corrected before acceptance: the initial draft
+constructed a path directional constraint at `t=0`. Since heading-rate cannot
+change position separation instantaneously, its coefficient was degenerate
+and it could reject a recoverable certified branch independently of the
+chosen command. The Phase-2 path-constraint loop now starts at the first
+propagated point; Phase-1 `t=0` physical certification was not weakened.
+
+Direction-separation checks pass:
+
+- LEFT and RIGHT reuse two separate Phase-1 trajectories and two separate
+  sensitivity arrays;
+- an uncertified branch is marked `NotCertified` and is never interpolated;
+- scalar intervals and minimum-intervention outputs are never merged across
+  directions;
+- the low-level result does not select an incumbent or emit a command;
+- no stateful direction latch or within-rollout LEFT/RIGHT transition exists.
+
+### Phase-2 five-axis source audit
+
+Audit scope: the authoritative Mode-B directive Sections 13-18, the reference
+OI directional implementation, the Phase-2 plan, the new interpolator
+header/source, the two derivative additions to the Phase-1 model, CMake
+targets, and focused tests. Phase 3 candidate management, runtime integration,
+PX4 cutover, uncertainty-cone inflation, HILS performance, and a formal
+moving-threat invariance proof are excluded.
+
+| Axis | Status | Source evidence | Implementation evidence | Reason / impact | Confidence |
+|---|---|---|---|---|---|
+| 1. Source accuracy and traceability | PASS | The authoritative directive requires independent LEFT/RIGHT interpolation, `q_nom`/`q_backup` propagation under the same backup flow, affine scalar constraints, explicit `[0,1]` intersection, and minimum feasible `mu`. The reference OI code initializes and propagates the two directional vectors and skips its initial relative-degree point. | The interpolator implements those operations directly and uses the already accepted Phase-1 path and terminal definitions. | Every material Phase-2 claim has a directly inspectable requirement or reference-code counterpart. | High |
+| 2. Interpretation fidelity | PASS | The directive explicitly forbids transferring the original feasibility theorem and separates candidate management from interpolation. | Empty intervals are reported as infeasible, `mu=1` is not presumed safe, and no candidate selection, persistence, coordination, or safety-proof claim was added. The gains remain configurable project parameters. | Source limitations and project-specific composition remain explicit. | High |
+| 3. Complexity proportionality | PASS | Phase 2 requires sensitivity propagation, constraint construction, scalar intersection, branch diagnostics, and tests, but not a node, solver, candidate manager, or PX4 adapter. | One fixed-capacity ROS-independent library and one focused test target were added. It reuses Phase 1 and the existing state types; it allocates no optimizer, node, thread, transport, or duplicate predictor. | Retained structures map to required computation or fail-closed diagnostics; deferred layers were not pulled forward. | High |
+| 4. Correct implementation under aligned direction | PASS | Required equations define the two initial directional vectors, same-flow Jacobian propagation, `a_i`/`b_i`, explicit scalar bounds, and the minimum-intervention blend. | NED/V4 signs, speed-dependent Jacobian and terminal-radius derivatives, all-threat indexing, degenerate bounds, residual checks, and output bounds are covered. Directional rates match central finite differences; focused and full regression suites pass. | The aligned architecture is realized correctly for the bounded Phase-2 software claim. | High |
+| 5. Directional alignment | PASS | The directive requires fixed direction inside one rollout, independent LEFT/RIGHT computation, no interval merge, and no Phase-3 selection in the Phase-2 layer. | Each branch consumes one immutable Phase-1 direction, retains its own interval/result, and returns both without choosing or applying either. Conflicting and uncertified-branch tests pass. | The governing structure remains Mode B and does not reintroduce MPC or within-rollout switching. | High |
+
+Cross-axis dependencies: none remain for the bounded Phase-2 claim.
+
+Overall Phase-2 verdict: PASS. This is a static/software-conformance result,
+not a formal safety proof or HILS performance result. Phase 3 candidate
+management and all runtime/PX4 integration remain deferred.

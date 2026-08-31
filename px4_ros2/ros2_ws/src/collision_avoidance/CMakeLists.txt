@@ -87,6 +87,21 @@ target_link_libraries(backup_safety_certifier_v4 PUBLIC
     backup_control_model_v4
 )
 
+# Phase-2 Mode-B directional sensitivity and scalar OI interpolation.
+add_library(backup_control_interpolator_v4 STATIC
+    src/selection/BackupControlInterpolatorV4.cpp
+)
+add_library(collision_avoidance::backup_control_interpolator_v4 ALIAS
+    backup_control_interpolator_v4
+)
+target_include_directories(backup_control_interpolator_v4 PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(backup_control_interpolator_v4 PUBLIC
+    backup_safety_certifier_v4
+)
+
 # ROS-independent adapter from V4 intervals to existing predictor inputs.
 add_library(safe_control_candidate_adapter STATIC
     src/selection/SafeControlCandidateAdapter.cpp
@@ -227,6 +242,7 @@ install(TARGETS
     safe_control_set_v4
     backup_control_model_v4
     backup_safety_certifier_v4
+    backup_control_interpolator_v4
     safe_control_candidate_adapter
     trajectory_prediction_core
     trajectory_reconstruction
@@ -420,6 +436,15 @@ if(BUILD_TESTING)
     )
     target_include_directories(
         test_backup_safety_certifier_v4 PRIVATE include)
+
+    ament_add_gtest(test_backup_control_interpolator_v4
+        test/test_backup_control_interpolator_v4.cpp
+    )
+    target_link_libraries(test_backup_control_interpolator_v4
+        backup_control_interpolator_v4
+    )
+    target_include_directories(
+        test_backup_control_interpolator_v4 PRIVATE include)
 
     ament_add_gtest(test_safe_control_candidate_adapter
         test/test_safe_control_candidate_adapter.cpp

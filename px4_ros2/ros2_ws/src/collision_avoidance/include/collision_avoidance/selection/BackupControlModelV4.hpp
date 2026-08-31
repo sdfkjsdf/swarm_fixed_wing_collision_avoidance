@@ -70,6 +70,15 @@ public:
     double effectiveMaxHeadingRate(
         double true_airspeed_mps) const noexcept;
 
+    // d(r_max_eff)/dV, with the bank-limited branch selected at the
+    // non-differentiable equality between the bank and yaw-rate limits.
+    double effectiveMaxHeadingRateSpeedDerivative(
+        double true_airspeed_mps) const noexcept;
+
+    // d(V/r_max_eff)/dV using the same active-limit convention.
+    double turningRadiusSpeedDerivative(
+        double true_airspeed_mps) const noexcept;
+
     double backupHeadingRate(
         BackupDirectionV4 direction,
         double true_airspeed_mps) const noexcept;

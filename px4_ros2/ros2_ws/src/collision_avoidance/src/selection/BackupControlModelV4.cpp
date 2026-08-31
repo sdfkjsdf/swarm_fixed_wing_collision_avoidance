@@ -117,6 +117,38 @@ double BackupControlModelV4::effectiveMaxHeadingRate(
         : std::numeric_limits<double>::quiet_NaN();
 }
 
+double BackupControlModelV4::effectiveMaxHeadingRateSpeedDerivative(
+    double true_airspeed_mps) const noexcept
+{
+    const double maximum_rate = effectiveMaxHeadingRate(
+        true_airspeed_mps);
+    if (!finite(maximum_rate)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const double bank_limited_rate = m_params.gravity_mps2
+        * std::tan(m_params.maximum_roll_rad)
+        / true_airspeed_mps;
+    return bank_limited_rate <= m_params.maximum_yaw_rate_radps
+        ? -bank_limited_rate / true_airspeed_mps
+        : 0.0;
+}
+
+double BackupControlModelV4::turningRadiusSpeedDerivative(
+    double true_airspeed_mps) const noexcept
+{
+    const double maximum_rate = effectiveMaxHeadingRate(
+        true_airspeed_mps);
+    if (!finite(maximum_rate)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const double bank_limited_rate = m_params.gravity_mps2
+        * std::tan(m_params.maximum_roll_rad)
+        / true_airspeed_mps;
+    return bank_limited_rate <= m_params.maximum_yaw_rate_radps
+        ? 2.0 / maximum_rate
+        : 1.0 / maximum_rate;
+}
+
 double BackupControlModelV4::backupHeadingRate(
     BackupDirectionV4 direction,
     double true_airspeed_mps) const noexcept
