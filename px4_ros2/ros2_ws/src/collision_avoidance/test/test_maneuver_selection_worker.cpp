@@ -219,10 +219,7 @@ cs::ManeuverSelectionPeerDecision peerDecision(
     peer.activation_requested = decision.activation_requested;
     peer.command_execution_requested =
         decision.command_execution_requested;
-    peer.handoff_evaluation_epoch = decision.handoff_evaluation_epoch;
-    peer.handoff_ready = decision.handoff_ready;
-    peer.handoff_consensus_confirmed =
-        decision.handoff_consensus_confirmed;
+    peer.v4_control_architecture = decision.v4_control_architecture;
     peer.v4_horizon_local_gate_active =
         decision.v4_horizon_local_gate_active;
     peer.v4_cutover_candidate_ready =
@@ -321,10 +318,7 @@ TEST(ManeuverSelectionWorker, V4ShadowReportsMissingPeerWithoutChangingIntents)
         beliefSnapshot(timestamp_us, 0.0, 0.0, 20.0, 0.0));
 
     ASSERT_TRUE(output.has_decision);
-    ASSERT_EQ(output.intent_packet_count, 4U);
-    EXPECT_EQ(
-        output.intent_packets[3].candidate_set_kind,
-        ce::CandidateSetKind::FlockingHandoff);
+    ASSERT_EQ(output.intent_packet_count, 3U);
     EXPECT_TRUE(output.decision.v4_enabled);
     EXPECT_TRUE(output.decision.v4_shadow_only);
     EXPECT_FALSE(output.decision.v4_shadow_evaluated);
@@ -389,10 +383,7 @@ TEST(ManeuverSelectionWorker, V4ShadowEvaluatesFreshSelectedPeerIntent)
         cs::SafeCandidateRole::NearNominal);
 
     // Step 3 is diagnostic-only: legacy intent IDs and command state remain.
-    ASSERT_EQ(output.intent_packet_count, 4U);
-    EXPECT_EQ(
-        output.intent_packets[3].candidate_set_kind,
-        ce::CandidateSetKind::FlockingHandoff);
+    ASSERT_EQ(output.intent_packet_count, 3U);
     EXPECT_FALSE(output.decision.coordination_qualified);
     EXPECT_FALSE(output.decision.activation_requested);
 
@@ -409,6 +400,71 @@ TEST(ManeuverSelectionWorker, V4ShadowEvaluatesFreshSelectedPeerIntent)
         next_output.decision.v4_safe_control
             .effective_max_heading_rate_radps,
         first_maximum_rate);
+}
+
+TEST(ManeuverSelectionWorker, ModeBShadowUsesAlignedIntentAndRealInterpolator)
+{
+    constexpr std::uint64_t timestamp_us = 825'000ULL;
+    cs::ManeuverSelectionWorker remote(params(1));
+    const auto remote_output = pushBeliefAndProcess(
+        remote,
+        beliefSnapshot(timestamp_us, 0.0, 200.0, 20.0, 0.0));
+    ASSERT_EQ(remote_output.intent_packet_count, 3U);
+
+    auto local_params = params();
+    local_params.v4_safe_control_enabled = true;
+    local_params.v4_control_architecture =
+        cs::V4ControlArchitecture::ClosedFormBackupModeB;
+    local_params.mode_b_interpolator_params.certifier.reference_margin_m =
+        local_params.evaluator_params.desired_separation_distance_m;
+    local_params.mode_b_intent_adapter_params.predictor =
+        local_params.predictor_params;
+    cs::ManeuverSelectionWorker local(local_params);
+    for (const auto & packet : remote_output.intent_packets) {
+        ASSERT_TRUE(local.pushRemoteIntent(1, packet));
+    }
+    ASSERT_TRUE(local.pushRemoteDecision(
+        1, coordinatedPeerForIntent(1, remote_output.intent_packets[0])));
+    pushV4Inputs(local, timestamp_us, 20.0, 1.0);
+
+    const auto output = pushBeliefAndProcess(
+        local,
+        beliefSnapshot(timestamp_us, 0.0, 0.0, 20.0, 0.0));
+
+    ASSERT_TRUE(output.has_decision);
+    EXPECT_EQ(
+        output.decision.v4_control_architecture,
+        cs::V4ControlArchitecture::ClosedFormBackupModeB);
+    EXPECT_TRUE(output.decision.v4_shadow_evaluated);
+    EXPECT_EQ(
+        output.decision.v4_shadow_status,
+        cs::V4ShadowEvaluationStatus::CoreEvaluated);
+    EXPECT_EQ(
+        output.decision.mode_b_threat_status,
+        cs::BackupThreatIntentStatusV4::Valid);
+    EXPECT_EQ(
+        output.decision.mode_b_interpolation_status,
+        cs::BackupInterpolationStatusV4::Valid);
+    EXPECT_TRUE(
+        output.decision.mode_b_left_certified
+        || output.decision.mode_b_right_certified);
+    ASSERT_EQ(
+        output.decision.v4_candidates.status,
+        cs::SafeControlCandidateAdapterStatus::Valid);
+    ASSERT_GT(output.decision.v4_candidates.candidate_count, 0U);
+    for (std::size_t index = 0;
+         index < output.decision.v4_candidates.candidate_count; ++index) {
+        const auto & candidate = output.decision.v4_candidates.candidates[index];
+        EXPECT_DOUBLE_EQ(candidate.predictor_input.h_dot_cmd, 0.0);
+        EXPECT_NEAR(
+            candidate.predictor_input.a_lat_cmd,
+            -20.0 * candidate.heading_rate_v4_radps,
+            1.0e-12);
+    }
+    // Shadow mode does not replace the existing published candidate family.
+    EXPECT_EQ(
+        output.intent_packets[0].candidate_set_kind,
+        ce::CandidateSetKind::LegacyRoll);
 }
 
 TEST(ManeuverSelectionWorker, V4ShadowUsesTrimAndOmitsStaleNominal)
@@ -1103,6 +1159,72 @@ TEST(ManeuverSelectionWorker, IndependentlySelectsAndRequestsActivation)
     EXPECT_EQ(second_output.decision.local_selection_epoch, 12U);
 }
 
+TEST(ManeuverSelectionWorker, FormationGateSuppressesOnlyNewAmacActivation)
+{
+    const auto formation_params = [](const int vehicle_id) {
+        auto value = params(vehicle_id);
+        value.formation_discrimination_enabled = true;
+        value.formation_aggregation_policy = collision_avoidance::formation::
+            FormationAggregationPolicy::PerThreatExemptionOnly;
+        auto & config = value.formation_boundary_config;
+        config.profile_name = "test_calibrated_profile";
+        config.representative_wingspan_m = 2.0;
+        config.range0_wingspan_scale = 1.0;
+        config.uncertainty_margin_m = 0.0;
+        config.range1_offset_m = 1.0;
+        config.closure_upper_entry_table = {{0.0, 100.0}, {200.0, 100.0}};
+        config.closure_upper_exit_table = {{0.0, 100.0}, {200.0, 100.0}};
+        config.closure_lower_entry_mps = -100.0;
+        config.closure_lower_exit_mps = -100.0;
+        config.fdz_entry_limit_m = 100.0;
+        config.fdz_exit_limit_m = 110.0;
+        config.max_range_entry_m = 200.0;
+        config.max_range_exit_m = 200.0;
+        config.maximum_state_age_s = 0.1;
+        config.maximum_future_skew_s = 0.0;
+        config.maximum_timestamp_skew_s = 0.0;
+        return value;
+    };
+
+    cs::ManeuverSelectionWorker first(formation_params(0));
+    cs::ManeuverSelectionWorker second(formation_params(1));
+    constexpr std::uint64_t start = 4'000'000ULL;
+    cs::ManeuverSelectionWorkerOutput first_output;
+    cs::ManeuverSelectionWorkerOutput second_output;
+    for (std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                start + offset, -45.0 + 20.0 * elapsed_s,
+                0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                start + offset, 45.0 - 20.0 * elapsed_s,
+                0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 250'000, -40.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 250'000, 40.0, 0.0, -20.0, 0.0));
+    const auto commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+
+    for (const auto & output : commits) {
+        ASSERT_TRUE(output.has_decision);
+        EXPECT_LT(output.decision.ad_m, 0.0);
+        EXPECT_TRUE(output.decision.formation_evaluated);
+        EXPECT_TRUE(output.decision.formation_inhibit);
+        EXPECT_FALSE(output.decision.formation_allow_new_activation);
+        EXPECT_NE(output.decision.formation_inhibited_threat_mask, 0U);
+        EXPECT_FALSE(output.decision.activation_requested);
+    }
+}
+
 TEST(ManeuverSelectionWorker, DoesNotActivateWhileCurrentPlanIsSafe)
 {
     cs::ManeuverSelectionWorker first(params());
@@ -1202,7 +1324,7 @@ TEST(ManeuverSelectionWorker, MonitorsActivationBetweenSelectionEvents)
 }
 
 TEST(ManeuverSelectionWorker,
-    CoordinatesCpaAndSafeFlockingHandoffBeforeDeactivation)
+    DeactivatesFromCurrentFlightVectorCpaWithoutFlockingPrediction)
 {
     auto first_params = params();
     first_params.v4_safe_control_enabled = true;
@@ -1287,76 +1409,12 @@ TEST(ManeuverSelectionWorker,
     EXPECT_TRUE(second_ended);
     EXPECT_FALSE(first_output.decision.activation_requested);
     EXPECT_FALSE(second_output.decision.activation_requested);
-    EXPECT_TRUE(first_output.decision.handoff_cpa_clear);
-    EXPECT_TRUE(second_output.decision.handoff_cpa_clear);
-    EXPECT_TRUE(first_output.decision.handoff_post_ad_safe);
-    EXPECT_TRUE(second_output.decision.handoff_post_ad_safe);
     EXPECT_EQ(
         first_output.decision.deactivation_reason,
-        cs::ManeuverDeactivationReason::CoordinatedPostHandoffSafe);
+        cs::ManeuverDeactivationReason::FutureCpaClear);
     EXPECT_EQ(
         second_output.decision.deactivation_reason,
-        cs::ManeuverDeactivationReason::CoordinatedPostHandoffSafe);
-
-    // No time lockout is used. The verified Flocking tuple remains inactive
-    // while its own post-handoff AD is safe, then a newly unsafe Flocking
-    // tuple permits activation immediately on that same update.
-    constexpr std::uint64_t safe_follow_timestamp_us =
-        start + 550'000ULL;
-    ASSERT_TRUE(first.pushRemoteDecision(
-        1, peerDecision(second_output.decision)));
-    ASSERT_TRUE(second.pushRemoteDecision(
-        0, peerDecision(first_output.decision)));
-    pushV4Inputs(first, safe_follow_timestamp_us);
-    pushV4Inputs(second, safe_follow_timestamp_us);
-    first_output = pushBeliefAndProcess(
-        first,
-        beliefSnapshot(
-            safe_follow_timestamp_us, -110.0, 0.0, -20.0, 0.0));
-    second_output = pushBeliefAndProcess(
-        second,
-        beliefSnapshot(
-            safe_follow_timestamp_us, 110.0, 0.0, 20.0, 0.0));
-    exchangePackets(first, second, first_output, second_output);
-    ASSERT_TRUE(first_output.has_decision);
-    ASSERT_TRUE(second_output.has_decision);
-    EXPECT_TRUE(first_output.decision.handoff_post_ad_safe);
-    EXPECT_TRUE(second_output.decision.handoff_post_ad_safe);
-    EXPECT_FALSE(first_output.decision.activation_requested);
-    EXPECT_FALSE(second_output.decision.activation_requested);
-
-    constexpr std::uint64_t unsafe_follow_timestamp_us =
-        start + 600'000ULL;
-    pushV4Inputs(first, unsafe_follow_timestamp_us);
-    pushV4Inputs(second, unsafe_follow_timestamp_us);
-    first_output = pushBeliefAndProcess(
-        first,
-        beliefSnapshot(
-            unsafe_follow_timestamp_us, -5.0, 0.0, 20.0, 0.0));
-    second_output = pushBeliefAndProcess(
-        second,
-        beliefSnapshot(
-            unsafe_follow_timestamp_us, 5.0, 0.0, -20.0, 0.0));
-    exchangePackets(first, second, first_output, second_output);
-
-    constexpr std::uint64_t unsafe_evaluation_timestamp_us =
-        start + 650'000ULL;
-    pushV4Inputs(first, unsafe_evaluation_timestamp_us);
-    pushV4Inputs(second, unsafe_evaluation_timestamp_us);
-    first_output = pushBeliefAndProcess(
-        first,
-        beliefSnapshot(
-            unsafe_evaluation_timestamp_us, -4.0, 0.0, 20.0, 0.0));
-    second_output = pushBeliefAndProcess(
-        second,
-        beliefSnapshot(
-            unsafe_evaluation_timestamp_us, 4.0, 0.0, -20.0, 0.0));
-    ASSERT_TRUE(first_output.has_decision);
-    ASSERT_TRUE(second_output.has_decision);
-    EXPECT_FALSE(first_output.decision.handoff_post_ad_safe);
-    EXPECT_FALSE(second_output.decision.handoff_post_ad_safe);
-    EXPECT_TRUE(first_output.decision.activation_requested);
-    EXPECT_TRUE(second_output.decision.activation_requested);
+        cs::ManeuverDeactivationReason::FutureCpaClear);
 }
 
 TEST(ManeuverSelectionWorker, WarmsSelectionButDoesNotActivateBeforeGateOpens)

@@ -60,6 +60,11 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
         || !finitePositive(
             params.activation_params
                 .relative_speed_squared_epsilon_m2ps2)
+        || (params.formation_discrimination_enabled
+            && (params.execution_policy
+                    != ManeuverExecutionPolicy::AmacAdThreshold
+                || !formation::FormationDiscriminator::validConfig(
+                    params.formation_boundary_config)))
         || (params.active_switching_enabled
             && (!finitePositive(params.active_switch_cost_margin)
                 || !finitePositive(
@@ -68,15 +73,37 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
             && (!params.v4_safe_control_enabled || params.v4_shadow_only))
         || (params.execution_policy == ManeuverExecutionPolicy::HorizonGatedV4
             && (!finitePositive(params.v4_horizon_trigger_m)
-                || !params.evaluator_params.robust_cone_filter_enabled))
+                || !params.evaluator_params.robust_cone_filter_enabled
+                || params.v4_control_architecture
+                    != V4ControlArchitecture::LegacySafeControlSet))
         || (params.v4_safe_control_enabled
             && (!finitePositive(params.v4_trim_airspeed_mps)
                 || params.v4_maximum_airspeed_age_us == 0
                 || params.v4_maximum_nominal_age_us == 0
-                || !SafeControlSetV4::validParams(
-                    params.v4_safe_control_params)
                 || !SafeControlCandidateAdapter::validParams(
-                    params.v4_candidate_adapter_params)))
+                    params.v4_candidate_adapter_params)
+                || (params.v4_control_architecture
+                        == V4ControlArchitecture::LegacySafeControlSet
+                    && !SafeControlSetV4::validParams(
+                        params.v4_safe_control_params))
+                || (params.v4_control_architecture
+                        == V4ControlArchitecture::ClosedFormBackupModeB
+                    && (!BackupControlInterpolatorV4::validParams(
+                            params.mode_b_interpolator_params)
+                        || !BackupThreatIntentAdapterV4::validParams(
+                            params.mode_b_intent_adapter_params)
+                        || std::abs(
+                            params.mode_b_interpolator_params.certifier.horizon_s
+                            - params.mode_b_intent_adapter_params.horizon_s)
+                            > params.mode_b_interpolator_params.certifier
+                                .threat_time_tolerance_s
+                        || std::abs(
+                            params.mode_b_interpolator_params.certifier
+                                .integration_step_s
+                            - params.mode_b_intent_adapter_params
+                                .integration_step_s)
+                            > params.mode_b_interpolator_params.certifier
+                                .threat_time_tolerance_s))))
         || (params.v4_safe_control_enabled && !params.v4_shadow_only
             && params.exhaustive_test_mode)
         || ((params.evaluator_params.positive_margin_filter_enabled
@@ -203,10 +230,14 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
   m_exhaustive_evaluator(params.evaluator_params),
   m_activation_controller(params.activation_params),
   m_v4_safe_control(params.v4_safe_control_params),
-  m_v4_candidate_adapter(params.v4_candidate_adapter_params),
-  m_handoff_intents(std::make_unique<std::array<
-      RemoteSelectedIntentCache, kMaximumSelectionAircraft>>())
+  m_mode_b_interpolator(params.mode_b_interpolator_params),
+  m_mode_b_intent_adapter(params.mode_b_intent_adapter_params),
+  m_v4_candidate_adapter(params.v4_candidate_adapter_params)
 {
+    if (m_params.formation_discrimination_enabled) {
+        m_formation_discriminator.emplace(
+            m_params.formation_boundary_config);
+    }
     m_selected_candidate_ids.fill(kRollZeroId);
     m_latest_selection_decision.selected_candidate_ids.fill(kRollZeroId);
     m_latest_selection_decision.proposed_candidate_ids.fill(kRollZeroId);
@@ -368,7 +399,9 @@ bool ManeuverSelectionWorker::allV4CutoverParticipantsReady(
             static_cast<std::size_t>(aircraft)];
         if (!peer.valid
             || !peer.decision.coordination_qualified
-            || !peer.decision.v4_cutover_candidate_ready) {
+            || !peer.decision.v4_cutover_candidate_ready
+            || peer.decision.v4_control_architecture
+                != m_params.v4_control_architecture) {
             return false;
         }
     }
@@ -487,11 +520,6 @@ bool ManeuverSelectionWorker::processPending()
                 output.intent_packet_count = 0;
             }
         }
-        if (m_params.execution_policy
-                == ManeuverExecutionPolicy::AmacAdThreshold
-            && !v4CutoverMode()) {
-            appendFlockingHandoffIntent(now_us, output);
-        }
         trajectory_refreshed = true;
         do {
             m_next_trajectory_refresh_timestamp_us +=
@@ -591,27 +619,6 @@ bool ManeuverSelectionWorker::acceptRemoteIntent(
         || remote_vehicle_id >= m_params.total_agent_count
         || remote_vehicle_id == m_params.vehicle_id) {
         return false;
-    }
-    if (packet.candidate_set_kind
-            == estimation::CandidateSetKind::FlockingHandoff) {
-        if (packet.candidate_set_size != 1U
-            || packet.candidate_id != kRollZeroId) {
-            return false;
-        }
-        estimation::ReceivedTrajectoryIntent received;
-        if (!m_receiver.receive(packet, received)) {
-            return false;
-        }
-        RemoteSelectedIntentCache & handoff = (*m_handoff_intents)[
-            static_cast<std::size_t>(remote_vehicle_id)];
-        if (handoff.valid
-            && received.source_timestamp_us
-                < handoff.intent.source_timestamp_us) {
-            return false;
-        }
-        handoff.intent = received;
-        handoff.valid = true;
-        return true;
     }
     RemoteCandidateCache & remote_cache =
         m_remote_caches[static_cast<std::size_t>(remote_vehicle_id)];
@@ -819,6 +826,10 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
         return true;
     };
     if (decision.ownship_candidate_id >= estimation::kManeuverCandidateCount
+        || (decision.v4_control_architecture
+                != V4ControlArchitecture::LegacySafeControlSet
+            && decision.v4_control_architecture
+                != V4ControlArchitecture::ClosedFormBackupModeB)
         || !candidatesValid(decision.selected_candidate_ids)
         || (decision.proposal_valid
             && !candidatesValid(decision.proposed_candidate_ids))) {
@@ -1124,62 +1135,6 @@ bool ManeuverSelectionWorker::buildCurrentIntentSet(
     return true;
 }
 
-bool ManeuverSelectionWorker::appendFlockingHandoffIntent(
-    std::uint64_t now_us,
-    ManeuverSelectionWorkerOutput & output)
-{
-    if (!m_has_latest_nominal || !m_latest_nominal.valid
-        || m_latest_nominal.timestamp_us > now_us
-        || now_us - m_latest_nominal.timestamp_us
-            > m_params.v4_maximum_nominal_age_us
-        || !finitePositive(m_latest_nominal.ground_speed_command_mps)
-        || !std::isfinite(
-            m_latest_nominal.lateral_acceleration_px4_mps2)
-        || output.intent_packet_count >= output.intent_packets.size()) {
-        (*m_handoff_intents)[static_cast<std::size_t>(
-            m_params.vehicle_id)].valid = false;
-        return false;
-    }
-
-    // FormationMode currently applies only lateral acceleration and speed on
-    // the nominal path. Keep the vertical command neutral so this intent
-    // predicts the command that PX4 will actually receive after handoff.
-    const estimation::PredictInput nominal_input{
-        m_latest_nominal.ground_speed_command_mps,
-        std::numeric_limits<double>::quiet_NaN(),
-        0.0,
-        m_latest_nominal.lateral_acceleration_px4_mps2};
-    estimation::TrajectoryIntentPacket packet;
-    if (!m_sender.buildForCandidateInput(
-            now_us,
-            kRollZeroId,
-            nominal_input,
-            m_latest_state,
-            m_latest_covariance,
-            packet,
-            m_selection_epoch)) {
-        (*m_handoff_intents)[static_cast<std::size_t>(
-            m_params.vehicle_id)].valid = false;
-        return false;
-    }
-    packet.candidate_set_size = 1U;
-    packet.candidate_set_kind =
-        estimation::CandidateSetKind::FlockingHandoff;
-    estimation::ReceivedTrajectoryIntent received;
-    if (!m_receiver.receive(packet, received)) {
-        (*m_handoff_intents)[static_cast<std::size_t>(
-            m_params.vehicle_id)].valid = false;
-        return false;
-    }
-
-    RemoteSelectedIntentCache & ownship_handoff = (*m_handoff_intents)[
-        static_cast<std::size_t>(m_params.vehicle_id)];
-    ownship_handoff.intent = received;
-    ownship_handoff.valid = true;
-    output.intent_packets[output.intent_packet_count++] = packet;
-    return true;
-}
-
 bool ManeuverSelectionWorker::buildV4IntentSet(
     std::uint64_t now_us,
     const SafeControlCandidateAdapterResult & candidates,
@@ -1328,6 +1283,7 @@ void ManeuverSelectionWorker::evaluateV4(
         m_params.total_agent_count);
     decision.v4_enabled = true;
     decision.v4_shadow_only = m_params.v4_shadow_only;
+    decision.v4_control_architecture = m_params.v4_control_architecture;
     decision.v4_shadow_evaluated = false;
     decision.v4_shadow_status = V4ShadowEvaluationStatus::Disabled;
     decision.v4_airspeed_source = V4AirspeedSource::Unavailable;
@@ -1342,6 +1298,32 @@ void ManeuverSelectionWorker::evaluateV4(
         : 0;
     decision.v4_nominal_available = false;
     decision.v4_safe_control = SafeControlSetV4Result{};
+    decision.mode_b_threat_status = BackupThreatIntentStatusV4::Valid;
+    decision.mode_b_invalid_threat_vehicle_id = -1;
+    decision.mode_b_interpolation_status =
+        BackupInterpolationStatusV4::InvalidConfiguration;
+    decision.mode_b_branch_classification =
+        BackupBranchClassificationV4::NeitherCertified;
+    decision.mode_b_left_certified = false;
+    decision.mode_b_right_certified = false;
+    decision.mode_b_left_minimum_path_margin_m =
+        std::numeric_limits<double>::quiet_NaN();
+    decision.mode_b_right_minimum_path_margin_m =
+        std::numeric_limits<double>::quiet_NaN();
+    decision.mode_b_left_terminal_turn_margin_m =
+        std::numeric_limits<double>::quiet_NaN();
+    decision.mode_b_right_terminal_turn_margin_m =
+        std::numeric_limits<double>::quiet_NaN();
+    decision.mode_b_left_interpolation_status =
+        BackupInterpolationBranchStatusV4::NotCertified;
+    decision.mode_b_right_interpolation_status =
+        BackupInterpolationBranchStatusV4::NotCertified;
+    decision.mode_b_left_mu_star = std::numeric_limits<double>::quiet_NaN();
+    decision.mode_b_right_mu_star = std::numeric_limits<double>::quiet_NaN();
+    decision.mode_b_left_safe_rate_radps =
+        std::numeric_limits<double>::quiet_NaN();
+    decision.mode_b_right_safe_rate_radps =
+        std::numeric_limits<double>::quiet_NaN();
     decision.v4_candidates = SafeControlCandidateAdapterResult{};
     // These are one-output transition events.  A diagnostic-only 20 Hz
     // publication must not repeat the previous activation edge.
@@ -1390,6 +1372,188 @@ void ManeuverSelectionWorker::evaluateV4(
         decision.v4_nominal_age_us);
     decision.v4_nominal_available =
         decision.v4_nominal_snapshot_status == V4SnapshotStatus::Valid;
+
+    if (m_params.v4_control_architecture
+            == V4ControlArchitecture::ClosedFormBackupModeB) {
+        if (!decision.v4_nominal_available) {
+            // Mode B interpolates from the actual nominal command. Missing or
+            // stale nominal data cannot be replaced by an invented zero-rate
+            // command; an already coordinated command is retained upstream.
+            decision.v4_shadow_status =
+                V4ShadowEvaluationStatus::CandidateGenerationFailed;
+            publishDiagnostics();
+            return;
+        }
+
+        const double nominal_heading_rate_v4_radps =
+            SafeControlCandidateAdapter::
+                px4LateralAccelerationToV4HeadingRate(
+                    true_airspeed_mps,
+                    m_latest_nominal.lateral_acceleration_px4_mps2,
+                    m_params.v4_candidate_adapter_params
+                        .speed_tolerance_mps);
+        if (!std::isfinite(nominal_heading_rate_v4_radps)) {
+            decision.v4_nominal_available = false;
+            decision.v4_nominal_snapshot_status = V4SnapshotStatus::Invalid;
+            decision.v4_shadow_status =
+                V4ShadowEvaluationStatus::CandidateGenerationFailed;
+            publishDiagnostics();
+            return;
+        }
+
+        BackupSafetyCertifierV4Input backup_input;
+        backup_input.ownship.timestamp_us = now_us;
+        backup_input.ownship.north_m = m_latest_state.p_n;
+        backup_input.ownship.east_m = m_latest_state.p_e;
+        backup_input.ownship.heading_ned_rad = m_latest_state.psi;
+        backup_input.ownship.true_airspeed_mps = true_airspeed_mps;
+        backup_input.ownship.longitudinal_acceleration_mps2 = 0.0;
+        backup_input.ownship.longitudinal_source =
+            LongitudinalDriftSource::LocalOneStepFreeze;
+
+        for (int remote_id = 0;
+             remote_id < m_params.total_agent_count; ++remote_id) {
+            if (remote_id == m_params.vehicle_id) {
+                continue;
+            }
+            const std::size_t remote_index = static_cast<std::size_t>(
+                remote_id);
+            const RemoteDecisionCache & peer_decision =
+                m_remote_decision_caches[remote_index];
+            if (!peer_decision.valid
+                || !peer_decision.decision.coordination_qualified) {
+                decision.v4_shadow_status =
+                    V4ShadowEvaluationStatus::MissingPeerDecision;
+                publishDiagnostics();
+                return;
+            }
+
+            const std::uint8_t candidate_id =
+                peer_decision.decision.ownship_candidate_id;
+            const std::uint64_t candidate_input_revision =
+                peer_decision.decision.selected_candidate_input_revisions[
+                    remote_index];
+            const estimation::ReceivedTrajectoryIntent * selected_intent =
+                nullptr;
+            for (const RemoteCandidateCache * cache : {
+                     &m_remote_caches[remote_index],
+                     &m_remote_previous_caches[remote_index]}) {
+                if (cache->count == 0
+                    || cache->count != cache->expected_count) {
+                    continue;
+                }
+                const auto found = std::find_if(
+                    cache->candidates.begin(),
+                    cache->candidates.begin()
+                        + static_cast<std::ptrdiff_t>(cache->count),
+                    [candidate_id, candidate_input_revision](
+                        const auto & candidate) {
+                        return candidate.candidate_id == candidate_id
+                            && candidate.candidate_input_revision
+                                == candidate_input_revision;
+                    });
+                if (found != cache->candidates.begin()
+                        + static_cast<std::ptrdiff_t>(cache->count)) {
+                    selected_intent = &(*found);
+                    break;
+                }
+            }
+            const RemoteSelectedIntentCache & retained =
+                m_remote_selected_caches[remote_index];
+            if (selected_intent == nullptr && retained.valid
+                && retained.intent.candidate_id == candidate_id
+                && retained.intent.candidate_input_revision
+                    == candidate_input_revision) {
+                selected_intent = &retained.intent;
+            }
+            if (selected_intent == nullptr) {
+                decision.v4_shadow_status =
+                    V4ShadowEvaluationStatus::MissingPeerIntent;
+                publishDiagnostics();
+                return;
+            }
+
+            const auto aligned = m_mode_b_intent_adapter.alignAndPropagate(
+                now_us,
+                remote_id,
+                m_params.evaluator_params.ownship_half_wingspan_m
+                    + m_params.evaluator_params.threat_half_wingspan_m,
+                *selected_intent);
+            decision.mode_b_threat_status = aligned.status;
+            if (aligned.status != BackupThreatIntentStatusV4::Valid) {
+                decision.mode_b_invalid_threat_vehicle_id = remote_id;
+                decision.v4_shadow_status = aligned.status
+                        == BackupThreatIntentStatusV4::FutureIntent
+                    ? V4ShadowEvaluationStatus::FuturePeerIntent
+                    : aligned.status == BackupThreatIntentStatusV4::StaleIntent
+                        ? V4ShadowEvaluationStatus::StalePeerIntent
+                        : V4ShadowEvaluationStatus::InvalidPeerIntent;
+                publishDiagnostics();
+                return;
+            }
+            if (backup_input.threat_count >= backup_input.threats.size()) {
+                decision.mode_b_invalid_threat_vehicle_id = remote_id;
+                decision.mode_b_threat_status =
+                    BackupThreatIntentStatusV4::InvalidIntent;
+                decision.v4_shadow_status =
+                    V4ShadowEvaluationStatus::InvalidPeerIntent;
+                publishDiagnostics();
+                return;
+            }
+            backup_input.threats[backup_input.threat_count++] =
+                aligned.trajectory;
+        }
+
+        const auto interpolation = m_mode_b_interpolator.evaluate(
+            backup_input, nominal_heading_rate_v4_radps);
+        decision.v4_shadow_evaluated = true;
+        decision.v4_shadow_status = V4ShadowEvaluationStatus::CoreEvaluated;
+        decision.mode_b_interpolation_status = interpolation.status;
+        decision.mode_b_branch_classification =
+            interpolation.certification.classification;
+        decision.mode_b_left_certified =
+            interpolation.certification.left.certified;
+        decision.mode_b_right_certified =
+            interpolation.certification.right.certified;
+        decision.mode_b_left_minimum_path_margin_m =
+            interpolation.certification.left.minimum_path_margin_m;
+        decision.mode_b_right_minimum_path_margin_m =
+            interpolation.certification.right.minimum_path_margin_m;
+        decision.mode_b_left_terminal_turn_margin_m =
+            interpolation.certification.left.terminal_turn_margin_m;
+        decision.mode_b_right_terminal_turn_margin_m =
+            interpolation.certification.right.terminal_turn_margin_m;
+        decision.mode_b_left_interpolation_status =
+            interpolation.left.status;
+        decision.mode_b_right_interpolation_status =
+            interpolation.right.status;
+        decision.mode_b_left_mu_star = interpolation.left.mu_star;
+        decision.mode_b_right_mu_star = interpolation.right.mu_star;
+        decision.mode_b_left_safe_rate_radps =
+            interpolation.left.safe_heading_rate_v4_radps;
+        decision.mode_b_right_safe_rate_radps =
+            interpolation.right.safe_heading_rate_v4_radps;
+
+        BackupControlCandidateAdapterInputV4 candidate_input;
+        candidate_input.interpolation = interpolation;
+        candidate_input.true_airspeed_mps = true_airspeed_mps;
+        candidate_input.ground_speed_command_mps =
+            m_latest_nominal.ground_speed_command_mps;
+        candidate_input.altitude_command_m =
+            m_latest_nominal.altitude_command_m;
+        decision.v4_candidates =
+            m_v4_candidate_adapter.generateFromBackupInterpolation(
+                candidate_input);
+        if (decision.v4_candidates.status
+                != SafeControlCandidateAdapterStatus::Valid
+            && decision.v4_candidates.status
+                != SafeControlCandidateAdapterStatus::SearchSetInfeasible) {
+            decision.v4_shadow_status =
+                V4ShadowEvaluationStatus::CandidateGenerationFailed;
+        }
+        publishDiagnostics();
+        return;
+    }
 
     SafeControlSetV4Input safe_input;
     safe_input.ownship.timestamp_us = now_us;
@@ -2584,81 +2748,102 @@ bool ManeuverSelectionWorker::buildActivationSample(
     return true;
 }
 
-bool ManeuverSelectionWorker::evaluatePostHandoffTuple(
-    std::uint64_t now_us,
-    double & minimum_ad_m) const
+void ManeuverSelectionWorker::applyFormationActivationGate(
+    const std::uint64_t now_us,
+    ManeuverActivationSample & sample,
+    ManeuverSelectionDecision & decision)
 {
-    std::array<
-        const estimation::ReceivedTrajectoryIntent *,
-        kMaximumSelectionAircraft> intents{};
-    const std::size_t ownship_index = static_cast<std::size_t>(
-        m_params.vehicle_id);
-    const RemoteSelectedIntentCache & ownship_handoff =
-        (*m_handoff_intents)[ownship_index];
-    if (!ownship_handoff.valid) {
-        return false;
-    }
-    intents[ownship_index] = &ownship_handoff.intent;
-    std::uint64_t common_evaluation_timestamp_us = std::max(
-        now_us, ownship_handoff.intent.source_timestamp_us);
-    for (int aircraft = 0; aircraft < m_params.total_agent_count; ++aircraft) {
-        if (aircraft == m_params.vehicle_id) {
-            continue;
-        }
-        const std::size_t index = static_cast<std::size_t>(aircraft);
-        const RemoteSelectedIntentCache & remote_handoff =
-            (*m_handoff_intents)[index];
-        if (!remote_handoff.valid) {
-            return false;
-        }
-        intents[index] = &remote_handoff.intent;
-        common_evaluation_timestamp_us = std::max(
-            common_evaluation_timestamp_us,
-            remote_handoff.intent.source_timestamp_us);
+    sample.allow_new_activation = true;
+    decision.formation_evaluated = false;
+    decision.formation_inhibit = false;
+    decision.formation_allow_new_activation = true;
+    decision.formation_inhibited_threat_mask = 0U;
+    if (!m_formation_discriminator.has_value() || !sample.valid) {
+        return;
     }
 
-    minimum_ad_m = std::numeric_limits<double>::infinity();
-    for (int first = 0; first < m_params.total_agent_count; ++first) {
-        for (int second = first + 1;
-             second < m_params.total_agent_count; ++second) {
-            CombinationEvaluation pair;
-            if (!m_pair_evaluator.evaluatePair(
-                    common_evaluation_timestamp_us,
-                    *intents[static_cast<std::size_t>(first)],
-                    *intents[static_cast<std::size_t>(second)],
-                    pair)
-                || pair.validity != CombinationValidity::Valid
-                || !std::isfinite(pair.ad_m)) {
-                return false;
-            }
-            minimum_ad_m = std::min(minimum_ad_m, pair.ad_m);
-        }
-    }
-    return std::isfinite(minimum_ad_m);
-}
+    const double horizontal_speed_mps = std::sqrt(std::max(
+        0.0,
+        m_latest_state.V * m_latest_state.V
+            - m_latest_state.h_dot * m_latest_state.h_dot));
+    formation::FormationKinematicState ownship;
+    ownship.position_ned_m = {
+        m_latest_state.p_n, m_latest_state.p_e, -m_latest_state.h};
+    ownship.velocity_ned_mps = {
+        horizontal_speed_mps * std::cos(m_latest_state.psi),
+        horizontal_speed_mps * std::sin(m_latest_state.psi),
+        -m_latest_state.h_dot};
+    ownship.timestamp_s = static_cast<double>(now_us) * 1.0e-6;
+    ownship.valid = true;
 
-bool ManeuverSelectionWorker::allPeerHandoffReady(
-    std::uint64_t epoch,
-    bool require_consensus) const noexcept
-{
-    if (epoch == 0) {
-        return false;
-    }
-    for (int aircraft = 0; aircraft < m_params.total_agent_count; ++aircraft) {
-        if (aircraft == m_params.vehicle_id) {
+    std::vector<formation::FormationResult> results;
+    std::vector<std::uint32_t> collision_relevant_threat_ids;
+    results.reserve(static_cast<std::size_t>(m_params.total_agent_count - 1));
+    collision_relevant_threat_ids.reserve(results.capacity());
+    const std::uint32_t original_unsafe_threat_mask =
+        sample.unsafe_threat_mask;
+    for (int remote_id = 0;
+         remote_id < m_params.total_agent_count; ++remote_id) {
+        if (remote_id == m_params.vehicle_id) {
             continue;
         }
-        const RemoteDecisionCache & peer = m_remote_decision_caches[
-            static_cast<std::size_t>(aircraft)];
-        if (!peer.valid || !peer.decision.coordination_qualified
-            || peer.decision.handoff_evaluation_epoch != epoch
-            || !peer.decision.handoff_ready
-            || (require_consensus
-                && !peer.decision.handoff_consensus_confirmed)) {
-            return false;
+        const std::size_t remote_index = static_cast<std::size_t>(remote_id);
+        formation::FormationKinematicState threat;
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            threat.position_ned_m[axis] = ownship.position_ned_m[axis]
+                + sample.relative_positions_ned_m[remote_index][axis];
+            threat.velocity_ned_mps[axis] = ownship.velocity_ned_mps[axis]
+                + sample.relative_velocities_ned_mps[remote_index][axis];
+        }
+        threat.timestamp_s = ownship.timestamp_s;
+        threat.valid = true;
+
+        formation::FormationUpdateInput input;
+        input.threat_id = static_cast<std::uint32_t>(remote_id);
+        input.evaluation_timestamp_s = ownship.timestamp_s;
+        input.ownship = ownship;
+        input.threat = threat;
+        const auto result = m_formation_discriminator->update(input);
+        results.push_back(result);
+
+        const std::uint32_t threat_bit = std::uint32_t{1} << remote_index;
+        if ((original_unsafe_threat_mask & threat_bit) == 0U) {
+            continue;
+        }
+        collision_relevant_threat_ids.push_back(
+            static_cast<std::uint32_t>(remote_id));
+        if (result.formation_inhibit && result.timestamp_valid
+            && result.geometry_valid) {
+            decision.formation_inhibited_threat_mask |= threat_bit;
         }
     }
-    return true;
+    decision.formation_evaluated = true;
+
+    // Formation is strictly a new-activation exemption. Once avoidance is
+    // active, keep the complete AD-derived unsafe mask so newly unsafe threats
+    // are added to the CPA termination monitor even if they resemble a
+    // formation encounter.
+    if (m_activation_controller.status().active) {
+        return;
+    }
+
+    if (m_params.formation_aggregation_policy
+            == formation::FormationAggregationPolicy::
+                PerThreatExemptionOnly) {
+        sample.unsafe_threat_mask &=
+            ~decision.formation_inhibited_threat_mask;
+        sample.allow_new_activation = sample.unsafe_threat_mask != 0U
+            || original_unsafe_threat_mask == 0U;
+    } else {
+        const auto aggregation = formation::FormationInhibitAggregator::
+            aggregate(
+                results,
+                collision_relevant_threat_ids,
+                m_params.formation_aggregation_policy);
+        sample.allow_new_activation = aggregation.allow_new_activation;
+    }
+    decision.formation_allow_new_activation = sample.allow_new_activation;
+    decision.formation_inhibit = !sample.allow_new_activation;
 }
 
 void ManeuverSelectionWorker::updateActivationState(
@@ -2682,7 +2867,6 @@ void ManeuverSelectionWorker::updateActivationState(
         // semantics separate allows the coordinated V4 tuple to be refreshed
         // instead of being frozen for the AMAC active duration.
         m_activation_controller.reset();
-        m_following_verified_flocking_handoff = false;
         m_latest_selection_decision.activation_requested = false;
         m_latest_selection_decision.activation_just_started = false;
         m_latest_selection_decision.activation_just_ended = false;
@@ -2707,7 +2891,6 @@ void ManeuverSelectionWorker::updateActivationState(
 
     if (v4CutoverMode() && !m_selected_v4_cutover) {
         m_activation_controller.reset();
-        m_following_verified_flocking_handoff = false;
         m_latest_selection_decision.activation_requested = false;
         m_latest_selection_decision.activation_just_started = false;
         m_latest_selection_decision.activation_just_ended = false;
@@ -2723,7 +2906,6 @@ void ManeuverSelectionWorker::updateActivationState(
 
     if (!m_activation_enabled.load(std::memory_order_acquire)) {
         m_activation_controller.reset();
-        m_following_verified_flocking_handoff = false;
         m_latest_selection_decision.activation_requested = false;
         m_latest_selection_decision.activation_just_started = false;
         m_latest_selection_decision.activation_just_ended = false;
@@ -2748,61 +2930,9 @@ void ManeuverSelectionWorker::updateActivationState(
     ManeuverActivationSample sample;
     const bool sample_valid = buildActivationSample(now_us, sample, decision);
     sample.valid = sample_valid;
-    const ManeuverActivationStatus previous_status =
-        m_activation_controller.status();
-    const bool cpa_clear = !previous_status.active
-        || (sample_valid && m_activation_controller.futureCpaClear(sample));
-    double post_minimum_ad_m = std::numeric_limits<double>::quiet_NaN();
-    const bool post_ad_evaluated = evaluatePostHandoffTuple(
-        now_us, post_minimum_ad_m);
-    const bool post_ad_safe = post_ad_evaluated
-        && post_minimum_ad_m >= 0.0;
-    if (!previous_status.active && m_following_verified_flocking_handoff) {
-        if (post_ad_safe) {
-            // The post-handoff Flocking tuple is the plan actually being
-            // executed. Do not immediately reactivate from the AD of a
-            // different fixed-roll tuple while that executed plan remains
-            // safe. This is a state-based safety check, not a timer/rearm
-            // lockout: a negative or unavailable post-handoff AD releases it
-            // in this same update.
-            sample.minimum_ad_m = post_minimum_ad_m;
-            sample.unsafe_threat_mask = 0U;
-        } else {
-            m_following_verified_flocking_handoff = false;
-        }
-    }
-    const std::uint64_t handoff_epoch = decision.local_selection_epoch != 0
-        ? decision.local_selection_epoch
-        : m_selection_epoch;
-    const bool handoff_ready = decision.coordination_qualified
-        && cpa_clear && post_ad_safe;
-    const bool handoff_consensus_confirmed = handoff_ready
-        && allPeerHandoffReady(handoff_epoch, false);
-    sample.coordinated_handoff_authorized = handoff_consensus_confirmed
-        && allPeerHandoffReady(handoff_epoch, true);
-    const bool handoff_state_changed =
-        decision.handoff_evaluation_epoch != handoff_epoch
-        || decision.handoff_cpa_clear != cpa_clear
-        || decision.handoff_post_ad_evaluated != post_ad_evaluated
-        || decision.handoff_post_ad_safe != post_ad_safe
-        || decision.handoff_ready != handoff_ready
-        || decision.handoff_consensus_confirmed
-            != handoff_consensus_confirmed;
-    decision.handoff_evaluation_epoch = handoff_epoch;
-    decision.handoff_cpa_clear = cpa_clear;
-    decision.handoff_post_ad_evaluated = post_ad_evaluated;
-    decision.handoff_post_ad_safe = post_ad_safe;
-    decision.handoff_post_minimum_ad_m = post_minimum_ad_m;
-    decision.handoff_ready = handoff_ready;
-    decision.handoff_consensus_confirmed =
-        handoff_consensus_confirmed;
+    applyFormationActivationGate(now_us, sample, decision);
     const ManeuverActivationStatus status =
         m_activation_controller.update(sample);
-    if (status.just_deactivated) {
-        m_following_verified_flocking_handoff = true;
-    } else if (status.just_activated) {
-        m_following_verified_flocking_handoff = false;
-    }
     decision.activation_requested = status.active;
     decision.activation_just_started = status.just_activated;
     decision.activation_just_ended = status.just_deactivated;
@@ -2816,7 +2946,7 @@ void ManeuverSelectionWorker::updateActivationState(
 
     m_latest_selection_decision = decision;
     if (force_decision_output || status.just_activated
-        || status.just_deactivated || handoff_state_changed) {
+        || status.just_deactivated) {
         output.decision = decision;
         output.has_decision = true;
     }

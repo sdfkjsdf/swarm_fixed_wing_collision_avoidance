@@ -38,6 +38,7 @@
     # V4 safe-control Step-3 shadow configuration
     v4_safe_control_enabled: true
     v4_shadow_only: true
+    v4_control_architecture: legacy_safe_control_set
     v4_margin_time_constant_s: 5.0
     v4_candidate_guard_deg_per_s: 0.5
     v4_constraint_tolerance_mps: 0.00001
@@ -46,6 +47,33 @@
     v4_direction_tolerance_m: 0.0001
     v4_maximum_airspeed_age_s: 1.0
     v4_maximum_nominal_age_s: 1.0
+    mode_b_path_alpha_gain_per_s: 0.2
+    mode_b_terminal_alpha_gain_per_s: 0.5
+    mode_b_certification_tolerance_m: 0.000001
+    mode_b_maximum_intent_age_s: 1.0
+
+    # Lockheed baseline formation-discrimination profile. Disabled until the
+    # UAV boundaries below are calibrated from SILS/flight logs.
+    formation_discrimination_enabled: false
+    formation_aggregation_policy: per_threat_exemption_only
+    formation_profile_name: unconfigured
+    formation_profile_kind: uav_calibrated
+    formation_representative_wingspan_m: 0.0
+    formation_range0_wingspan_scale: 0.0
+    formation_uncertainty_margin_m: 0.0
+    formation_range1_offset_m: 0.0
+    formation_closure_upper_entry_table: []
+    formation_closure_upper_exit_table: []
+    formation_closure_lower_entry_mps: 0.0
+    formation_closure_lower_exit_mps: 0.0
+    formation_fdz_entry_limit_m: 0.0
+    formation_fdz_exit_limit_m: 0.0
+    formation_max_range_entry_m: 0.0
+    formation_max_range_exit_m: 0.0
+    formation_maximum_state_age_s: 0.0
+    formation_maximum_future_skew_s: 0.0
+    formation_maximum_timestamp_skew_s: 0.0
+    formation_lookup_policy: reject_outside_table
 
     # ═══════════════════════════════════════════════════════════
     # PX4 직접 대응 없음 — 우리가 정한 값

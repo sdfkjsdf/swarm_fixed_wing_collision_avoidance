@@ -1,6 +1,7 @@
 #pragma once
 
 #include <collision_avoidance/estimation/trajectory_prediction/PredictTypes.hpp>
+#include <collision_avoidance/selection/BackupControlInterpolatorV4.hpp>
 #include <collision_avoidance/selection/SafeControlSetV4.hpp>
 
 #include <array>
@@ -53,6 +54,14 @@ struct SafeControlCandidateAdapterInput
     double altitude_command_m{std::numeric_limits<double>::quiet_NaN()};
 };
 
+struct BackupControlCandidateAdapterInputV4
+{
+    BackupControlInterpolatorV4Result interpolation{};
+    double true_airspeed_mps{0.0};
+    double ground_speed_command_mps{0.0};
+    double altitude_command_m{std::numeric_limits<double>::quiet_NaN()};
+};
+
 struct SafeControlCandidate
 {
     SafeCandidateRole role{SafeCandidateRole::NearNominal};
@@ -80,6 +89,12 @@ public:
 
     SafeControlCandidateAdapterResult generate(
         const SafeControlCandidateAdapterInput & input) const noexcept;
+
+    // Phase-3/4 Mode-B path.  It maps the independently certified LEFT and
+    // RIGHT minimum-intervention rates into the existing candidate transport;
+    // it never reconstructs a legacy SafeControlSetV4 interval.
+    SafeControlCandidateAdapterResult generateFromBackupInterpolation(
+        const BackupControlCandidateAdapterInputV4 & input) const noexcept;
 
     static bool validParams(
         const SafeControlCandidateAdapterParams & params) noexcept;

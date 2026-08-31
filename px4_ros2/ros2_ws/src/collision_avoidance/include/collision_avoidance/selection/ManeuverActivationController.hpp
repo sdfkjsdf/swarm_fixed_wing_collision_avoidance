@@ -13,7 +13,6 @@ enum class ManeuverDeactivationReason : std::uint8_t
 {
     None = 0,
     FutureCpaClear,
-    CoordinatedPostHandoffSafe,
 };
 
 struct ManeuverActivationControllerParams
@@ -38,7 +37,9 @@ struct ManeuverActivationSample
     std::uint8_t selected_candidate_id{0};
     std::uint64_t selected_candidate_input_revision{0};
     estimation::PredictInput selected_input{};
-    bool coordinated_handoff_authorized{false};
+    // Formation discrimination may inhibit only a new activation. It never
+    // terminates or resets an already active avoidance episode.
+    bool allow_new_activation{true};
 };
 
 struct ManeuverActivationStatus

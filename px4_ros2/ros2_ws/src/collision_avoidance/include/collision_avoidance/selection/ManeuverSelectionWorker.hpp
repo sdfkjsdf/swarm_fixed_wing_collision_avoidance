@@ -5,13 +5,15 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <thread>
 
 #include <collision_avoidance/common/SpscQueue.hpp>
 #include <collision_avoidance/estimation/trajectory_prediction/TrajectoryIntent.hpp>
+#include <collision_avoidance/formation/FormationDiscrimination.hpp>
 #include <collision_avoidance/selection/HeuristicCandidateSelector.hpp>
+#include <collision_avoidance/selection/BackupControlInterpolatorV4.hpp>
+#include <collision_avoidance/selection/BackupThreatIntentAdapterV4.hpp>
 #include <collision_avoidance/selection/ManeuverActivationController.hpp>
 #include <collision_avoidance/selection/ManeuverCombinationEvaluator.hpp>
 #include <collision_avoidance/selection/SafeControlCandidateAdapter.hpp>
@@ -22,8 +24,6 @@ namespace collision_avoidance::selection
 inline constexpr std::size_t kEligibleLateralCandidateCount = 7;
 inline constexpr std::size_t kSelectionWorkerInputCapacity = 64;
 inline constexpr std::size_t kSelectionWorkerOutputCapacity = 16;
-inline constexpr std::size_t kMaximumIntentPacketsPerOutput =
-    kExhaustiveCandidatesPerAircraft + 1;
 
 enum class V4ShadowEvaluationStatus : std::uint8_t
 {
@@ -60,6 +60,12 @@ enum class ManeuverExecutionPolicy : std::uint8_t
     HorizonGatedV4,
 };
 
+enum class V4ControlArchitecture : std::uint8_t
+{
+    LegacySafeControlSet = 0,
+    ClosedFormBackupModeB = 1,
+};
+
 struct ManeuverSelectionWorkerParams
 {
     int vehicle_id{0};
@@ -85,11 +91,24 @@ struct ManeuverSelectionWorkerParams
     bool v4_safe_control_enabled{false};
     // True keeps V4 diagnostic-only; false supplies V4 candidates downstream.
     bool v4_shadow_only{true};
+    // Selects either the preserved legacy interval core or the new Mode-B
+    // backup-certification/interpolation path. They are never blended.
+    V4ControlArchitecture v4_control_architecture{
+        V4ControlArchitecture::LegacySafeControlSet};
     double v4_trim_airspeed_mps{15.0};
     std::uint64_t v4_maximum_airspeed_age_us{1'000'000};
     std::uint64_t v4_maximum_nominal_age_us{1'000'000};
     SafeControlSetV4Params v4_safe_control_params{};
+    BackupControlInterpolatorV4Params mode_b_interpolator_params{};
+    BackupThreatIntentAdapterV4Params mode_b_intent_adapter_params{};
     SafeControlCandidateAdapterParams v4_candidate_adapter_params{};
+    // Lockheed baseline formation discrimination is disabled until an
+    // explicitly calibrated profile is supplied. It gates only new AMAC
+    // activations and is independent of both CPA termination and Mode B.
+    bool formation_discrimination_enabled{false};
+    formation::FormationBoundaryConfig formation_boundary_config{};
+    formation::FormationAggregationPolicy formation_aggregation_policy{
+        formation::FormationAggregationPolicy::PerThreatExemptionOnly};
     // Robust cone clearance h excludes DSD. V4 commands are applied when the
     // worst aligned near-nominal horizon clearance reaches this threshold.
     double v4_horizon_trigger_m{10.0};
@@ -189,15 +208,10 @@ struct ManeuverSelectionDecision
     bool command_execution_requested{false};
     bool activation_just_started{false};
     bool activation_just_ended{false};
-
-    std::uint64_t handoff_evaluation_epoch{0};
-    bool handoff_cpa_clear{false};
-    bool handoff_post_ad_evaluated{false};
-    bool handoff_post_ad_safe{false};
-    double handoff_post_minimum_ad_m{
-        std::numeric_limits<double>::quiet_NaN()};
-    bool handoff_ready{false};
-    bool handoff_consensus_confirmed{false};
+    bool formation_evaluated{false};
+    bool formation_inhibit{false};
+    bool formation_allow_new_activation{true};
+    std::uint32_t formation_inhibited_threat_mask{0};
 
     // Horizon-gated V4 supervision. This is distinct from AMAC AD activation.
     bool v4_horizon_gate_evaluated{false};
@@ -217,6 +231,8 @@ struct ManeuverSelectionDecision
     // mode v4_candidates is the source of the downstream candidate set.
     bool v4_enabled{false};
     bool v4_shadow_only{true};
+    V4ControlArchitecture v4_control_architecture{
+        V4ControlArchitecture::LegacySafeControlSet};
     bool v4_shadow_evaluated{false};
     V4ShadowEvaluationStatus v4_shadow_status{
         V4ShadowEvaluationStatus::Disabled};
@@ -232,6 +248,33 @@ struct ManeuverSelectionDecision
     std::uint64_t v4_nominal_timestamp_us{0};
     std::uint64_t v4_nominal_age_us{0};
     SafeControlSetV4Result v4_safe_control{};
+    BackupThreatIntentStatusV4 mode_b_threat_status{
+        BackupThreatIntentStatusV4::Valid};
+    int mode_b_invalid_threat_vehicle_id{-1};
+    BackupInterpolationStatusV4 mode_b_interpolation_status{
+        BackupInterpolationStatusV4::InvalidConfiguration};
+    BackupBranchClassificationV4 mode_b_branch_classification{
+        BackupBranchClassificationV4::NeitherCertified};
+    bool mode_b_left_certified{false};
+    bool mode_b_right_certified{false};
+    double mode_b_left_minimum_path_margin_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    double mode_b_right_minimum_path_margin_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    double mode_b_left_terminal_turn_margin_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    double mode_b_right_terminal_turn_margin_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    BackupInterpolationBranchStatusV4 mode_b_left_interpolation_status{
+        BackupInterpolationBranchStatusV4::NotCertified};
+    BackupInterpolationBranchStatusV4 mode_b_right_interpolation_status{
+        BackupInterpolationBranchStatusV4::NotCertified};
+    double mode_b_left_mu_star{std::numeric_limits<double>::quiet_NaN()};
+    double mode_b_right_mu_star{std::numeric_limits<double>::quiet_NaN()};
+    double mode_b_left_safe_rate_radps{
+        std::numeric_limits<double>::quiet_NaN()};
+    double mode_b_right_safe_rate_radps{
+        std::numeric_limits<double>::quiet_NaN()};
     SafeControlCandidateAdapterResult v4_candidates{};
 };
 
@@ -266,10 +309,9 @@ struct ManeuverSelectionPeerDecision
     bool coordination_qualified{false};
     bool activation_requested{false};
     bool command_execution_requested{false};
-    std::uint64_t handoff_evaluation_epoch{0};
-    bool handoff_ready{false};
-    bool handoff_consensus_confirmed{false};
     bool v4_horizon_local_gate_active{false};
+    V4ControlArchitecture v4_control_architecture{
+        V4ControlArchitecture::LegacySafeControlSet};
     // Derived from the peer's published V4 diagnostics. This advertises only
     // bootstrap readiness; it is neither a command nor a committed cutover.
     bool v4_cutover_candidate_ready{false};
@@ -346,7 +388,7 @@ struct ManeuverSelectionWorkerOutput
     std::uint64_t selection_epoch{0};
     std::array<
         estimation::TrajectoryIntentPacket,
-        kMaximumIntentPacketsPerOutput> intent_packets{};
+        kExhaustiveCandidatesPerAircraft> intent_packets{};
     std::size_t intent_packet_count{0};
     ManeuverSelectionDecision decision{};
     bool has_decision{false};
@@ -477,9 +519,6 @@ private:
     bool buildCurrentIntentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
-    bool appendFlockingHandoffIntent(
-        std::uint64_t now_us,
-        ManeuverSelectionWorkerOutput & output);
     bool buildV4IntentSet(
         std::uint64_t now_us,
         const SafeControlCandidateAdapterResult & candidates,
@@ -523,12 +562,10 @@ private:
         std::uint64_t now_us,
         ManeuverActivationSample & sample,
         ManeuverSelectionDecision & decision) const;
-    bool evaluatePostHandoffTuple(
+    void applyFormationActivationGate(
         std::uint64_t now_us,
-        double & minimum_ad_m) const;
-    bool allPeerHandoffReady(
-        std::uint64_t epoch,
-        bool require_consensus) const noexcept;
+        ManeuverActivationSample & sample,
+        ManeuverSelectionDecision & decision);
     void updateActivationState(
         std::uint64_t now_us,
         bool force_decision_output,
@@ -552,7 +589,11 @@ private:
     HeuristicCandidateSelector m_candidate_selector;
     ManeuverActivationController m_activation_controller;
     SafeControlSetV4 m_v4_safe_control;
+    BackupControlInterpolatorV4 m_mode_b_interpolator;
+    BackupThreatIntentAdapterV4 m_mode_b_intent_adapter;
     SafeControlCandidateAdapter m_v4_candidate_adapter;
+    std::optional<formation::FormationDiscriminator>
+        m_formation_discriminator;
 
     common::SpscQueue<WorkerInput, kSelectionWorkerInputCapacity> m_input_queue{};
     common::SpscQueue<
@@ -610,11 +651,6 @@ private:
     std::uint64_t m_v4_horizon_latched_input_revision{0};
     estimation::PredictInput m_v4_horizon_latched_input{};
     bool m_v4_horizon_latch_valid{false};
-    // After a coordinated return, the actual nominal Flocking trajectory is
-    // the executed plan. Continue supervising that plan without a time-based
-    // reactivation lockout; leave this state immediately if its AD turns
-    // negative or cannot be evaluated.
-    bool m_following_verified_flocking_handoff{false};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
         m_remote_caches{};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
@@ -624,11 +660,6 @@ private:
     // 4 Hz coordination race without duplicating another full trajectory set.
     std::array<RemoteSelectedIntentCache, kMaximumSelectionAircraft>
         m_remote_selected_caches{};
-    // Keep the five full reconstructed handoff cones off the worker's stack.
-    // They are allocated once at construction and reused at 20 Hz.
-    std::unique_ptr<std::array<
-        RemoteSelectedIntentCache, kMaximumSelectionAircraft>>
-        m_handoff_intents;
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
         m_remote_staging_caches{};
     std::array<RemoteDecisionCache, kMaximumSelectionAircraft>

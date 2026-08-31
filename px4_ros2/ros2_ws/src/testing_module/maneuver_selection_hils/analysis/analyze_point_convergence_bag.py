@@ -358,28 +358,11 @@ def activation_state_summary(decisions):
         active_revision_switch_count = 0
         repeated_start_flag_count = 0
         repeated_end_flag_count = 0
-        handoff_cpa_clear_count = 0
-        handoff_post_safe_count = 0
-        handoff_ready_count = 0
-        handoff_consensus_count = 0
-        handoff_post_ad_values = []
         previous_active = False
         previous_active_candidate = None
         previous_active_revision = None
         for time_s, message in records:
             active = command_execution_requested(message)
-            handoff_cpa_clear_count += int(bool(
-                getattr(message, "handoff_cpa_clear", False)))
-            handoff_post_safe_count += int(bool(
-                getattr(message, "handoff_post_ad_safe", False)))
-            handoff_ready_count += int(bool(
-                getattr(message, "handoff_ready", False)))
-            handoff_consensus_count += int(bool(
-                getattr(message, "handoff_consensus_confirmed", False)))
-            handoff_post_ad = float(getattr(
-                message, "handoff_post_minimum_ad_m", math.nan))
-            if math.isfinite(handoff_post_ad):
-                handoff_post_ad_values.append(handoff_post_ad)
             if active and not previous_active:
                 starts.append({
                     "time_s": float(time_s),
@@ -421,13 +404,6 @@ def activation_state_summary(decisions):
             "active_revision_switch_count": active_revision_switch_count,
             "repeated_start_flag_count": repeated_start_flag_count,
             "repeated_end_flag_count": repeated_end_flag_count,
-            "handoff_cpa_clear_record_count": handoff_cpa_clear_count,
-            "handoff_post_safe_record_count": handoff_post_safe_count,
-            "handoff_ready_record_count": handoff_ready_count,
-            "handoff_consensus_record_count": handoff_consensus_count,
-            "handoff_post_ad_m_range": (
-                [min(handoff_post_ad_values), max(handoff_post_ad_values)]
-                if handoff_post_ad_values else None),
             "starts": starts,
             "ends": ends,
         })

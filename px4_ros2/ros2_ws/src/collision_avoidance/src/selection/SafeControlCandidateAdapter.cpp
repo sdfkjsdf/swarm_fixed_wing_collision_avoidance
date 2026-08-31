@@ -152,6 +152,35 @@ bool appendCandidate(
     return true;
 }
 
+bool appendBackupCandidate(
+    SafeCandidateRole role,
+    double rate_radps,
+    const BackupControlCandidateAdapterInputV4 & input,
+    const SafeControlCandidateAdapterParams & params,
+    SafeControlCandidateAdapterResult & result) noexcept
+{
+    if (result.candidate_count >= result.candidates.size()
+        || isDuplicate(result, rate_radps, params.duplicate_tolerance_radps)) {
+        return true;
+    }
+    const double lateral_acceleration =
+        SafeControlCandidateAdapter::v4HeadingRateToPx4LateralAcceleration(
+            input.true_airspeed_mps,
+            rate_radps,
+            params.speed_tolerance_mps);
+    if (!finite(lateral_acceleration)) {
+        return false;
+    }
+    auto & candidate = result.candidates[result.candidate_count++];
+    candidate.role = role;
+    candidate.heading_rate_v4_radps = rate_radps;
+    candidate.predictor_input.V_cmd = input.ground_speed_command_mps;
+    candidate.predictor_input.h_cmd = input.altitude_command_m;
+    candidate.predictor_input.h_dot_cmd = 0.0;
+    candidate.predictor_input.a_lat_cmd = lateral_acceleration;
+    return true;
+}
+
 }  // namespace
 
 SafeControlCandidateAdapter::SafeControlCandidateAdapter(
@@ -327,6 +356,100 @@ SafeControlCandidateAdapterResult SafeControlCandidateAdapter::generate(
             result.candidate_count = 0;
             return result;
         }
+    }
+
+    result.status = SafeControlCandidateAdapterStatus::Valid;
+    return result;
+}
+
+SafeControlCandidateAdapterResult
+SafeControlCandidateAdapter::generateFromBackupInterpolation(
+    const BackupControlCandidateAdapterInputV4 & input) const noexcept
+{
+    SafeControlCandidateAdapterResult result{};
+    if (!validParams(m_params)) {
+        result.status =
+            SafeControlCandidateAdapterStatus::InvalidConfiguration;
+        return result;
+    }
+    if (!finite(input.true_airspeed_mps)
+        || input.true_airspeed_mps <= m_params.speed_tolerance_mps) {
+        result.status = SafeControlCandidateAdapterStatus::InvalidAirspeed;
+        return result;
+    }
+    if (!finite(input.ground_speed_command_mps)
+        || input.ground_speed_command_mps <= 0.0
+        || !validAltitudeCommand(input.altitude_command_m)) {
+        result.status =
+            SafeControlCandidateAdapterStatus::InvalidPredictorCommand;
+        return result;
+    }
+    if (input.interpolation.status
+            == BackupInterpolationStatusV4::NoCertifiedBranch
+        || input.interpolation.status
+            == BackupInterpolationStatusV4::InterpolationInfeasible) {
+        result.status =
+            SafeControlCandidateAdapterStatus::SearchSetInfeasible;
+        return result;
+    }
+    if (input.interpolation.status != BackupInterpolationStatusV4::Valid) {
+        result.status = SafeControlCandidateAdapterStatus::InvalidSafeSet;
+        return result;
+    }
+
+    const auto branchFeasible = [](const auto & branch) noexcept {
+        return branch.status == BackupInterpolationBranchStatusV4::Feasible
+            && finite(branch.safe_heading_rate_v4_radps)
+            && finite(branch.nominal_heading_rate_v4_radps);
+    };
+    const bool left_feasible = branchFeasible(input.interpolation.left);
+    const bool right_feasible = branchFeasible(input.interpolation.right);
+    if (!left_feasible && !right_feasible) {
+        result.status =
+            SafeControlCandidateAdapterStatus::SearchSetInfeasible;
+        return result;
+    }
+
+    const auto & nearest = !right_feasible
+        || (left_feasible
+            && std::abs(input.interpolation.left.safe_heading_rate_v4_radps
+                    - input.interpolation.left.nominal_heading_rate_v4_radps)
+                <= std::abs(
+                    input.interpolation.right.safe_heading_rate_v4_radps
+                    - input.interpolation.right.nominal_heading_rate_v4_radps))
+        ? input.interpolation.left
+        : input.interpolation.right;
+    if (!appendBackupCandidate(
+            SafeCandidateRole::NearNominal,
+            nearest.safe_heading_rate_v4_radps,
+            input,
+            m_params,
+            result)) {
+        result.status = SafeControlCandidateAdapterStatus::InvalidSafeSet;
+        result.candidate_count = 0;
+        return result;
+    }
+    if (left_feasible
+        && !appendBackupCandidate(
+            SafeCandidateRole::RobustLeft,
+            input.interpolation.left.safe_heading_rate_v4_radps,
+            input,
+            m_params,
+            result)) {
+        result.status = SafeControlCandidateAdapterStatus::InvalidSafeSet;
+        result.candidate_count = 0;
+        return result;
+    }
+    if (right_feasible
+        && !appendBackupCandidate(
+            SafeCandidateRole::RobustRight,
+            input.interpolation.right.safe_heading_rate_v4_radps,
+            input,
+            m_params,
+            result)) {
+        result.status = SafeControlCandidateAdapterStatus::InvalidSafeSet;
+        result.candidate_count = 0;
+        return result;
     }
 
     result.status = SafeControlCandidateAdapterStatus::Valid;

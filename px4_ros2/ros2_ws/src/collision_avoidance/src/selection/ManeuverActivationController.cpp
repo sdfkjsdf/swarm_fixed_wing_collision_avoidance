@@ -29,16 +29,17 @@ ManeuverActivationStatus ManeuverActivationController::update(
             addNewAffectedThreats(sample);
         }
         const bool future_cpa_clear = sample.valid && futureCpaClear(sample);
-        if (future_cpa_clear && sample.coordinated_handoff_authorized) {
+        if (future_cpa_clear) {
             m_status.active = false;
             m_status.just_deactivated = true;
             m_status.deactivation_reason =
-                ManeuverDeactivationReason::CoordinatedPostHandoffSafe;
+                ManeuverDeactivationReason::FutureCpaClear;
         }
         return m_status;
     }
 
-    if (!sample.valid || !std::isfinite(sample.minimum_ad_m)
+    if (!sample.allow_new_activation
+        || !sample.valid || !std::isfinite(sample.minimum_ad_m)
         || sample.minimum_ad_m >= 0.0
         || sample.unsafe_threat_mask == 0U) {
         return m_status;

@@ -156,13 +156,11 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->activation_requested;
                     decision.command_execution_requested =
                         message->command_execution_requested;
-                    decision.handoff_evaluation_epoch =
-                        message->handoff_evaluation_epoch;
-                    decision.handoff_ready = message->handoff_ready;
-                    decision.handoff_consensus_confirmed =
-                        message->handoff_consensus_confirmed;
                     decision.v4_horizon_local_gate_active =
                         message->v4_horizon_local_gate_active;
+                    decision.v4_control_architecture =
+                        static_cast<selection::V4ControlArchitecture>(
+                            message->v4_control_architecture);
                     decision.v4_cutover_candidate_ready =
                         message->v4_enabled
                         && !message->v4_shadow_only
@@ -442,20 +440,16 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.activation_just_started;
                 message.activation_just_ended =
                     decision.activation_just_ended;
-                message.handoff_evaluation_epoch =
-                    decision.handoff_evaluation_epoch;
-                message.handoff_cpa_clear = decision.handoff_cpa_clear;
-                message.handoff_post_ad_evaluated =
-                    decision.handoff_post_ad_evaluated;
-                message.handoff_post_ad_safe =
-                    decision.handoff_post_ad_safe;
-                message.handoff_post_minimum_ad_m = static_cast<float>(
-                    decision.handoff_post_minimum_ad_m);
-                message.handoff_ready = decision.handoff_ready;
-                message.handoff_consensus_confirmed =
-                    decision.handoff_consensus_confirmed;
+                message.formation_evaluated = decision.formation_evaluated;
+                message.formation_inhibit = decision.formation_inhibit;
+                message.formation_allow_new_activation =
+                    decision.formation_allow_new_activation;
+                message.formation_inhibited_threat_mask =
+                    decision.formation_inhibited_threat_mask;
                 message.v4_enabled = decision.v4_enabled;
                 message.v4_shadow_only = decision.v4_shadow_only;
+                message.v4_control_architecture = static_cast<std::uint8_t>(
+                    decision.v4_control_architecture);
                 message.v4_shadow_evaluated =
                     decision.v4_shadow_evaluated;
                 message.v4_shadow_status = static_cast<std::uint8_t>(
@@ -521,6 +515,46 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                         break;
                     }
                 }
+                message.mode_b_threat_status = static_cast<std::uint8_t>(
+                    decision.mode_b_threat_status);
+                message.mode_b_invalid_threat_vehicle_id =
+                    decision.mode_b_invalid_threat_vehicle_id;
+                message.mode_b_interpolation_status =
+                    static_cast<std::uint8_t>(
+                        decision.mode_b_interpolation_status);
+                message.mode_b_branch_classification =
+                    static_cast<std::uint8_t>(
+                        decision.mode_b_branch_classification);
+                message.mode_b_left_certified =
+                    decision.mode_b_left_certified;
+                message.mode_b_right_certified =
+                    decision.mode_b_right_certified;
+                message.mode_b_left_minimum_path_margin_m =
+                    static_cast<float>(
+                        decision.mode_b_left_minimum_path_margin_m);
+                message.mode_b_right_minimum_path_margin_m =
+                    static_cast<float>(
+                        decision.mode_b_right_minimum_path_margin_m);
+                message.mode_b_left_terminal_turn_margin_m =
+                    static_cast<float>(
+                        decision.mode_b_left_terminal_turn_margin_m);
+                message.mode_b_right_terminal_turn_margin_m =
+                    static_cast<float>(
+                        decision.mode_b_right_terminal_turn_margin_m);
+                message.mode_b_left_interpolation_status =
+                    static_cast<std::uint8_t>(
+                        decision.mode_b_left_interpolation_status);
+                message.mode_b_right_interpolation_status =
+                    static_cast<std::uint8_t>(
+                        decision.mode_b_right_interpolation_status);
+                message.mode_b_left_mu_star = static_cast<float>(
+                    decision.mode_b_left_mu_star);
+                message.mode_b_right_mu_star = static_cast<float>(
+                    decision.mode_b_right_mu_star);
+                message.mode_b_left_safe_rate_radps = static_cast<float>(
+                    decision.mode_b_left_safe_rate_radps);
+                message.mode_b_right_safe_rate_radps = static_cast<float>(
+                    decision.mode_b_right_safe_rate_radps);
                 message.v4_candidate_status = static_cast<std::uint8_t>(
                     decision.v4_candidates.status);
                 message.v4_candidate_count = static_cast<std::uint8_t>(
@@ -548,8 +582,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 "proposal_confirmed=%d switch_eval=%d superior=%d "
                 "accepted=%d own=%u threat=%u AD=%.3f active=%d "
                 "execute=%d h_local=%d h_gate=%d h_worst=%.3f "
-                "handoff_cpa=%d post_eval=%d post_safe=%d post_ad=%.3f "
-                "handoff_ready=%d handoff_confirmed=%d "
+                "formation_eval=%d formation_inhibit=%d "
+                "formation_allow=%d formation_mask=0x%08x "
                 "start=%d end=%d reason=%u",
                 m_vehicle_id,
                 static_cast<unsigned long long>(
@@ -571,12 +605,10 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 output->decision.v4_horizon_local_gate_active ? 1 : 0,
                 output->decision.v4_horizon_gate_active ? 1 : 0,
                 output->decision.v4_horizon_h_worst_m,
-                output->decision.handoff_cpa_clear ? 1 : 0,
-                output->decision.handoff_post_ad_evaluated ? 1 : 0,
-                output->decision.handoff_post_ad_safe ? 1 : 0,
-                output->decision.handoff_post_minimum_ad_m,
-                output->decision.handoff_ready ? 1 : 0,
-                output->decision.handoff_consensus_confirmed ? 1 : 0,
+                output->decision.formation_evaluated ? 1 : 0,
+                output->decision.formation_inhibit ? 1 : 0,
+                output->decision.formation_allow_new_activation ? 1 : 0,
+                output->decision.formation_inhibited_threat_mask,
                 output->decision.activation_just_started ? 1 : 0,
                 output->decision.activation_just_ended ? 1 : 0,
                 static_cast<unsigned>(output->decision.deactivation_reason));

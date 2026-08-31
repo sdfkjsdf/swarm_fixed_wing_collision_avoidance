@@ -102,6 +102,21 @@ target_link_libraries(backup_control_interpolator_v4 PUBLIC
     backup_safety_certifier_v4
 )
 
+# ROS-independent Lockheed baseline formation discrimination and calibration
+# support. This target only produces a new-activation inhibit decision; it has
+# no dependency on CBF or active-maneuver termination code.
+add_library(formation_discrimination STATIC
+    src/formation/FormationDiscrimination.cpp
+    src/formation/FormationCalibration.cpp
+)
+add_library(collision_avoidance::formation_discrimination ALIAS
+    formation_discrimination
+)
+target_include_directories(formation_discrimination PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
 # ROS-independent adapter from V4 intervals to existing predictor inputs.
 add_library(safe_control_candidate_adapter STATIC
     src/selection/SafeControlCandidateAdapter.cpp
@@ -115,6 +130,7 @@ target_include_directories(safe_control_candidate_adapter PUBLIC
 )
 target_link_libraries(safe_control_candidate_adapter PUBLIC
     safe_control_set_v4
+    backup_control_interpolator_v4
 )
 
 # Pure C++ trajectory predictor. This is the production source of truth used by
@@ -165,6 +181,23 @@ target_link_libraries(trajectory_intent PUBLIC
     trajectory_reconstruction
 )
 
+# Phase-4 bridge from the existing reconstructed intent to the common-time,
+# full-horizon threat trajectory consumed by Mode B.
+add_library(backup_threat_intent_adapter_v4 STATIC
+    src/selection/BackupThreatIntentAdapterV4.cpp
+)
+add_library(collision_avoidance::backup_threat_intent_adapter_v4 ALIAS
+    backup_threat_intent_adapter_v4
+)
+target_include_directories(backup_threat_intent_adapter_v4 PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(backup_threat_intent_adapter_v4 PUBLIC
+    trajectory_intent
+    backup_safety_certifier_v4
+)
+
 # Static two-aircraft Current-Best + two-alternate evaluator. It consumes the
 # 46-point mean/cone already reconstructed by trajectory_intent and adds no
 # second reconstruction or covariance implementation.
@@ -200,6 +233,8 @@ target_include_directories(maneuver_selection_worker PUBLIC
 target_link_libraries(maneuver_selection_worker PUBLIC
     maneuver_combination_evaluator
     safe_control_candidate_adapter
+    backup_threat_intent_adapter_v4
+    formation_discrimination
     Threads::Threads
 )
 
@@ -243,6 +278,8 @@ install(TARGETS
     backup_control_model_v4
     backup_safety_certifier_v4
     backup_control_interpolator_v4
+    formation_discrimination
+    backup_threat_intent_adapter_v4
     safe_control_candidate_adapter
     trajectory_prediction_core
     trajectory_reconstruction
@@ -313,6 +350,10 @@ install(TARGETS
 # yaml config 도 install 하면 ros2 launch 등에서 참조 가능
 install(DIRECTORY config/
     DESTINATION share/${PROJECT_NAME}/config
+)
+install(PROGRAMS
+    tools/plot_formation_range_closure.py
+    DESTINATION lib/${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
@@ -445,6 +486,24 @@ if(BUILD_TESTING)
     )
     target_include_directories(
         test_backup_control_interpolator_v4 PRIVATE include)
+
+    ament_add_gtest(test_formation_discrimination
+        test/test_formation_discrimination.cpp
+    )
+    target_link_libraries(test_formation_discrimination
+        formation_discrimination
+    )
+    target_include_directories(
+        test_formation_discrimination PRIVATE include)
+
+    ament_add_gtest(test_backup_threat_intent_adapter_v4
+        test/test_backup_threat_intent_adapter_v4.cpp
+    )
+    target_link_libraries(test_backup_threat_intent_adapter_v4
+        backup_threat_intent_adapter_v4
+    )
+    target_include_directories(
+        test_backup_threat_intent_adapter_v4 PRIVATE include)
 
     ament_add_gtest(test_safe_control_candidate_adapter
         test/test_safe_control_candidate_adapter.cpp

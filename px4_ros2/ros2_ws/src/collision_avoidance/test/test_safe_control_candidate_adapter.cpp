@@ -259,6 +259,79 @@ TEST(SafeControlCandidateAdapter, SupportsExistingNanAltitudeFallback)
     EXPECT_TRUE(std::isnan(result.candidates[0].predictor_input.h_cmd));
 }
 
+TEST(SafeControlCandidateAdapter, MapsModeBBranchesWithoutLegacyIntervals)
+{
+    cs::BackupControlCandidateAdapterInputV4 input;
+    input.interpolation.status = cs::BackupInterpolationStatusV4::Valid;
+    input.interpolation.left.status =
+        cs::BackupInterpolationBranchStatusV4::Feasible;
+    input.interpolation.left.nominal_heading_rate_v4_radps = 0.05;
+    input.interpolation.left.safe_heading_rate_v4_radps = 0.2;
+    input.interpolation.right.status =
+        cs::BackupInterpolationBranchStatusV4::Feasible;
+    input.interpolation.right.nominal_heading_rate_v4_radps = 0.05;
+    input.interpolation.right.safe_heading_rate_v4_radps = -0.4;
+    input.true_airspeed_mps = 20.0;
+    input.ground_speed_command_mps = 18.0;
+    input.altitude_command_m = 120.0;
+
+    const auto result = cs::SafeControlCandidateAdapter(unitParams())
+        .generateFromBackupInterpolation(input);
+
+    ASSERT_EQ(result.status, cs::SafeControlCandidateAdapterStatus::Valid);
+    ASSERT_EQ(result.candidate_count, 2U);
+    EXPECT_EQ(result.candidates[0].role, cs::SafeCandidateRole::NearNominal);
+    EXPECT_NEAR(result.candidates[0].heading_rate_v4_radps, 0.2, 1.0e-12);
+    // The nominal-compatible command is identical to the LEFT branch, so the
+    // existing adapter's deterministic de-duplication keeps one copy.
+    EXPECT_EQ(result.candidates[1].role, cs::SafeCandidateRole::RobustRight);
+    for (std::size_t index = 0; index < result.candidate_count; ++index) {
+        EXPECT_DOUBLE_EQ(result.candidates[index].predictor_input.h_dot_cmd, 0.0);
+        EXPECT_NEAR(
+            result.candidates[index].predictor_input.a_lat_cmd,
+            -20.0 * result.candidates[index].heading_rate_v4_radps,
+            1.0e-12);
+    }
+}
+
+TEST(SafeControlCandidateAdapter, ModeBDeduplicatesNominalAndBranchRates)
+{
+    cs::BackupControlCandidateAdapterInputV4 input;
+    input.interpolation.status = cs::BackupInterpolationStatusV4::Valid;
+    input.interpolation.left.status =
+        cs::BackupInterpolationBranchStatusV4::Feasible;
+    input.interpolation.left.nominal_heading_rate_v4_radps = 0.1;
+    input.interpolation.left.safe_heading_rate_v4_radps = 0.1;
+    input.interpolation.right.status =
+        cs::BackupInterpolationBranchStatusV4::NotCertified;
+    input.true_airspeed_mps = 20.0;
+    input.ground_speed_command_mps = 20.0;
+
+    const auto result = cs::SafeControlCandidateAdapter(unitParams())
+        .generateFromBackupInterpolation(input);
+
+    ASSERT_EQ(result.status, cs::SafeControlCandidateAdapterStatus::Valid);
+    ASSERT_EQ(result.candidate_count, 1U);
+    EXPECT_EQ(result.candidates[0].role, cs::SafeCandidateRole::NearNominal);
+}
+
+TEST(SafeControlCandidateAdapter, ModeBInfeasibleSetFailsClosed)
+{
+    cs::BackupControlCandidateAdapterInputV4 input;
+    input.interpolation.status =
+        cs::BackupInterpolationStatusV4::NoCertifiedBranch;
+    input.true_airspeed_mps = 20.0;
+    input.ground_speed_command_mps = 20.0;
+
+    const auto result = cs::SafeControlCandidateAdapter(unitParams())
+        .generateFromBackupInterpolation(input);
+
+    EXPECT_EQ(
+        result.status,
+        cs::SafeControlCandidateAdapterStatus::SearchSetInfeasible);
+    EXPECT_EQ(result.candidate_count, 0U);
+}
+
 TEST(SafeControlCandidateAdapter, RejectsInvalidInputsAndConfiguration)
 {
     auto invalid_params = unitParams();

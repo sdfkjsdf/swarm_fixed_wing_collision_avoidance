@@ -42,15 +42,10 @@ bool activation_requested
 bool command_execution_requested
 bool activation_just_started
 bool activation_just_ended
-
-# Two-phase coordinated return to the actual nominal Flocking command.
-uint64 handoff_evaluation_epoch
-bool handoff_cpa_clear
-bool handoff_post_ad_evaluated
-bool handoff_post_ad_safe
-float32 handoff_post_minimum_ad_m
-bool handoff_ready
-bool handoff_consensus_confirmed
+bool formation_evaluated
+bool formation_inhibit
+bool formation_allow_new_activation
+uint32 formation_inhibited_threat_mask
 
 # Robust 4.5 s near-nominal cone supervisor used only by horizon_gated_v4.
 bool v4_horizon_gate_evaluated
@@ -66,6 +61,7 @@ int32 v4_horizon_worst_second_vehicle_id
 # V4 diagnostics. v4_shadow_only distinguishes observation from cutover mode.
 bool v4_enabled
 bool v4_shadow_only
+uint8 v4_control_architecture
 bool v4_shadow_evaluated
 uint8 v4_shadow_status
 
@@ -92,6 +88,25 @@ float32 v4_right_upper_radps
 int32 v4_first_infeasible_vehicle_id
 uint8 v4_first_infeasible_direction
 float32 v4_first_infeasible_residual_mps
+
+# Closed-form backup Mode-B diagnostics. These fields remain inert when the
+# preserved legacy SafeControlSetV4 architecture is selected.
+uint8 mode_b_threat_status
+int32 mode_b_invalid_threat_vehicle_id
+uint8 mode_b_interpolation_status
+uint8 mode_b_branch_classification
+bool mode_b_left_certified
+bool mode_b_right_certified
+float32 mode_b_left_minimum_path_margin_m
+float32 mode_b_right_minimum_path_margin_m
+float32 mode_b_left_terminal_turn_margin_m
+float32 mode_b_right_terminal_turn_margin_m
+uint8 mode_b_left_interpolation_status
+uint8 mode_b_right_interpolation_status
+float32 mode_b_left_mu_star
+float32 mode_b_right_mu_star
+float32 mode_b_left_safe_rate_radps
+float32 mode_b_right_safe_rate_radps
 
 uint8 v4_candidate_status
 uint8 v4_candidate_count

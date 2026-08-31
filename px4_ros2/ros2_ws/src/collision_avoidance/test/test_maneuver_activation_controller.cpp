@@ -39,7 +39,6 @@ cs::ManeuverActivationSample sample(
     value.selected_candidate_input_revision = 1000U + candidate_id;
     value.selected_input.V_cmd = 20.0;
     value.selected_input.a_lat_cmd = static_cast<double>(candidate_id);
-    value.coordinated_handoff_authorized = true;
     return value;
 }
 
@@ -70,7 +69,7 @@ TEST(ManeuverActivationController, LatchesCommandAcrossSelectionChanges)
     EXPECT_EQ(positive_ad.latched_candidate_id, 1U);
 }
 
-TEST(ManeuverActivationController, DeactivatesWhenCoordinatedHandoffIsSafe)
+TEST(ManeuverActivationController, DeactivatesWhenFutureCpaIsClear)
 {
     cs::ManeuverActivationController controller;
     ASSERT_TRUE(controller.update(sample(2'000'000, -1.0, 5.0, -1.0)).active);
@@ -79,19 +78,26 @@ TEST(ManeuverActivationController, DeactivatesWhenCoordinatedHandoffIsSafe)
     EXPECT_TRUE(status.just_deactivated);
     EXPECT_EQ(
         status.deactivation_reason,
-        cs::ManeuverDeactivationReason::CoordinatedPostHandoffSafe);
+        cs::ManeuverDeactivationReason::FutureCpaClear);
 }
 
-TEST(ManeuverActivationController, CpaClearAloneCannotDeactivate)
+TEST(ManeuverActivationController, FormationInhibitBlocksOnlyNewActivation)
 {
     cs::ManeuverActivationController controller;
-    ASSERT_TRUE(controller.update(sample(2'150'000, -1.0, 5.0, -1.0)).active);
-    auto cpa_only = sample(2'250'000, 1.0, 20.0, 1.0);
-    cpa_only.coordinated_handoff_authorized = false;
-    const auto status = controller.update(cpa_only);
-    EXPECT_TRUE(status.active);
-    EXPECT_FALSE(status.just_deactivated);
-    EXPECT_TRUE(controller.futureCpaClear(cpa_only));
+    auto inhibited = sample(2'150'000, -1.0, 5.0, -1.0);
+    inhibited.allow_new_activation = false;
+    EXPECT_FALSE(controller.update(inhibited).active);
+
+    auto activation = sample(2'250'000, -1.0, 5.0, -1.0);
+    ASSERT_TRUE(controller.update(activation).active);
+    auto clear_while_inhibited = sample(2'350'000, 1.0, 20.0, 1.0);
+    clear_while_inhibited.allow_new_activation = false;
+    const auto status = controller.update(clear_while_inhibited);
+    EXPECT_FALSE(status.active);
+    EXPECT_TRUE(status.just_deactivated);
+    EXPECT_EQ(
+        status.deactivation_reason,
+        cs::ManeuverDeactivationReason::FutureCpaClear);
 }
 
 TEST(ManeuverActivationController, RequiresEveryAffectedPairCpaToBeClear)
@@ -170,6 +176,7 @@ TEST(ManeuverActivationController, AddsNewUnsafeThreatDuringActiveEpisode)
     new_threat.activation_criteria_m[2] = 10.0;
     new_threat.relative_positions_ned_m[2] = {5.0, 0.0, 0.0};
     new_threat.relative_velocities_ned_mps[2] = {-1.0, 0.0, 0.0};
+    new_threat.allow_new_activation = false;
     const auto retained = controller.update(new_threat);
     EXPECT_TRUE(retained.active);
     EXPECT_EQ(

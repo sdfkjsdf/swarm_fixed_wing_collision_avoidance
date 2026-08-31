@@ -106,15 +106,13 @@ the HILS runner.
 
 Selection and execution are separate. Selection proposals are refreshed at
 4 Hz, while the existing 20 Hz trajectory refresh monitors ownship-versus-
-threat AD. Under `amac_ad_threshold`, once activated the ownship command
-does not end on CPA clearance alone. Each node also predicts the actual
-Flocking command for 4.5 s, evaluates all ten post-handoff pairs, and requires
-`AD_post >= 0`. The five nodes exchange readiness and confirmation before the
-coordinated return to Flocking. There is no elapsed-time termination or
-reactivation lockout. After return, activation supervision follows the actual
-Flocking tuple that was verified; a negative or unavailable post-handoff AD
-releases that state immediately and permits avoidance activation in the same
-update. Under `continuous_v4`, AMAC activation and latching stay
+threat AD. Under `amac_ad_threshold`, `AD < 0` starts avoidance. During an
+active episode, each affected pair's current position and current velocity
+vectors are projected to future CPA. Avoidance ends only when every affected
+pair satisfies `d_CPA > D_activation,original`, where the original pair MASD
+is latched at activation. No Flocking command trajectory participates in this
+termination decision, and there is no elapsed-time termination or reactivation
+lockout. Under `continuous_v4`, AMAC activation and latching stay
 disabled; every newly coordinated V4 tuple is eligible for execution.
 Under `horizon_gated_v4`, AMAC activation remains separate and V4 execution is
 controlled by the 4.5 s robust-cone horizon gate described above. V4

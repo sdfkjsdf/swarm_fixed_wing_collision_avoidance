@@ -4,6 +4,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <vector>
 #include <collision_avoidance/modes/VtolPreflightMode.hpp>
 #include <collision_avoidance/modes/FormationMode.hpp>
 #include <collision_avoidance/modes/VtolGuidanceExecutor.hpp>
@@ -42,6 +43,8 @@ int main(int argc, char * argv[])
         "maneuver_selection_exhaustive_test_mode", false);
     node->declare_parameter<bool>("v4_safe_control_enabled", true);
     node->declare_parameter<bool>("v4_shadow_only", true);
+    node->declare_parameter<std::string>(
+        "v4_control_architecture", "legacy_safe_control_set");
     node->declare_parameter<double>("airspeed_cruise", 15.0);
     node->declare_parameter<double>("max_yaw_rate_deg_per_s", 50.0);
     node->declare_parameter<double>("v4_margin_time_constant_s", 5.0);
@@ -53,6 +56,36 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("v4_direction_tolerance_m", 1.0e-4);
     node->declare_parameter<double>("v4_maximum_airspeed_age_s", 1.0);
     node->declare_parameter<double>("v4_maximum_nominal_age_s", 1.0);
+    node->declare_parameter<double>("mode_b_path_alpha_gain_per_s", 0.2);
+    node->declare_parameter<double>("mode_b_terminal_alpha_gain_per_s", 0.5);
+    node->declare_parameter<double>("mode_b_certification_tolerance_m", 1.0e-6);
+    node->declare_parameter<double>("mode_b_maximum_intent_age_s", 1.0);
+    node->declare_parameter<bool>("formation_discrimination_enabled", false);
+    node->declare_parameter<std::string>(
+        "formation_aggregation_policy", "per_threat_exemption_only");
+    node->declare_parameter<std::string>(
+        "formation_profile_name", "unconfigured");
+    node->declare_parameter<std::string>(
+        "formation_profile_kind", "uav_calibrated");
+    node->declare_parameter<double>("formation_representative_wingspan_m", 0.0);
+    node->declare_parameter<double>("formation_range0_wingspan_scale", 0.0);
+    node->declare_parameter<double>("formation_uncertainty_margin_m", 0.0);
+    node->declare_parameter<double>("formation_range1_offset_m", 0.0);
+    node->declare_parameter<std::vector<double>>(
+        "formation_closure_upper_entry_table", std::vector<double>{});
+    node->declare_parameter<std::vector<double>>(
+        "formation_closure_upper_exit_table", std::vector<double>{});
+    node->declare_parameter<double>("formation_closure_lower_entry_mps", 0.0);
+    node->declare_parameter<double>("formation_closure_lower_exit_mps", 0.0);
+    node->declare_parameter<double>("formation_fdz_entry_limit_m", 0.0);
+    node->declare_parameter<double>("formation_fdz_exit_limit_m", 0.0);
+    node->declare_parameter<double>("formation_max_range_entry_m", 0.0);
+    node->declare_parameter<double>("formation_max_range_exit_m", 0.0);
+    node->declare_parameter<double>("formation_maximum_state_age_s", 0.0);
+    node->declare_parameter<double>("formation_maximum_future_skew_s", 0.0);
+    node->declare_parameter<double>("formation_maximum_timestamp_skew_s", 0.0);
+    node->declare_parameter<std::string>(
+        "formation_lookup_policy", "reject_outside_table");
 
     /* [3] 두 개의 Mode 인스턴스 생성
            - VtolPreflightMode: 천이 + 순항 안정화 (안정 코드)
@@ -139,6 +172,18 @@ int main(int argc, char * argv[])
             "v4_safe_control_enabled").as_bool();
         params.v4_shadow_only = node->get_parameter(
             "v4_shadow_only").as_bool();
+        const std::string v4_architecture = node->get_parameter(
+            "v4_control_architecture").as_string();
+        if (v4_architecture == "legacy_safe_control_set") {
+            params.v4_control_architecture = collision_avoidance::selection::
+                V4ControlArchitecture::LegacySafeControlSet;
+        } else if (v4_architecture == "closed_form_backup_mode_b") {
+            params.v4_control_architecture = collision_avoidance::selection::
+                V4ControlArchitecture::ClosedFormBackupModeB;
+        } else {
+            throw std::invalid_argument(
+                "v4_control_architecture must be legacy_safe_control_set or closed_form_backup_mode_b");
+        }
         if ((params.execution_policy == collision_avoidance::selection::
                 ManeuverExecutionPolicy::ContinuousV4
             || params.execution_policy == collision_avoidance::selection::
@@ -181,6 +226,135 @@ int main(int argc, char * argv[])
             params.v4_safe_control_params.tolerances.interval_radps;
         params.v4_candidate_adapter_params.speed_tolerance_mps =
             params.v4_safe_control_params.tolerances.speed_mps;
+        auto & mode_b = params.mode_b_interpolator_params;
+        mode_b.certifier.model.gravity_mps2 = params.gravity_mps2;
+        mode_b.certifier.model.maximum_roll_rad = maximum_roll_radians;
+        mode_b.certifier.model.maximum_yaw_rate_radps =
+            params.v4_safe_control_params.maximum_yaw_rate_radps;
+        mode_b.certifier.model.speed_tolerance_mps =
+            params.v4_safe_control_params.tolerances.speed_mps;
+        mode_b.certifier.horizon_s = 4.5;
+        mode_b.certifier.integration_step_s =
+            collision_avoidance::estimation::kTrajectoryIntentStepSeconds;
+        mode_b.certifier.reference_margin_m =
+            params.evaluator_params.desired_separation_distance_m;
+        mode_b.certifier.certification_tolerance_m = node->get_parameter(
+            "mode_b_certification_tolerance_m").as_double();
+        mode_b.path_alpha_gain_per_s = node->get_parameter(
+            "mode_b_path_alpha_gain_per_s").as_double();
+        mode_b.terminal_alpha_gain_per_s = node->get_parameter(
+            "mode_b_terminal_alpha_gain_per_s").as_double();
+        mode_b.tolerances.coefficient_mps =
+            params.v4_safe_control_params.tolerances.constraint_mps;
+        mode_b.tolerances.residual_mps =
+            params.v4_safe_control_params.tolerances.constraint_mps;
+        mode_b.tolerances.mu =
+            params.v4_safe_control_params.tolerances.interval_radps;
+        mode_b.tolerances.distance_m =
+            mode_b.certifier.certification_tolerance_m;
+
+        auto & intent_adapter = params.mode_b_intent_adapter_params;
+        intent_adapter.predictor = params.predictor_params;
+        intent_adapter.horizon_s = mode_b.certifier.horizon_s;
+        intent_adapter.integration_step_s =
+            mode_b.certifier.integration_step_s;
+        intent_adapter.maximum_intent_age_us = seconds_to_microseconds(
+            node->get_parameter("mode_b_maximum_intent_age_s").as_double());
+        intent_adapter.time_tolerance_s =
+            mode_b.certifier.threat_time_tolerance_s;
+
+        params.formation_discrimination_enabled = node->get_parameter(
+            "formation_discrimination_enabled").as_bool();
+        auto & formation_config = params.formation_boundary_config;
+        formation_config.profile_name = node->get_parameter(
+            "formation_profile_name").as_string();
+        const std::string formation_profile_kind = node->get_parameter(
+            "formation_profile_kind").as_string();
+        if (formation_profile_kind == "source_reference") {
+            formation_config.profile_kind = collision_avoidance::formation::
+                FormationProfileKind::SourceReference;
+        } else if (formation_profile_kind == "uav_calibrated") {
+            formation_config.profile_kind = collision_avoidance::formation::
+                FormationProfileKind::UavCalibrated;
+        } else {
+            throw std::invalid_argument(
+                "formation_profile_kind must be source_reference or uav_calibrated");
+        }
+        const std::string aggregation_policy = node->get_parameter(
+            "formation_aggregation_policy").as_string();
+        if (aggregation_policy == "per_threat_exemption_only") {
+            params.formation_aggregation_policy =
+                collision_avoidance::formation::FormationAggregationPolicy::
+                    PerThreatExemptionOnly;
+        } else if (aggregation_policy == "all_relevant_threats_formation") {
+            params.formation_aggregation_policy =
+                collision_avoidance::formation::FormationAggregationPolicy::
+                    AllRelevantThreatsFormation;
+        } else if (aggregation_policy == "any_relevant_threat_formation") {
+            params.formation_aggregation_policy =
+                collision_avoidance::formation::FormationAggregationPolicy::
+                    AnyRelevantThreatFormation;
+        } else {
+            throw std::invalid_argument(
+                "invalid formation_aggregation_policy");
+        }
+        formation_config.representative_wingspan_m = node->get_parameter(
+            "formation_representative_wingspan_m").as_double();
+        formation_config.range0_wingspan_scale = node->get_parameter(
+            "formation_range0_wingspan_scale").as_double();
+        formation_config.uncertainty_margin_m = node->get_parameter(
+            "formation_uncertainty_margin_m").as_double();
+        formation_config.range1_offset_m = node->get_parameter(
+            "formation_range1_offset_m").as_double();
+        formation_config.closure_lower_entry_mps = node->get_parameter(
+            "formation_closure_lower_entry_mps").as_double();
+        formation_config.closure_lower_exit_mps = node->get_parameter(
+            "formation_closure_lower_exit_mps").as_double();
+        formation_config.fdz_entry_limit_m = node->get_parameter(
+            "formation_fdz_entry_limit_m").as_double();
+        formation_config.fdz_exit_limit_m = node->get_parameter(
+            "formation_fdz_exit_limit_m").as_double();
+        formation_config.max_range_entry_m = node->get_parameter(
+            "formation_max_range_entry_m").as_double();
+        formation_config.max_range_exit_m = node->get_parameter(
+            "formation_max_range_exit_m").as_double();
+        formation_config.maximum_state_age_s = node->get_parameter(
+            "formation_maximum_state_age_s").as_double();
+        formation_config.maximum_future_skew_s = node->get_parameter(
+            "formation_maximum_future_skew_s").as_double();
+        formation_config.maximum_timestamp_skew_s = node->get_parameter(
+            "formation_maximum_timestamp_skew_s").as_double();
+        const auto parse_boundary_table = [](
+            const std::vector<double> & flat_values) {
+            if (flat_values.size() % 2U != 0U) {
+                throw std::invalid_argument(
+                    "formation closure tables require [range, closure] pairs");
+            }
+            std::vector<collision_avoidance::formation::FormationBoundaryNode>
+                table;
+            table.reserve(flat_values.size() / 2U);
+            for (std::size_t index = 0; index < flat_values.size(); index += 2U) {
+                table.push_back({flat_values[index], flat_values[index + 1U]});
+            }
+            return table;
+        };
+        formation_config.closure_upper_entry_table = parse_boundary_table(
+            node->get_parameter(
+                "formation_closure_upper_entry_table").as_double_array());
+        formation_config.closure_upper_exit_table = parse_boundary_table(
+            node->get_parameter(
+                "formation_closure_upper_exit_table").as_double_array());
+        const std::string formation_lookup_policy = node->get_parameter(
+            "formation_lookup_policy").as_string();
+        if (formation_lookup_policy == "reject_outside_table") {
+            formation_config.lookup_policy = collision_avoidance::formation::
+                FormationLookupPolicy::RejectOutsideTable;
+        } else if (formation_lookup_policy == "clamp_to_endpoint") {
+            formation_config.lookup_policy = collision_avoidance::formation::
+                FormationLookupPolicy::ClampToEndpoint;
+        } else {
+            throw std::invalid_argument("invalid formation_lookup_policy");
+        }
         maneuver_selection_runtime = std::make_shared<
             collision_avoidance::communication::DistributedManeuverSelectionRuntime>(
             *node,
@@ -217,7 +391,7 @@ int main(int argc, char * argv[])
             "[main] distributed maneuver selection: enabled=%d shadow_only=%d "
             "execution_policy=%s exhaustive_test=%d active_switch=%d "
             "switch_cost_margin=%.6f switch_ad_margin=%.3f "
-            "v4_enabled=%d v4_shadow_only=%d",
+            "v4_enabled=%d v4_shadow_only=%d v4_architecture=%s",
             maneuver_selection_runtime->enabled() ? 1 : 0,
             shadow_only ? 1 : 0,
             execution_policy.c_str(),
@@ -226,7 +400,8 @@ int main(int argc, char * argv[])
             params.active_switch_cost_margin,
             params.active_switch_minimum_ad_margin_m,
             params.v4_safe_control_enabled ? 1 : 0,
-            params.v4_shadow_only ? 1 : 0);
+            params.v4_shadow_only ? 1 : 0,
+            v4_architecture.c_str());
     }
 
     /* [5] PX4에 등록 — Executor 와 Formation 둘 다 doRegister() 필요 */

@@ -1,0 +1,52 @@
+# Formation discrimination calibration profiles.
+#
+# These are intentionally non-runnable templates: neither the public source
+# boundary nor the current UAV boundary has been calibrated in this task.
+# Populate every null/table field from a cited source digitization or from
+# simulation/flight-log calibration before selecting a profile at runtime.
+# Runtime calculations are SI only.
+
+profiles:
+  source_reference_profile:
+    profile_kind: source_reference
+    calibration_status: requires_source_digitization
+    runtime_enabled: false
+    unit_system: SI
+    representative_wingspan_m: null
+    range0_wingspan_scale: null
+    uncertainty_margin_m: null
+    range1_offset_m: null
+    closure_upper_entry_table: []  # [{range_m: ..., closure_upper_mps: ...}]
+    closure_upper_exit_table: []
+    closure_lower_entry_mps: null
+    closure_lower_exit_mps: null
+    fdz_entry_limit_m: null
+    fdz_exit_limit_m: null
+    max_range_entry_m: null
+    max_range_exit_m: null
+    maximum_state_age_s: null
+    maximum_future_skew_s: null
+    maximum_timestamp_skew_s: null
+    lookup_policy: reject_outside_table
+
+  uav_calibrated_profile:
+    profile_kind: uav_calibrated
+    calibration_status: requires_sils_and_flight_log_calibration
+    runtime_enabled: false
+    unit_system: SI
+    representative_wingspan_m: null
+    range0_wingspan_scale: null
+    uncertainty_margin_m: null
+    range1_offset_m: null
+    closure_upper_entry_table: []  # [{range_m: ..., closure_upper_mps: ...}]
+    closure_upper_exit_table: []
+    closure_lower_entry_mps: null
+    closure_lower_exit_mps: null
+    fdz_entry_limit_m: null
+    fdz_exit_limit_m: null
+    max_range_entry_m: null
+    max_range_exit_m: null
+    maximum_state_age_s: null
+    maximum_future_skew_s: null
+    maximum_timestamp_skew_s: null
+    lookup_policy: reject_outside_table
