@@ -22,6 +22,9 @@ scripts/run_point_convergence_case.sh baseline
 # Cross the center and continue to five opposite-edge destinations.
 scripts/run_opposite_edge_crossing_case.sh avoidance
 
+# Use the production FlockingGuidance with the formation HILS spawn/config.
+scripts/run_flocking_case.sh avoidance
+
 # Test-only: evaluate all 7^5 = 16,807 roll combinations.
 MANEUVER_SEARCH_MODE=exhaustive scripts/run_point_convergence_case.sh avoidance
 ```
@@ -30,6 +33,13 @@ The opposite-edge mapping is cyclic: vehicle 0 targets the midpoint of the
 initial positions of vehicles 2 and 3, vehicle 1 targets 3 and 4, and so on.
 The resulting common-NED targets are stored in each run's summary and rendered
 as five color-matched stars in the PNG and MP4.
+
+The flocking case reuses `testing_module/formation_hils/config/spawn_config.yaml`,
+production `collision_avoidance/config/flocking_params.yaml`, and
+`test_guidance_mode=flocking`. It does not add a test-only flocking controller.
+The first smoke case starts the five vehicles in a 35 m-spaced line with a
+common northbound course and checks whether the normal 30 m flocking spacing
+causes any unnecessary V4 override.
 
 Run the two execution policies as separate SILS cases with the same scenario
 configuration. The optional first argument is the positive AMAC AD activation

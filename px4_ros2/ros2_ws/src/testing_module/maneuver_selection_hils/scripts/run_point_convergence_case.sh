@@ -52,8 +52,9 @@ if [[ "${V4_MODE}" == "cutover" && "${SEARCH_MODE}" == "exhaustive" ]]; then
     exit 2
 fi
 if [[ "${TRAFFIC_PATTERN}" != "point_convergence" \
-        && "${TRAFFIC_PATTERN}" != "opposite_edge_crossing" ]]; then
-    echo "TRAFFIC_PATTERN must be point_convergence or opposite_edge_crossing"
+        && "${TRAFFIC_PATTERN}" != "opposite_edge_crossing" \
+        && "${TRAFFIC_PATTERN}" != "flocking" ]]; then
+    echo "TRAFFIC_PATTERN must be point_convergence, opposite_edge_crossing, or flocking"
     exit 2
 fi
 
@@ -72,19 +73,34 @@ if [[ "${V4_MODE}" == "cutover" ]]; then
     POSITIVE_MARGIN_FILTER_ENABLED=false
 fi
 RUN_ID=${RUN_ID:-point_${MODE}_$(date +%Y%m%d_%H%M%S)}
-SPAWN_CONFIG=${HILS_ROOT}/config/spawn_point_convergence.yaml
-COORDINATE_CONFIG=${HILS_ROOT}/config/coordinate_point_convergence.yaml
-GUIDANCE_CONFIG=${HILS_ROOT}/config/point_convergence_guidance.yaml
-
 # Common-NED targets and initial courses for the fixed pentagon spawn. The
 # opposite-edge pattern sends vehicle i toward the midpoint of the initial
 # positions of vehicles i+2 and i+3 (modulo five). Its straight paths cross
 # the center but continue toward five distinct destinations.
 if [[ "${TRAFFIC_PATTERN}" == "opposite_edge_crossing" ]]; then
+    SPAWN_CONFIG=${HILS_ROOT}/config/spawn_point_convergence.yaml
+    COORDINATE_CONFIG=${HILS_ROOT}/config/coordinate_point_convergence.yaml
+    GUIDANCE_CONFIG=${HILS_ROOT}/config/point_convergence_guidance.yaml
+    GUIDANCE_MODE=point_convergence
+    SHOW_ASSIGNED_TARGETS=true
     TARGET_NORTHS=(97.746 237.500 463.627 463.627 237.500)
     TARGET_EASTS=(300.000 107.645 181.118 418.882 492.355)
     COURSES=(3.141592654 -1.884955309 -0.628318340 0.628318340 1.884955309)
+elif [[ "${TRAFFIC_PATTERN}" == "flocking" ]]; then
+    SPAWN_CONFIG=${FORMATION_HILS}/config/spawn_config.yaml
+    COORDINATE_CONFIG=${COLLISION_WS}/src/collision_avoidance/config/ros_params.yaml
+    GUIDANCE_CONFIG=${COLLISION_WS}/src/collision_avoidance/config/flocking_params.yaml
+    GUIDANCE_MODE=flocking
+    SHOW_ASSIGNED_TARGETS=false
+    TARGET_NORTHS=(0.0 0.0 0.0 0.0 0.0)
+    TARGET_EASTS=(0.0 0.0 0.0 0.0 0.0)
+    COURSES=(0.0 0.0 0.0 0.0 0.0)
 else
+    SPAWN_CONFIG=${HILS_ROOT}/config/spawn_point_convergence.yaml
+    COORDINATE_CONFIG=${HILS_ROOT}/config/coordinate_point_convergence.yaml
+    GUIDANCE_CONFIG=${HILS_ROOT}/config/point_convergence_guidance.yaml
+    GUIDANCE_MODE=point_convergence
+    SHOW_ASSIGNED_TARGETS=true
     TARGET_NORTHS=(300.000 300.000 300.000 300.000 300.000)
     TARGET_EASTS=(300.000 300.000 300.000 300.000 300.000)
     COURSES=(3.141592654 -1.884955592 -0.628318531 0.628318531 1.884955592)
@@ -149,8 +165,9 @@ if [[ ! -x "${AGENT_BIN}" ]]; then
     echo "[run] ERROR: MicroXRCEAgent not executable: ${AGENT_BIN}"
     exit 1
 fi
-if ! grep -Eq 'test_guidance_mode:[[:space:]]*point_convergence' \
-        "${GUIDANCE_CONFIG}"; then
+if [[ "${GUIDANCE_MODE}" == "point_convergence" ]] \
+        && ! grep -Eq 'test_guidance_mode:[[:space:]]*point_convergence' \
+            "${GUIDANCE_CONFIG}"; then
     echo "[run] ERROR: HILS guidance config is not point_convergence: ${GUIDANCE_CONFIG}"
     exit 2
 fi
@@ -216,6 +233,7 @@ for vehicle in 0 1 2 3 4; do
         -r "__node:=vtol_guidance_${vehicle}" \
         -p "vehicle_ID:=${vehicle}" \
         -p total_agent_num:=5 \
+        -p "test_guidance_mode:=${GUIDANCE_MODE}" \
         -p "point_target_north_m:=${TARGET_NORTHS[$vehicle]}" \
         -p "point_target_east_m:=${TARGET_EASTS[$vehicle]}" \
         -p "preflight_desired_course_rad:=${COURSES[$vehicle]}" \
@@ -286,6 +304,7 @@ fi
 
 RESULT_ROOT="${RESULT_ROOT}" \
 SCENARIO_LABEL="${TRAFFIC_PATTERN}" \
+SHOW_ASSIGNED_TARGETS="${SHOW_ASSIGNED_TARGETS}" \
 TARGET_NORTHS_CSV="${TARGET_NORTHS_CSV}" \
 TARGET_EASTS_CSV="${TARGET_EASTS_CSV}" \
     bash "${SCRIPT_DIR}/process_point_convergence_bag.sh" "${RUN_ID}"

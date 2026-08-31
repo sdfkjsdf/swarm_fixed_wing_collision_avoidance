@@ -540,6 +540,9 @@ private:
     estimation::CandidateSetKind m_ownship_candidate_set_kind{
         estimation::CandidateSetKind::LegacyRoll};
     bool m_v4_cutover_ready{false};
+    SafeControlCandidateAdapterResult m_v4_epoch_candidates{};
+    std::uint64_t m_v4_epoch_candidate_selection_epoch{0};
+    bool m_v4_epoch_candidates_valid{false};
     bool m_selected_v4_cutover{false};
     bool m_v4_horizon_local_gate_active{false};
     bool m_v4_horizon_gate_active{false};

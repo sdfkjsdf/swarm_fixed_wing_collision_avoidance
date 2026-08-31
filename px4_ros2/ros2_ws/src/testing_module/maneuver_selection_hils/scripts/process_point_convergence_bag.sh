@@ -12,6 +12,7 @@ RESULT_ROOT=${RESULT_ROOT:-${HILS_ROOT}/result}
 BAG_DIR=${RESULT_ROOT}/rosbag/${RUN_ID}
 LOG_DIR=${RESULT_ROOT}/log/${RUN_ID}
 SCENARIO_LABEL=${SCENARIO_LABEL:-point_convergence}
+SHOW_ASSIGNED_TARGETS=${SHOW_ASSIGNED_TARGETS:-true}
 TARGET_NORTHS_CSV=${TARGET_NORTHS_CSV:-300.0,300.0,300.0,300.0,300.0}
 TARGET_EASTS_CSV=${TARGET_EASTS_CSV:-300.0,300.0,300.0,300.0,300.0}
 IFS=',' read -r -a TARGET_NORTHS <<< "${TARGET_NORTHS_CSV}"
@@ -35,16 +36,15 @@ if [[ ! -f "${BAG_DIR}/metadata.yaml" ]]; then
     exit 2
 fi
 
-# Each guidance node enters the point-convergence test through the existing
-# FormationMode lifecycle. The common evaluation epoch is the latest of the
-# five activation times, so every aircraft is executing point_convergence.
+# Every guidance pattern enters through the existing FormationMode lifecycle.
+# The common evaluation epoch is the latest of the five activation times.
 evaluation_start_ns=0
 for vehicle in 0 1 2 3 4; do
     timestamp_s=$(grep -m1 "\[Formation\] 활성화" \
         "${LOG_DIR}/guidance_${vehicle}.log" 2>/dev/null \
         | sed -n 's/^\[[^]]*\] \[\([0-9][0-9]*\.[0-9][0-9]*\)\].*/\1/p')
     if [[ -z "${timestamp_s}" ]]; then
-        echo "[process] ERROR: vehicle ${vehicle} has no point-convergence activation timestamp"
+        echo "[process] ERROR: vehicle ${vehicle} has no Formation activation timestamp"
         exit 2
     fi
     seconds=${timestamp_s%.*}
@@ -56,8 +56,7 @@ for vehicle in 0 1 2 3 4; do
     fi
 done
 
-exec "${ANALYSIS_PYTHON}" \
-    "${HILS_ROOT}/analysis/analyze_point_convergence_bag.py" \
+ANALYSIS_ARGS=(
     --bag "${BAG_DIR}" \
     --summary-dir "${RESULT_ROOT}/summary/${RUN_ID}" \
     --plot-dir "${RESULT_ROOT}/plot/${RUN_ID}" \
@@ -68,3 +67,11 @@ exec "${ANALYSIS_PYTHON}" \
     --target-norths "${TARGET_NORTHS[@]}" \
     --target-easts "${TARGET_EASTS[@]}" \
     --desired-separation-distance 10.0
+)
+if [[ "${SHOW_ASSIGNED_TARGETS}" == "true" ]]; then
+    ANALYSIS_ARGS+=(--show-targets)
+fi
+
+exec "${ANALYSIS_PYTHON}" \
+    "${HILS_ROOT}/analysis/analyze_point_convergence_bag.py" \
+    "${ANALYSIS_ARGS[@]}"

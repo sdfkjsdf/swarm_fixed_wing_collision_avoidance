@@ -467,6 +467,18 @@ bool ManeuverSelectionWorker::processPending()
         if (v4CutoverMode()) {
             const bool v4_candidates_valid = output.has_decision
                 && v4CutoverCandidateReady(output.decision);
+            if (v4_candidates_valid
+                && (!m_v4_epoch_candidates_valid
+                    || m_v4_epoch_candidate_selection_epoch
+                        != m_selection_epoch)) {
+                // Candidate commands are a 4 Hz selection-epoch snapshot.
+                // Their trajectories are still regenerated from the latest
+                // belief at 20 Hz below, but the command revisions must stay
+                // fixed long enough for distributed proposal consensus.
+                m_v4_epoch_candidates = output.decision.v4_candidates;
+                m_v4_epoch_candidate_selection_epoch = m_selection_epoch;
+                m_v4_epoch_candidates_valid = true;
+            }
             if (!m_v4_cutover_ready
                 && v4_candidates_valid
                 && allV4CutoverParticipantsReady(output.decision)) {
@@ -479,10 +491,18 @@ bool ManeuverSelectionWorker::processPending()
             const bool active = m_activation_controller.status().active;
             const bool retain_selected_v4 =
                 m_has_selected_combination && m_selected_v4_cutover;
+            const bool epoch_candidates_available =
+                m_v4_epoch_candidates_valid
+                && m_v4_epoch_candidate_selection_epoch
+                    == m_selection_epoch;
             if (m_v4_cutover_ready
                 && (v4_candidates_valid || active || retain_selected_v4)) {
                 buildV4IntentSet(
-                    now_us, output.decision.v4_candidates, output);
+                    now_us,
+                    v4_candidates_valid && epoch_candidates_available
+                        ? m_v4_epoch_candidates
+                        : output.decision.v4_candidates,
+                    output);
             } else if (m_v4_cutover_ready) {
                 // Once cut over, never fall back to a legacy/best-unsafe set.
                 m_ownship_candidates_complete = false;

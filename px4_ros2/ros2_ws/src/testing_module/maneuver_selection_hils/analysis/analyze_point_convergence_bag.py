@@ -693,7 +693,7 @@ def distributed_tuple_label(decisions, elapsed_s):
 
 def save_summary_plot(
         path, elapsed_s, tracks, minimum_distance, dsd_m,
-        target_norths, target_easts, scenario_label):
+        target_norths, target_easts, scenario_label, show_targets):
     figure, (map_axis, separation_axis) = plt.subplots(
         1, 2, figsize=(14, 6), constrained_layout=True)
     for vehicle in range(AIRCRAFT_COUNT):
@@ -706,9 +706,11 @@ def save_summary_plot(
         map_axis.scatter(
             tracks[vehicle, -1, 1], tracks[vehicle, -1, 0],
             marker="x", color=COLORS[vehicle], s=50)
-    map_axis.scatter(
-        target_easts, target_norths, marker="*", c=COLORS, s=160,
-        edgecolors="black", linewidths=0.5, label="assigned destinations")
+    if show_targets:
+        map_axis.scatter(
+            target_easts, target_norths, marker="*", c=COLORS, s=160,
+            edgecolors="black", linewidths=0.5,
+            label="assigned destinations")
     map_axis.set_title(
         f"Actual common-NED ground tracks — {scenario_label.replace('_', ' ')}")
     map_axis.set_xlabel("East [m]")
@@ -732,11 +734,14 @@ def save_summary_plot(
 def save_video(
         path, elapsed_s, tracks, minimum_distance, nearest_pair_index,
         pair_list, decisions, dsd_m, target_norths, target_easts,
-        scenario_label, fps):
+        scenario_label, show_targets, fps):
     figure, (map_axis, separation_axis) = plt.subplots(
         1, 2, figsize=(14, 6), constrained_layout=True)
-    all_east = np.concatenate((tracks[:, :, 1].ravel(), target_easts))
-    all_north = np.concatenate((tracks[:, :, 0].ravel(), target_norths))
+    all_east = tracks[:, :, 1].ravel()
+    all_north = tracks[:, :, 0].ravel()
+    if show_targets:
+        all_east = np.concatenate((all_east, target_easts))
+        all_north = np.concatenate((all_north, target_norths))
     span = max(float(np.ptp(all_east)), float(np.ptp(all_north)), 1.0)
     padding = 0.08 * span
     map_axis.set_xlim(float(np.min(all_east)) - padding,
@@ -747,9 +752,11 @@ def save_video(
     map_axis.set_xlabel("East [m]")
     map_axis.set_ylabel("North [m]")
     map_axis.grid(True, alpha=0.3)
-    map_axis.scatter(
-        target_easts, target_norths, marker="*", c=COLORS, s=160,
-        edgecolors="black", linewidths=0.5, label="assigned destinations")
+    if show_targets:
+        map_axis.scatter(
+            target_easts, target_norths, marker="*", c=COLORS, s=160,
+            edgecolors="black", linewidths=0.5,
+            label="assigned destinations")
 
     trails = []
     points = []
@@ -859,7 +866,7 @@ def analyze(args):
                 "east_m": float(target_easts[vehicle]),
             }
             for vehicle in range(AIRCRAFT_COUNT)
-        ],
+        ] if args.show_targets else [],
         "requested_evaluation_start_ns": args.evaluation_start_ns,
         "actual_evaluation_start_ns": int(grid_ns[0]),
         "common_duration_s": float(elapsed_s[-1]),
@@ -906,12 +913,14 @@ def analyze(args):
         args.plot_dir / "actual_maneuver_overview.png",
         elapsed_s, tracks, minimum_distance,
         args.desired_separation_distance,
-        target_norths, target_easts, args.scenario_label)
+        target_norths, target_easts, args.scenario_label,
+        args.show_targets)
     save_video(
         args.video_dir / "actual_maneuver.mp4",
         elapsed_s, tracks, minimum_distance, nearest_pair_index,
         pair_list, decisions, args.desired_separation_distance,
-        target_norths, target_easts, args.scenario_label, args.fps)
+        target_norths, target_easts, args.scenario_label,
+        args.show_targets, args.fps)
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -926,6 +935,7 @@ def parse_args():
     parser.add_argument("--evaluation-start-ns", type=int, required=True)
     parser.add_argument("--desired-separation-distance", type=float, default=10.0)
     parser.add_argument("--scenario-label", default="point_convergence")
+    parser.add_argument("--show-targets", action="store_true")
     parser.add_argument("--target-north", type=float, default=300.0)
     parser.add_argument("--target-east", type=float, default=300.0)
     parser.add_argument(

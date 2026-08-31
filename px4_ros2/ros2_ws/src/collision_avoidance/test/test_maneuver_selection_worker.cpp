@@ -650,11 +650,18 @@ TEST(ManeuverSelectionWorker,
     // Phase 2: after the all-participant readiness barrier, both aircraft
     // publish V4 intents. Actual command execution still waits for the normal
     // distributed proposal/confirmation below.
-    for (const std::uint64_t offset : {
-             350'000ULL, 400'000ULL, 450'000ULL}) {
+    std::array<std::uint64_t, 3> first_epoch_revisions{};
+    bool captured_first_epoch_revisions = false;
+    for (const auto [offset, nominal_lateral_acceleration] :
+         std::array<std::pair<std::uint64_t, double>, 3>{
+             std::pair{350'000ULL, 0.0},
+             std::pair{400'000ULL, 2.0},
+             std::pair{450'000ULL, -2.0}}) {
         const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
-        pushV4Inputs(first, start + offset);
-        pushV4Inputs(second, start + offset);
+        pushV4Inputs(
+            first, start + offset, 20.0, nominal_lateral_acceleration);
+        pushV4Inputs(
+            second, start + offset, 20.0, nominal_lateral_acceleration);
         first_output = pushBeliefAndProcess(
             first,
             beliefSnapshot(
@@ -681,6 +688,18 @@ TEST(ManeuverSelectionWorker,
         EXPECT_EQ(
             second_output.intent_packets[0].candidate_set_kind,
             ce::CandidateSetKind::V4SafeControl);
+        std::array<std::uint64_t, 3> current_revisions{};
+        for (std::size_t index = 0;
+             index < first_output.intent_packet_count; ++index) {
+            current_revisions[index] =
+                first_output.intent_packets[index].candidate_input_revision;
+        }
+        if (!captured_first_epoch_revisions) {
+            first_epoch_revisions = current_revisions;
+            captured_first_epoch_revisions = true;
+        } else {
+            EXPECT_EQ(current_revisions, first_epoch_revisions);
+        }
         exchangePackets(first, second, first_output, second_output);
     }
 
