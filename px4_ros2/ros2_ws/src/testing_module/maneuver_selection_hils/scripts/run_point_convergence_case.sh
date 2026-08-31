@@ -16,6 +16,7 @@ SEARCH_MODE=${MANEUVER_SEARCH_MODE:-heuristic}
 V4_MODE=${V4_MODE:-shadow}
 EXECUTION_POLICY=${AVOIDANCE_EXECUTION_POLICY:-amac_ad_threshold}
 AMAC_AD_THRESHOLD_M=${AMAC_AD_THRESHOLD_M:-0.0}
+TRAFFIC_PATTERN=${TRAFFIC_PATTERN:-point_convergence}
 
 if [[ "${MODE}" != "avoidance" && "${MODE}" != "baseline" ]]; then
     echo "Usage: run_point_convergence_case.sh [avoidance|baseline]"
@@ -50,6 +51,11 @@ if [[ "${V4_MODE}" == "cutover" && "${SEARCH_MODE}" == "exhaustive" ]]; then
     echo "V4 cutover is incompatible with the legacy exhaustive roll search"
     exit 2
 fi
+if [[ "${TRAFFIC_PATTERN}" != "point_convergence" \
+        && "${TRAFFIC_PATTERN}" != "opposite_edge_crossing" ]]; then
+    echo "TRAFFIC_PATTERN must be point_convergence or opposite_edge_crossing"
+    exit 2
+fi
 
 SHADOW_ONLY=true
 if [[ "${MODE}" == "avoidance" ]]; then
@@ -69,6 +75,24 @@ RUN_ID=${RUN_ID:-point_${MODE}_$(date +%Y%m%d_%H%M%S)}
 SPAWN_CONFIG=${HILS_ROOT}/config/spawn_point_convergence.yaml
 COORDINATE_CONFIG=${HILS_ROOT}/config/coordinate_point_convergence.yaml
 GUIDANCE_CONFIG=${HILS_ROOT}/config/point_convergence_guidance.yaml
+
+# Common-NED targets and initial courses for the fixed pentagon spawn. The
+# opposite-edge pattern sends vehicle i toward the midpoint of the initial
+# positions of vehicles i+2 and i+3 (modulo five). Its straight paths cross
+# the center but continue toward five distinct destinations.
+if [[ "${TRAFFIC_PATTERN}" == "opposite_edge_crossing" ]]; then
+    TARGET_NORTHS=(97.746 237.500 463.627 463.627 237.500)
+    TARGET_EASTS=(300.000 107.645 181.118 418.882 492.355)
+    COURSES=(3.141592654 -1.884955309 -0.628318340 0.628318340 1.884955309)
+else
+    TARGET_NORTHS=(300.000 300.000 300.000 300.000 300.000)
+    TARGET_EASTS=(300.000 300.000 300.000 300.000 300.000)
+    COURSES=(3.141592654 -1.884955592 -0.628318531 0.628318531 1.884955592)
+fi
+TARGET_NORTHS_CSV=${TARGET_NORTHS[*]}
+TARGET_NORTHS_CSV=${TARGET_NORTHS_CSV// /,}
+TARGET_EASTS_CSV=${TARGET_EASTS[*]}
+TARGET_EASTS_CSV=${TARGET_EASTS_CSV// /,}
 BAG_DIR=${RESULT_ROOT}/rosbag/${RUN_ID}
 LOG_DIR=${RESULT_ROOT}/log/${RUN_ID}
 mkdir -p "${LOG_DIR}" "$(dirname "${BAG_DIR}")"
@@ -135,7 +159,7 @@ if [[ -e "${BAG_DIR}" ]]; then
     exit 2
 fi
 
-echo "[run] mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} policy=${EXECUTION_POLICY} ad_threshold=${AMAC_AD_THRESHOLD_M}m run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
+echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} policy=${EXECUTION_POLICY} ad_threshold=${AMAC_AD_THRESHOLD_M}m run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
 for vehicle in 0 1 2 3 4; do
     port=$((8888 + vehicle))
     pkill -KILL -f "MicroXRCEAgent udp4 -p ${port}" 2>/dev/null || true
@@ -185,8 +209,6 @@ bash "${SCRIPT_DIR}/record_point_convergence_bag.sh" "${BAG_DIR}" \
 BAG_PID=$!
 sleep 2
 
-# Inward courses for the five pentagon vertices, in common NED radians.
-COURSES=(3.141592654 -1.884955592 -0.628318531 0.628318531 1.884955592)
 for vehicle in 0 1 2 3 4; do
     "${GUIDANCE_BIN}" \
         --ros-args \
@@ -194,6 +216,8 @@ for vehicle in 0 1 2 3 4; do
         -r "__node:=vtol_guidance_${vehicle}" \
         -p "vehicle_ID:=${vehicle}" \
         -p total_agent_num:=5 \
+        -p "point_target_north_m:=${TARGET_NORTHS[$vehicle]}" \
+        -p "point_target_east_m:=${TARGET_EASTS[$vehicle]}" \
         -p "preflight_desired_course_rad:=${COURSES[$vehicle]}" \
         -p preflight_desired_ground_speed_mps:=20.0 \
         -p "collision_avoidance_shadow_only:=${SHADOW_ONLY}" \
@@ -261,6 +285,9 @@ if [[ ${formation_ready_count} -ne 5 ]]; then
 fi
 
 RESULT_ROOT="${RESULT_ROOT}" \
+SCENARIO_LABEL="${TRAFFIC_PATTERN}" \
+TARGET_NORTHS_CSV="${TARGET_NORTHS_CSV}" \
+TARGET_EASTS_CSV="${TARGET_EASTS_CSV}" \
     bash "${SCRIPT_DIR}/process_point_convergence_bag.sh" "${RUN_ID}"
 analysis_rc=$?
 echo "[run] results: ${RESULT_ROOT} (analysis_rc=${analysis_rc})"

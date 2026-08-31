@@ -11,6 +11,16 @@ RUN_ID=${1:?Usage: process_point_convergence_bag.sh RUN_ID}
 RESULT_ROOT=${RESULT_ROOT:-${HILS_ROOT}/result}
 BAG_DIR=${RESULT_ROOT}/rosbag/${RUN_ID}
 LOG_DIR=${RESULT_ROOT}/log/${RUN_ID}
+SCENARIO_LABEL=${SCENARIO_LABEL:-point_convergence}
+TARGET_NORTHS_CSV=${TARGET_NORTHS_CSV:-300.0,300.0,300.0,300.0,300.0}
+TARGET_EASTS_CSV=${TARGET_EASTS_CSV:-300.0,300.0,300.0,300.0,300.0}
+IFS=',' read -r -a TARGET_NORTHS <<< "${TARGET_NORTHS_CSV}"
+IFS=',' read -r -a TARGET_EASTS <<< "${TARGET_EASTS_CSV}"
+
+if [[ ${#TARGET_NORTHS[@]} -ne 5 || ${#TARGET_EASTS[@]} -ne 5 ]]; then
+    echo "[process] ERROR: target arrays must each contain five values"
+    exit 2
+fi
 
 source /opt/ros/humble/setup.bash
 source "${ROS2_WS}/install/setup.bash"
@@ -54,4 +64,7 @@ exec "${ANALYSIS_PYTHON}" \
     --video-dir "${RESULT_ROOT}/video/${RUN_ID}" \
     --log-dir "${LOG_DIR}" \
     --evaluation-start-ns "${evaluation_start_ns}" \
+    --scenario-label "${SCENARIO_LABEL}" \
+    --target-norths "${TARGET_NORTHS[@]}" \
+    --target-easts "${TARGET_EASTS[@]}" \
     --desired-separation-distance 10.0

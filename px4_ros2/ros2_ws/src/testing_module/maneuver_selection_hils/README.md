@@ -1,9 +1,11 @@
 # Five-aircraft maneuver-selection HILS
 
-This test asset intentionally drives five fixed-wing vehicles toward one common
-NED point. It is not a formation controller. Its purpose is to compare the
-actual minimum pair separation with and without the distributed maneuver
-selection override.
+This test asset drives five fixed-wing vehicles through intersecting paths. It
+is not a formation controller. The original pattern uses one common NED point;
+the `opposite_edge_crossing` pattern assigns each vehicle a different
+destination on the opposite edge of the initial pentagon. Both compare actual
+minimum pair separation with and without the distributed maneuver-selection
+override.
 
 The production default remains `test_guidance_mode=flocking`. This scenario
 selects `point_convergence` only through its test YAML.
@@ -17,9 +19,17 @@ scripts/run_point_convergence_case.sh avoidance
 # Keep the selector in shadow mode for a baseline bag.
 scripts/run_point_convergence_case.sh baseline
 
+# Cross the center and continue to five opposite-edge destinations.
+scripts/run_opposite_edge_crossing_case.sh avoidance
+
 # Test-only: evaluate all 7^5 = 16,807 roll combinations.
 MANEUVER_SEARCH_MODE=exhaustive scripts/run_point_convergence_case.sh avoidance
 ```
+
+The opposite-edge mapping is cyclic: vehicle 0 targets the midpoint of the
+initial positions of vehicles 2 and 3, vehicle 1 targets 3 and 4, and so on.
+The resulting common-NED targets are stored in each run's summary and rendered
+as five color-matched stars in the PNG and MP4.
 
 Run the two execution policies as separate SILS cases with the same scenario
 configuration. The optional first argument is the positive AMAC AD activation

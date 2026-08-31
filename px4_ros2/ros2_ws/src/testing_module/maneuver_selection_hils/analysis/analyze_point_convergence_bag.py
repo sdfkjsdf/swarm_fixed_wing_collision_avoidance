@@ -692,7 +692,8 @@ def distributed_tuple_label(decisions, elapsed_s):
 
 
 def save_summary_plot(
-        path, elapsed_s, tracks, minimum_distance, dsd_m, target_n, target_e):
+        path, elapsed_s, tracks, minimum_distance, dsd_m,
+        target_norths, target_easts, scenario_label):
     figure, (map_axis, separation_axis) = plt.subplots(
         1, 2, figsize=(14, 6), constrained_layout=True)
     for vehicle in range(AIRCRAFT_COUNT):
@@ -706,9 +707,10 @@ def save_summary_plot(
             tracks[vehicle, -1, 1], tracks[vehicle, -1, 0],
             marker="x", color=COLORS[vehicle], s=50)
     map_axis.scatter(
-        target_e, target_n, marker="*", color="black", s=160,
-        label="convergence target")
-    map_axis.set_title("Actual common-NED ground tracks")
+        target_easts, target_norths, marker="*", c=COLORS, s=160,
+        edgecolors="black", linewidths=0.5, label="assigned destinations")
+    map_axis.set_title(
+        f"Actual common-NED ground tracks — {scenario_label.replace('_', ' ')}")
     map_axis.set_xlabel("East [m]")
     map_axis.set_ylabel("North [m]")
     map_axis.axis("equal")
@@ -719,7 +721,7 @@ def save_summary_plot(
     separation_axis.axhline(
         dsd_m, color="red", linestyle="--", label=f"DSD = {dsd_m:.1f} m")
     separation_axis.set_title("Actual minimum 3D pair separation")
-    separation_axis.set_xlabel("Point-convergence elapsed time [s]")
+    separation_axis.set_xlabel("Scenario elapsed time [s]")
     separation_axis.set_ylabel("Separation [m]")
     separation_axis.grid(True, alpha=0.3)
     separation_axis.legend(loc="best")
@@ -729,11 +731,12 @@ def save_summary_plot(
 
 def save_video(
         path, elapsed_s, tracks, minimum_distance, nearest_pair_index,
-        pair_list, decisions, dsd_m, target_n, target_e, fps):
+        pair_list, decisions, dsd_m, target_norths, target_easts,
+        scenario_label, fps):
     figure, (map_axis, separation_axis) = plt.subplots(
         1, 2, figsize=(14, 6), constrained_layout=True)
-    all_east = tracks[:, :, 1]
-    all_north = tracks[:, :, 0]
+    all_east = np.concatenate((tracks[:, :, 1].ravel(), target_easts))
+    all_north = np.concatenate((tracks[:, :, 0].ravel(), target_norths))
     span = max(float(np.ptp(all_east)), float(np.ptp(all_north)), 1.0)
     padding = 0.08 * span
     map_axis.set_xlim(float(np.min(all_east)) - padding,
@@ -745,8 +748,8 @@ def save_video(
     map_axis.set_ylabel("North [m]")
     map_axis.grid(True, alpha=0.3)
     map_axis.scatter(
-        target_e, target_n, marker="*", color="black", s=160,
-        label="convergence target")
+        target_easts, target_norths, marker="*", c=COLORS, s=160,
+        edgecolors="black", linewidths=0.5, label="assigned destinations")
 
     trails = []
     points = []
@@ -772,7 +775,7 @@ def save_video(
     separation_axis.set_xlim(float(elapsed_s[0]), float(elapsed_s[-1]))
     upper = max(float(np.max(minimum_distance)) * 1.05, dsd_m * 1.5)
     separation_axis.set_ylim(0.0, upper)
-    separation_axis.set_xlabel("Point-convergence elapsed time [s]")
+    separation_axis.set_xlabel("Scenario elapsed time [s]")
     separation_axis.set_ylabel("Minimum 3D separation [m]")
     separation_axis.grid(True, alpha=0.3)
     separation_axis.legend(loc="upper right", fontsize=8)
@@ -796,7 +799,7 @@ def save_video(
         separation_point.set_data(
             [elapsed_s[frame]], [minimum_distance[frame]])
         title.set_text(
-            f"Actual maneuver, t={elapsed_s[frame]:.1f}s | "
+            f"{scenario_label.replace('_', ' ')}, t={elapsed_s[frame]:.1f}s | "
             f"closest={first}-{second}: {minimum_distance[frame]:.1f}m\n"
             f"{distributed_tuple_label(decisions, elapsed_s[frame])}")
         return trails + points + [
@@ -829,6 +832,16 @@ def analyze(args):
     closest_pair = pair_list[pair_index]
     below_dsd = minimum_distance < args.desired_separation_distance
     sample_dt_s = 1.0 / args.sample_hz
+    target_norths = np.asarray(
+        args.target_norths
+        if args.target_norths is not None
+        else [args.target_north] * AIRCRAFT_COUNT,
+        dtype=float)
+    target_easts = np.asarray(
+        args.target_easts
+        if args.target_easts is not None
+        else [args.target_east] * AIRCRAFT_COUNT,
+        dtype=float)
 
     for directory in (args.summary_dir, args.plot_dir, args.video_dir):
         directory.mkdir(parents=True, exist_ok=True)
@@ -837,7 +850,16 @@ def analyze(args):
         "bag": str(args.bag.resolve()),
         "aircraft_count": AIRCRAFT_COUNT,
         "sample_hz": args.sample_hz,
-        "evaluation_basis": "all_vehicles_point_convergence_active",
+        "scenario_label": args.scenario_label,
+        "evaluation_basis": f"all_vehicles_{args.scenario_label}_active",
+        "assigned_targets_ned_m": [
+            {
+                "vehicle_id": vehicle,
+                "north_m": float(target_norths[vehicle]),
+                "east_m": float(target_easts[vehicle]),
+            }
+            for vehicle in range(AIRCRAFT_COUNT)
+        ],
         "requested_evaluation_start_ns": args.evaluation_start_ns,
         "actual_evaluation_start_ns": int(grid_ns[0]),
         "common_duration_s": float(elapsed_s[-1]),
@@ -884,12 +906,12 @@ def analyze(args):
         args.plot_dir / "actual_maneuver_overview.png",
         elapsed_s, tracks, minimum_distance,
         args.desired_separation_distance,
-        args.target_north, args.target_east)
+        target_norths, target_easts, args.scenario_label)
     save_video(
         args.video_dir / "actual_maneuver.mp4",
         elapsed_s, tracks, minimum_distance, nearest_pair_index,
         pair_list, decisions, args.desired_separation_distance,
-        args.target_north, args.target_east, args.fps)
+        target_norths, target_easts, args.scenario_label, args.fps)
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -903,8 +925,13 @@ def parse_args():
     parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--evaluation-start-ns", type=int, required=True)
     parser.add_argument("--desired-separation-distance", type=float, default=10.0)
+    parser.add_argument("--scenario-label", default="point_convergence")
     parser.add_argument("--target-north", type=float, default=300.0)
     parser.add_argument("--target-east", type=float, default=300.0)
+    parser.add_argument(
+        "--target-norths", type=float, nargs=AIRCRAFT_COUNT, default=None)
+    parser.add_argument(
+        "--target-easts", type=float, nargs=AIRCRAFT_COUNT, default=None)
     parser.add_argument("--sample-hz", type=float, default=10.0)
     parser.add_argument("--fps", type=int, default=15)
     return parser.parse_args()
