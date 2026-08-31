@@ -1,0 +1,7 @@
+"/**":
+  ros__parameters:
+    # Project HILS values for the source-undisclosed "clearly superior" gate.
+    # These are provisional calibration values, not Lockheed Martin values.
+    amac_active_switching_enabled: true
+    amac_active_switch_cost_margin: 0.01
+    amac_active_switch_minimum_ad_margin_m: 1.0

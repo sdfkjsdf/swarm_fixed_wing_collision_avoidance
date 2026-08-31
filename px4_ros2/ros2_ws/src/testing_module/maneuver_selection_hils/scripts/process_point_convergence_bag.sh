@@ -5,7 +5,8 @@ set -o pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HILS_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 ROS2_WS=${ROS2_WS:-/home/hmcl/workspace/swarm-fixed-wing/ros2_ws}
-COLLISION_WS=${COLLISION_WS:-$(cd "${HILS_ROOT}/../../.." && pwd)}
+# Keep deserialization on the exact overlay used by the guidance processes.
+COLLISION_WS=${COLLISION_WS:-${ROS2_WS}}
 ANALYSIS_PYTHON=${ANALYSIS_PYTHON:-/home/hmcl/workspace/swarm-fixed-wing/.envs/px4/bin/python3}
 RUN_ID=${1:?Usage: process_point_convergence_bag.sh RUN_ID}
 RESULT_ROOT=${RESULT_ROOT:-${HILS_ROOT}/result}

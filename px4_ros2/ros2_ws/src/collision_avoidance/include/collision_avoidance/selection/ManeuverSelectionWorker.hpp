@@ -71,6 +71,11 @@ struct ManeuverSelectionWorkerParams
     std::uint64_t coordination_delay_us{250'000};
     std::uint64_t maximum_belief_delay_us{1'000'000};
     ManeuverActivationControllerParams activation_params{};
+    // Project-defined active-best hysteresis. Public AMAC sources do not
+    // disclose these numerical margins, so runtime switching is opt-in.
+    bool active_switching_enabled{false};
+    double active_switch_cost_margin{0.0};
+    double active_switch_minimum_ad_margin_m{0.0};
     ManeuverExecutionPolicy execution_policy{
         ManeuverExecutionPolicy::AmacAdThreshold};
     bool exhaustive_test_mode{false};
@@ -152,6 +157,16 @@ struct ManeuverSelectionDecision
     bool proposed_v4_cutover{false};
     bool proposal_valid{false};
     bool proposal_consensus_confirmed{false};
+    bool switch_superiority_evaluated{false};
+    bool switch_clearly_superior{false};
+    double switch_current_cost{
+        std::numeric_limits<double>::quiet_NaN()};
+    double switch_proposed_cost{
+        std::numeric_limits<double>::quiet_NaN()};
+    double switch_current_minimum_ad_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    double switch_proposed_minimum_ad_m{
+        std::numeric_limits<double>::quiet_NaN()};
     std::uint8_t threat_candidate_id{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
     estimation::PredictInput ownship_input{};
@@ -414,9 +429,14 @@ private:
             candidate_source_timestamps_us{};
         bool v4_cutover{false};
         estimation::PredictInput ownship_input{};
+        JointCombinationEvaluation current_evaluation{};
         JointCombinationEvaluation evaluation{};
+        bool active_command_change{false};
+        bool superiority_evaluated{false};
+        bool clearly_superior{false};
         std::size_t combination_index{0};
         std::size_t combination_count{0};
+        std::uint64_t last_readiness_publish_timestamp_us{0};
         bool valid{false};
         bool resolved{false};
     };
@@ -460,10 +480,25 @@ private:
         ManeuverSelectionDecision & decision);
     void rollupV4HorizonGate(std::uint64_t now_us) noexcept;
     bool latchV4HorizonOwnshipCandidate() noexcept;
-    bool constrainActiveAircraftCandidates(
+    bool constrainV4ActiveAircraftCandidates(
         MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
         const std::array<std::size_t, kMaximumSelectionAircraft>
             & candidate_counts) const;
+    bool evaluateSelectedTuple(
+        std::uint64_t evaluation_timestamp_us,
+        const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
+        const std::array<std::size_t, kMaximumSelectionAircraft>
+            & candidate_counts,
+        JointCombinationEvaluation & evaluation) const;
+    bool proposalChangesActiveCommand(
+        const std::array<std::uint8_t, kMaximumSelectionAircraft>
+            & candidate_ids,
+        const std::array<std::uint64_t, kMaximumSelectionAircraft>
+            & candidate_input_revisions) const noexcept;
+    bool clearlySuperior(
+        const JointCombinationEvaluation & current,
+        const JointCombinationEvaluation & proposed) const noexcept;
+    bool allProposalParticipantsReady() const noexcept;
     bool finalizePendingCoordination(
         ManeuverSelectionWorkerOutput & output);
     bool buildActivationSample(

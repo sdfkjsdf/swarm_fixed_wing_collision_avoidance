@@ -31,7 +31,10 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("desired_separation_distance", 10.0);
     node->declare_parameter<std::string>(
         "avoidance_execution_policy", "amac_ad_threshold");
-    node->declare_parameter<double>("amac_activation_threshold_m", 0.0);
+    node->declare_parameter<bool>("amac_active_switching_enabled", false);
+    node->declare_parameter<double>("amac_active_switch_cost_margin", 0.0);
+    node->declare_parameter<double>(
+        "amac_active_switch_minimum_ad_margin_m", 0.0);
     node->declare_parameter<double>("aircraft_half_wingspan", 1.072);
     node->declare_parameter<bool>("positive_margin_filter_enabled", true);
     node->declare_parameter<double>("positive_margin_gamma", 0.02);
@@ -94,10 +97,14 @@ int main(int argc, char * argv[])
             throw std::invalid_argument(
                 "avoidance_execution_policy must be amac_ad_threshold, continuous_v4, or horizon_gated_v4");
         }
-        params.activation_params.activation_threshold_m = node->get_parameter(
-            "amac_activation_threshold_m").as_double();
         params.ground_speed_command_mps =
             node->get_parameter("maneuver_ground_speed_command").as_double();
+        params.active_switching_enabled = node->get_parameter(
+            "amac_active_switching_enabled").as_bool();
+        params.active_switch_cost_margin = node->get_parameter(
+            "amac_active_switch_cost_margin").as_double();
+        params.active_switch_minimum_ad_margin_m = node->get_parameter(
+            "amac_active_switch_minimum_ad_margin_m").as_double();
         params.gravity_mps2 = node->get_parameter("gravity").as_double();
         const double maximum_roll_radians =
             node->get_parameter("max_roll_deg").as_double()
@@ -136,10 +143,9 @@ int main(int argc, char * argv[])
                 ManeuverExecutionPolicy::ContinuousV4
             || params.execution_policy == collision_avoidance::selection::
                 ManeuverExecutionPolicy::HorizonGatedV4)
-            && (!params.v4_safe_control_enabled || params.v4_shadow_only
-                || params.activation_params.activation_threshold_m != 0.0)) {
+            && (!params.v4_safe_control_enabled || params.v4_shadow_only)) {
             throw std::invalid_argument(
-                "V4 execution policies require V4 cutover and amac_activation_threshold_m=0");
+                "V4 execution policies require V4 cutover");
         }
         params.v4_trim_airspeed_mps = node->get_parameter(
             "airspeed_cruise").as_double();
@@ -209,13 +215,16 @@ int main(int argc, char * argv[])
         RCLCPP_INFO(
             node->get_logger(),
             "[main] distributed maneuver selection: enabled=%d shadow_only=%d "
-            "execution_policy=%s ad_threshold=%.3f exhaustive_test=%d "
+            "execution_policy=%s exhaustive_test=%d active_switch=%d "
+            "switch_cost_margin=%.6f switch_ad_margin=%.3f "
             "v4_enabled=%d v4_shadow_only=%d",
             maneuver_selection_runtime->enabled() ? 1 : 0,
             shadow_only ? 1 : 0,
             execution_policy.c_str(),
-            params.activation_params.activation_threshold_m,
             params.exhaustive_test_mode ? 1 : 0,
+            params.active_switching_enabled ? 1 : 0,
+            params.active_switch_cost_margin,
+            params.active_switch_minimum_ad_margin_m,
             params.v4_safe_control_enabled ? 1 : 0,
             params.v4_shadow_only ? 1 : 0);
     }

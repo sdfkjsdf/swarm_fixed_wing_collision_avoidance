@@ -22,6 +22,12 @@ uint64[5] proposed_candidate_source_timestamps_us
 bool proposed_v4_cutover
 bool proposal_valid
 bool proposal_consensus_confirmed
+bool switch_superiority_evaluated
+bool switch_clearly_superior
+float32 switch_current_cost
+float32 switch_proposed_cost
+float32 switch_current_minimum_ad_m
+float32 switch_proposed_minimum_ad_m
 
 float32 pmr_m
 float32 masd_m

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FFMpegWriter, FuncAnimation
+from matplotlib.patches import FancyArrowPatch
 import numpy as np
 import rosbag2_py
 from rclpy.serialization import deserialize_message
@@ -24,10 +25,32 @@ V4_CANDIDATE_ROLES = ("near", "left", "right")
 COLORS = plt.get_cmap("tab10").colors[:AIRCRAFT_COUNT]
 
 
+def quaternion_yaw_ned(quaternion):
+    """Return body heading in NED from PX4's [w, x, y, z] quaternion."""
+    values = np.asarray(quaternion, dtype=np.float64)
+    if values.shape != (4,) or not np.all(np.isfinite(values)):
+        return math.nan
+    norm = float(np.linalg.norm(values))
+    if norm <= np.finfo(np.float64).eps:
+        return math.nan
+    w, x, y, z = values / norm
+    return math.atan2(
+        2.0 * (w * z + x * y),
+        1.0 - 2.0 * (y * y + z * z))
+
+
 def command_execution_requested(message):
     """Read the actual PX4 command gate, with old-bag compatibility."""
     return bool(getattr(
         message, "command_execution_requested", message.activation_requested))
+
+
+def observed_rate_hz(timestamps):
+    """Return the event rate over the first-to-last observed timestamp."""
+    ordered = sorted(set(int(timestamp) for timestamp in timestamps))
+    if len(ordered) < 2 or ordered[-1] <= ordered[0]:
+        return None
+    return (len(ordered) - 1) * 1.0e6 / (ordered[-1] - ordered[0])
 
 
 def read_bag(bag: Path):
@@ -78,11 +101,16 @@ def interpolate_tracks(messages, sample_hz: float, evaluation_start_ns: int):
         times_ns = np.asarray([record[0] for record in records], dtype=np.int64)
         positions = np.asarray(
             [record[1].position for record in records], dtype=np.float64)
+        headings = np.asarray(
+            [quaternion_yaw_ned(record[1].q) for record in records],
+            dtype=np.float64)
         order = np.argsort(times_ns, kind="stable")
         times_ns = times_ns[order]
         positions = positions[order]
+        headings = headings[order]
         unique = np.concatenate(([True], np.diff(times_ns) > 0))
-        raw_tracks.append((times_ns[unique], positions[unique]))
+        raw_tracks.append(
+            (times_ns[unique], positions[unique], headings[unique]))
 
     common_stream_start_ns = max(track[0][0] for track in raw_tracks)
     start_ns = max(common_stream_start_ns, evaluation_start_ns)
@@ -92,14 +120,24 @@ def interpolate_tracks(messages, sample_hz: float, evaluation_start_ns: int):
     step_ns = max(1, int(round(1.0e9 / sample_hz)))
     grid_ns = np.arange(start_ns, end_ns + 1, step_ns, dtype=np.int64)
     tracks = np.empty((AIRCRAFT_COUNT, len(grid_ns), 3), dtype=np.float64)
-    for vehicle, (times_ns, positions) in enumerate(raw_tracks):
+    body_headings = np.empty(
+        (AIRCRAFT_COUNT, len(grid_ns)), dtype=np.float64)
+    for vehicle, (times_ns, positions, headings) in enumerate(raw_tracks):
         for axis in range(3):
             tracks[vehicle, :, axis] = np.interp(
                 grid_ns.astype(np.float64),
                 times_ns.astype(np.float64),
                 positions[:, axis])
+        finite_heading = np.isfinite(headings)
+        if np.count_nonzero(finite_heading) < 2:
+            raise RuntimeError(
+                f"too few valid attitude quaternions for aircraft {vehicle}")
+        body_headings[vehicle] = np.interp(
+            grid_ns.astype(np.float64),
+            times_ns[finite_heading].astype(np.float64),
+            np.unwrap(headings[finite_heading]))
     elapsed_s = (grid_ns - grid_ns[0]).astype(np.float64) * 1.0e-9
-    return grid_ns, elapsed_s, tracks
+    return grid_ns, elapsed_s, tracks, body_headings
 
 
 def separation_history(tracks):
@@ -156,11 +194,33 @@ def decision_summary(decisions):
         confirmed_proposals = sum(
             bool(message.proposal_consensus_confirmed)
             for _, message in records)
+        superiority_evaluations = sum(
+            bool(getattr(message, "switch_superiority_evaluated", False))
+            for _, message in records)
+        clearly_superior = sum(
+            bool(getattr(message, "switch_clearly_superior", False))
+            for _, message in records)
+        accepted_switches = sum(
+            bool(message.new_best_accepted
+                 and getattr(message, "switch_clearly_superior", False))
+            for _, message in records)
         selected_v4 = sum(
             bool(message.selected_v4_cutover) for _, message in records)
         proposed_v4 = sum(
             bool(message.proposal_valid and message.proposed_v4_cutover)
             for _, message in records)
+        full_evaluations = {
+            (int(message.proposal_epoch),
+             int(message.proposal_timestamp_us)):
+                int(message.evaluated_combination_count)
+            for _, message in records
+            if int(message.proposal_timestamp_us) > 0
+            and int(message.evaluated_combination_count) in (243, 16807)
+        }
+        evaluation_timestamps = [
+            timestamp for _, timestamp in full_evaluations]
+        bag_timestamps_us = [
+            int(round(time_s * 1.0e6)) for time_s, _ in records]
         result.append({
             "vehicle_id": vehicle,
             "decision_count": len(records),
@@ -169,8 +229,17 @@ def decision_summary(decisions):
             "evaluated_16807_count": evaluated_16807,
             "valid_proposal_count": valid_proposals,
             "confirmed_proposal_count": confirmed_proposals,
+            "switch_superiority_evaluation_count": superiority_evaluations,
+            "clearly_superior_proposal_count": clearly_superior,
+            "accepted_active_switch_count": accepted_switches,
             "selected_v4_cutover_count": selected_v4,
             "proposed_v4_cutover_count": proposed_v4,
+            "decision_publish_rate_hz": observed_rate_hz(bag_timestamps_us),
+            "unique_full_evaluation_count": len(full_evaluations),
+            "full_evaluation_rate_hz": observed_rate_hz(
+                evaluation_timestamps),
+            "full_evaluation_combination_histogram": dict(sorted(Counter(
+                full_evaluations.values()).items())),
         })
     return result
 
@@ -367,6 +436,18 @@ def trajectory_intent_summary(intents, decisions, start_ns):
             or int(message.candidate_id) >= len(V4_CANDIDATE_ROLES)
             for message in evaluation_records
             if int(message.candidate_set_kind) == 1)
+        source_timestamps = [
+            int(message.source_timestamp_us)
+            for message in evaluation_records]
+        epoch_first_source_timestamp = {}
+        for message in evaluation_records:
+            epoch = int(message.selection_epoch)
+            timestamp = int(message.source_timestamp_us)
+            if epoch not in epoch_first_source_timestamp:
+                epoch_first_source_timestamp[epoch] = timestamp
+            else:
+                epoch_first_source_timestamp[epoch] = min(
+                    epoch_first_source_timestamp[epoch], timestamp)
         result.append({
             "vehicle_id": vehicle,
             "intent_record_count": len(evaluation_records),
@@ -383,6 +464,13 @@ def trajectory_intent_summary(intents, decisions, start_ns):
                 missing_exact_reference_count),
             "missing_selected_command_count": (
                 missing_command_reference_count),
+            "unique_trajectory_refresh_count": len(set(source_timestamps)),
+            "trajectory_refresh_rate_hz": observed_rate_hz(
+                source_timestamps),
+            "unique_candidate_generation_epoch_count": len(
+                epoch_first_source_timestamp),
+            "candidate_generation_rate_hz": observed_rate_hz(
+                epoch_first_source_timestamp.values()),
         })
     return result
 
@@ -456,6 +544,48 @@ def formation_override_summary(log_dir, messages, intents):
     return result
 
 
+def runtime_policy_summary(log_dir):
+    pattern = re.compile(
+        r"execution_policy=(\S+).*active_switch=(\d+) "
+        r"switch_cost_margin=([-+0-9.eE]+) "
+        r"switch_ad_margin=([-+0-9.eE]+)")
+    by_vehicle = []
+    signatures = set()
+    for vehicle in range(AIRCRAFT_COUNT):
+        log_path = log_dir / f"guidance_{vehicle}.log"
+        matched = None
+        if log_path.is_file():
+            for line in log_path.read_text(errors="replace").splitlines():
+                matched = pattern.search(line)
+                if matched is not None:
+                    break
+        if matched is None:
+            by_vehicle.append({
+                "vehicle_id": vehicle,
+                "available": False,
+            })
+            continue
+        signature = (
+            matched.group(1), bool(int(matched.group(2))),
+            float(matched.group(3)), float(matched.group(4)))
+        signatures.add(signature)
+        by_vehicle.append({
+            "vehicle_id": vehicle,
+            "available": True,
+            "execution_policy": signature[0],
+            "active_switching_enabled": signature[1],
+            "active_switch_cost_margin": signature[2],
+            "active_switch_minimum_ad_margin_m": signature[3],
+        })
+    return {
+        "all_vehicle_logs_available": all(
+            item["available"] for item in by_vehicle),
+        "all_vehicle_policy_values_match": len(signatures) == 1
+            and all(item["available"] for item in by_vehicle),
+        "by_vehicle": by_vehicle,
+    }
+
+
 def decision_consensus_summary(decisions, elapsed_s):
     all_qualified_count = 0
     consensus_count = 0
@@ -514,7 +644,8 @@ def coordination_invariant_summary(decisions):
     per_vehicle_by_selected_epoch = []
     per_vehicle_by_proposal_epoch = []
     active_selected_slot_mismatch_count = 0
-    active_proposal_slot_mismatch_count = 0
+    pending_active_proposal_count = 0
+    unauthorized_active_proposal_count = 0
     unconfirmed_current_epoch_qualified_count = 0
     selected_epoch_vector_mismatch_count = 0
 
@@ -546,7 +677,10 @@ def coordination_invariant_summary(decisions):
                     and decision.proposal_valid
                     and int(decision.proposed_candidate_ids[vehicle])
                     != int(decision.ownship_candidate_id)):
-                active_proposal_slot_mismatch_count += 1
+                pending_active_proposal_count += 1
+                if not (decision.switch_superiority_evaluated
+                        and decision.switch_clearly_superior):
+                    unauthorized_active_proposal_count += 1
         per_vehicle_by_selected_epoch.append(selected_by_epoch)
         per_vehicle_by_proposal_epoch.append(proposal_by_epoch)
 
@@ -618,8 +752,9 @@ def coordination_invariant_summary(decisions):
             selected_epoch_vector_mismatch_count),
         "active_selected_slot_mismatch_count": (
             active_selected_slot_mismatch_count),
-        "active_proposal_slot_mismatch_count": (
-            active_proposal_slot_mismatch_count),
+        "pending_active_proposal_count": pending_active_proposal_count,
+        "unauthorized_active_proposal_count": (
+            unauthorized_active_proposal_count),
     }
 
 
@@ -692,10 +827,20 @@ def distributed_tuple_label(decisions, elapsed_s):
 
 
 def save_summary_plot(
-        path, elapsed_s, tracks, minimum_distance, dsd_m,
+        path, elapsed_s, tracks, body_headings, minimum_distance, dsd_m,
         target_norths, target_easts, scenario_label, show_targets):
-    figure, (map_axis, separation_axis) = plt.subplots(
-        1, 2, figsize=(14, 6), constrained_layout=True)
+    figure = plt.figure(figsize=(15, 9), constrained_layout=True)
+    grid = figure.add_gridspec(2, 2)
+    map_axis = figure.add_subplot(grid[:, 0])
+    separation_axis = figure.add_subplot(grid[0, 1])
+    heading_axis = figure.add_subplot(grid[1, 1])
+    heading_stride = max(
+        1, int(round(3.0 / max(float(np.median(np.diff(elapsed_s))), 1e-6))))
+    heading_indices = np.arange(0, len(elapsed_s), heading_stride)
+    horizontal_span = max(
+        float(np.ptp(tracks[:, :, 0])),
+        float(np.ptp(tracks[:, :, 1])), 1.0)
+    arrow_length = max(8.0, 0.025 * horizontal_span)
     for vehicle in range(AIRCRAFT_COUNT):
         map_axis.plot(
             tracks[vehicle, :, 1], tracks[vehicle, :, 0],
@@ -706,13 +851,25 @@ def save_summary_plot(
         map_axis.scatter(
             tracks[vehicle, -1, 1], tracks[vehicle, -1, 0],
             marker="x", color=COLORS[vehicle], s=50)
+        map_axis.quiver(
+            tracks[vehicle, heading_indices, 1],
+            tracks[vehicle, heading_indices, 0],
+            arrow_length * np.sin(body_headings[vehicle, heading_indices]),
+            arrow_length * np.cos(body_headings[vehicle, heading_indices]),
+            angles="xy", scale_units="xy", scale=1.0,
+            color=COLORS[vehicle], alpha=0.72, width=0.0035,
+            headwidth=4.0, headlength=5.0)
+        heading_axis.plot(
+            elapsed_s, np.rad2deg(body_headings[vehicle]),
+            color=COLORS[vehicle], label=f"aircraft {vehicle}")
     if show_targets:
         map_axis.scatter(
             target_easts, target_norths, marker="*", c=COLORS, s=160,
             edgecolors="black", linewidths=0.5,
             label="assigned destinations")
     map_axis.set_title(
-        f"Actual common-NED ground tracks — {scenario_label.replace('_', ' ')}")
+        f"Actual common-NED ground tracks — {scenario_label.replace('_', ' ')}\n"
+        "arrows show body heading every 3 s")
     map_axis.set_xlabel("East [m]")
     map_axis.set_ylabel("North [m]")
     map_axis.axis("equal")
@@ -727,12 +884,19 @@ def save_summary_plot(
     separation_axis.set_ylabel("Separation [m]")
     separation_axis.grid(True, alpha=0.3)
     separation_axis.legend(loc="best")
+
+    heading_axis.set_title("Actual body heading from odometry attitude")
+    heading_axis.set_xlabel("Scenario elapsed time [s]")
+    heading_axis.set_ylabel("Unwrapped NED heading [deg]")
+    heading_axis.grid(True, alpha=0.3)
+    heading_axis.legend(loc="best", fontsize=8)
     figure.savefig(path, dpi=160)
     plt.close(figure)
 
 
 def save_video(
-        path, elapsed_s, tracks, minimum_distance, nearest_pair_index,
+        path, elapsed_s, tracks, body_headings, minimum_distance,
+        nearest_pair_index,
         pair_list, decisions, dsd_m, target_norths, target_easts,
         scenario_label, show_targets, fps):
     figure, (map_axis, separation_axis) = plt.subplots(
@@ -760,6 +924,8 @@ def save_video(
 
     trails = []
     points = []
+    heading_arrows = []
+    heading_arrow_length = max(8.0, 0.025 * span)
     for vehicle in range(AIRCRAFT_COUNT):
         trail, = map_axis.plot(
             [], [], color=COLORS[vehicle], linewidth=1.8,
@@ -768,6 +934,12 @@ def save_video(
             [], [], marker="o", color=COLORS[vehicle], markersize=7)
         trails.append(trail)
         points.append(point)
+        heading_arrow = FancyArrowPatch(
+            (0.0, 0.0), (0.0, 0.0), arrowstyle="-|>",
+            mutation_scale=14, color=COLORS[vehicle], linewidth=2.0,
+            zorder=4)
+        map_axis.add_patch(heading_arrow)
+        heading_arrows.append(heading_arrow)
     closest_line, = map_axis.plot(
         [], [], color="red", linestyle="--", linewidth=1.5,
         label="closest pair")
@@ -797,6 +969,13 @@ def save_video(
             points[vehicle].set_data(
                 [tracks[vehicle, frame, 1]],
                 [tracks[vehicle, frame, 0]])
+            east = tracks[vehicle, frame, 1]
+            north = tracks[vehicle, frame, 0]
+            heading = body_headings[vehicle, frame]
+            heading_arrows[vehicle].set_positions(
+                (east, north),
+                (east + heading_arrow_length * math.sin(heading),
+                 north + heading_arrow_length * math.cos(heading)))
         first, second = pair_list[int(nearest_pair_index[frame])]
         closest_line.set_data(
             [tracks[first, frame, 1], tracks[second, frame, 1]],
@@ -809,7 +988,7 @@ def save_video(
             f"{scenario_label.replace('_', ' ')}, t={elapsed_s[frame]:.1f}s | "
             f"closest={first}-{second}: {minimum_distance[frame]:.1f}m\n"
             f"{distributed_tuple_label(decisions, elapsed_s[frame])}")
-        return trails + points + [
+        return trails + points + heading_arrows + [
             closest_line, separation_cursor, separation_point, title]
 
     animation = FuncAnimation(
@@ -826,7 +1005,7 @@ def save_video(
 
 def analyze(args):
     messages = read_bag(args.bag)
-    grid_ns, elapsed_s, tracks = interpolate_tracks(
+    grid_ns, elapsed_s, tracks, body_headings = interpolate_tracks(
         messages, args.sample_hz, args.evaluation_start_ns)
     (pair_list, pair_distance, minimum_distance, minimum_horizontal,
      nearest_pair_index) = separation_history(tracks)
@@ -888,6 +1067,7 @@ def analyze(args):
             intents, decisions, int(grid_ns[0])),
         "formation_override_diagnostics": formation_override_summary(
             args.log_dir, messages, intents),
+        "runtime_policy": runtime_policy_summary(args.log_dir),
         "distributed_decision_consensus": decision_consensus_summary(
             decisions, elapsed_s),
         "coordination_invariants": coordination_invariant_summary(decisions),
@@ -911,13 +1091,14 @@ def analyze(args):
 
     save_summary_plot(
         args.plot_dir / "actual_maneuver_overview.png",
-        elapsed_s, tracks, minimum_distance,
+        elapsed_s, tracks, body_headings, minimum_distance,
         args.desired_separation_distance,
         target_norths, target_easts, args.scenario_label,
         args.show_targets)
     save_video(
         args.video_dir / "actual_maneuver.mp4",
-        elapsed_s, tracks, minimum_distance, nearest_pair_index,
+        elapsed_s, tracks, body_headings, minimum_distance,
+        nearest_pair_index,
         pair_list, decisions, args.desired_separation_distance,
         target_norths, target_easts, args.scenario_label,
         args.show_targets, args.fps)

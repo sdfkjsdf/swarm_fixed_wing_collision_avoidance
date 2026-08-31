@@ -13,18 +13,12 @@ enum class ManeuverDeactivationReason : std::uint8_t
 {
     None = 0,
     Separating,
-    Timeout,
 };
 
 struct ManeuverActivationControllerParams
 {
-    std::uint64_t maximum_active_duration_us{4'500'000};
-    // 100 ft/s from the disclosed baseline Auto ACAS termination criterion.
-    double separating_rate_threshold_mps{30.48};
-    // Experimental early-activation boundary [m]. The disclosed AMAC
-    // baseline is recovered with zero; a positive value activates while AD
-    // still has that much residual separation margin.
-    double activation_threshold_m{0.0};
+    // Project deactivation policy: every affected pair must be non-closing.
+    double separating_rate_threshold_mps{0.0};
 };
 
 struct ManeuverActivationSample
@@ -53,9 +47,9 @@ struct ManeuverActivationStatus
     estimation::PredictInput latched_input{};
 };
 
-/* ROS-independent AMAC state boundary. Selection may continue in parallel,
-   but an active ownship command remains latched until a disclosed baseline
-   deactivation condition is met. */
+/* ROS-independent AMAC state boundary. Selection continues independently.
+   A coordinated replacement may update the active command without ending the
+   activation episode. */
 class ManeuverActivationController
 {
 public:
@@ -64,6 +58,10 @@ public:
 
     ManeuverActivationStatus update(
         const ManeuverActivationSample & sample) noexcept;
+    bool replaceActiveCommand(
+        std::uint8_t candidate_id,
+        std::uint64_t candidate_input_revision,
+        const estimation::PredictInput & input) noexcept;
     ManeuverActivationStatus status() const noexcept;
     void reset() noexcept;
 
@@ -74,7 +72,6 @@ private:
     ManeuverActivationControllerParams m_params;
     ManeuverActivationStatus m_status{};
     std::uint64_t m_last_timestamp_us{0};
-    bool m_rearm_required{false};
 };
 
 }  // namespace collision_avoidance::selection

@@ -25,6 +25,9 @@ scripts/run_opposite_edge_crossing_case.sh avoidance
 # Use the production FlockingGuidance with the formation HILS spawn/config.
 scripts/run_flocking_case.sh avoidance
 
+# Reuse the 250 m-radius pentagon spawn and run FlockingGuidance only.
+FLOCKING_LAYOUT=pentagon scripts/run_flocking_case.sh baseline
+
 # Test-only: evaluate all 7^5 = 16,807 roll combinations.
 MANEUVER_SEARCH_MODE=exhaustive scripts/run_point_convergence_case.sh avoidance
 ```
@@ -40,21 +43,21 @@ production `collision_avoidance/config/flocking_params.yaml`, and
 The first smoke case starts the five vehicles in a 35 m-spaced line with a
 common northbound course and checks whether the normal 30 m flocking spacing
 causes any unnecessary V4 override.
+`FLOCKING_LAYOUT=pentagon` keeps that same production controller and northbound
+initial course but reuses the existing 250 m-radius pentagon spawn and common-
+NED transform. In `baseline` mode, collision avoidance remains shadow-only so
+the measured separation is attributable to flocking guidance alone.
 
 Run the two execution policies as separate SILS cases with the same scenario
-configuration. The optional first argument is the positive AMAC AD activation
-threshold in metres. The comparison default is the agreed 10 m experimental
-reserve, matching the numerical DSD value while remaining separate from MASD.
-The production AMAC default remains the disclosed `AD < 0` baseline.
+configuration. The AMAC case uses the strict `AD < 0` activation boundary;
+the 10 m DSD remains inside MASD and is not added again as an AD threshold.
 
 ```bash
-scripts/run_execution_policy_comparison.sh       # Delta_act = 10 m
-scripts/run_execution_policy_comparison.sh 5.0   # explicit override
+scripts/run_execution_policy_comparison.sh
 ```
 
-The generated run IDs include the explicit threshold, for example
-`_amac_ad_5p0m`, and end in `_horizon_gated_v4` for the V4 case.
-The first case uses legacy AMAC selection with `AD < threshold`; the second
+The generated run IDs end in `_amac_ad_0m` and `_horizon_gated_v4`.
+The first case uses legacy AMAC selection with `AD < 0`; the second
 opens the coordinated V4 command gate only when the minimum 95% robust
 near-nominal cone clearance over the aligned 4.5 s horizon reaches the 10 m
 DSD threshold. Candidate combinations must first pass the same-time robust
@@ -103,8 +106,8 @@ the joint combinations are reduced to the best result.
 Selection and execution are separate. Selection proposals are refreshed at
 4 Hz, while the existing 20 Hz trajectory refresh monitors ownship-versus-
 threat AD. Under `amac_ad_threshold`, once activated the ownship command
-remains latched until the separating-rate criterion or the 4.5 s timeout ends
-that conflict episode. Under `continuous_v4`, AMAC activation and latching stay
+remains active until every affected pair is non-closing. Elapsed time cannot
+end that conflict episode. Under `continuous_v4`, AMAC activation and latching stay
 disabled; every newly coordinated V4 tuple is eligible for execution.
 Under `horizon_gated_v4`, AMAC activation remains separate and V4 execution is
 controlled by the 4.5 s robust-cone horizon gate described above. V4
@@ -112,3 +115,21 @@ cutover uses a two-phase bootstrap: every aircraft first advertises that it can
 generate a non-empty V4 candidate set while legacy intents remain available,
 then V4 intents enter the existing distributed proposal/confirmation path.
 Local readiness alone never enables command execution.
+
+Active AMAC best replacement uses the HILS-only project policy in
+`config/amac_dynamic_best.yaml`. The initial calibration values are
+`Delta_cost_switch = 0.01` and `Delta_AD_switch = 1.0 m`. They are provisional
+project values because the public Lockheed sources do not disclose numerical
+`clearly superior` margins. The old command continues through proposal
+agreement and an all-peer readiness exchange; the new command is applied as
+one `ACTIVE(M1) -> ACTIVE(M2)` handoff without a Flocking sample or activation
+timestamp reset.
+
+```bash
+scripts/run_flocking_case.sh avoidance
+```
+
+Use `AMAC_POLICY_CONFIG=/absolute/path/to/another.yaml` to run a separately
+recorded calibration. The public sources do not disclose those two numerical
+margins, so every override remains a project parameter rather than a Lockheed
+Martin value.

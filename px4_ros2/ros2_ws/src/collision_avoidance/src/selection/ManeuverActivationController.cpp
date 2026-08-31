@@ -26,33 +26,17 @@ ManeuverActivationStatus ManeuverActivationController::update(
     if (m_status.active) {
         const bool separating = sample.valid
             && allAffectedThreatsSeparating(sample);
-        const bool timed_out = sample.timestamp_us
-                >= m_status.activation_timestamp_us
-            && sample.timestamp_us - m_status.activation_timestamp_us
-                >= m_params.maximum_active_duration_us;
-        if (separating || timed_out) {
+        if (separating) {
             m_status.active = false;
             m_status.just_deactivated = true;
-            // Treat a later penetration as a new conflict only after the
-            // current predicted cone has first cleared AD = 0.
-            m_rearm_required = true;
-            m_status.deactivation_reason = separating
-                ? ManeuverDeactivationReason::Separating
-                : ManeuverDeactivationReason::Timeout;
-        }
-        return m_status;
-    }
-
-    if (m_rearm_required) {
-        if (sample.valid && std::isfinite(sample.minimum_ad_m)
-            && sample.minimum_ad_m >= m_params.activation_threshold_m) {
-            m_rearm_required = false;
+            m_status.deactivation_reason =
+                ManeuverDeactivationReason::Separating;
         }
         return m_status;
     }
 
     if (!sample.valid || !std::isfinite(sample.minimum_ad_m)
-        || sample.minimum_ad_m >= m_params.activation_threshold_m
+        || sample.minimum_ad_m >= 0.0
         || sample.unsafe_threat_mask == 0U) {
         return m_status;
     }
@@ -68,6 +52,23 @@ ManeuverActivationStatus ManeuverActivationController::update(
     return m_status;
 }
 
+bool ManeuverActivationController::replaceActiveCommand(
+    std::uint8_t candidate_id,
+    std::uint64_t candidate_input_revision,
+    const estimation::PredictInput & input) noexcept
+{
+    if (!m_status.active) {
+        return false;
+    }
+    m_status.latched_candidate_id = candidate_id;
+    m_status.latched_candidate_input_revision = candidate_input_revision;
+    m_status.latched_input = input;
+    m_status.just_activated = false;
+    m_status.just_deactivated = false;
+    m_status.deactivation_reason = ManeuverDeactivationReason::None;
+    return true;
+}
+
 ManeuverActivationStatus ManeuverActivationController::status() const noexcept
 {
     return m_status;
@@ -77,7 +78,6 @@ void ManeuverActivationController::reset() noexcept
 {
     m_status = ManeuverActivationStatus{};
     m_last_timestamp_us = 0;
-    m_rearm_required = false;
 }
 
 bool ManeuverActivationController::allAffectedThreatsSeparating(

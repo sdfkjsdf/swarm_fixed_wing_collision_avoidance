@@ -7,7 +7,10 @@ set -o pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 HILS_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
 ROS2_WS=${ROS2_WS:-/home/hmcl/workspace/swarm-fixed-wing/ros2_ws}
-COLLISION_WS=${COLLISION_WS:-$(cd "${HILS_ROOT}/../../.." && pwd)}
+# Use the same built workspace for ROS interfaces, the guidance binary, and
+# rosbag analysis. Sourcing a second stale in-repository overlay can silently
+# mix incompatible ManeuverSelectionDecision schemas.
+COLLISION_WS=${COLLISION_WS:-${ROS2_WS}}
 FORMATION_HILS=${FORMATION_HILS:-${ROS2_WS}/src/testing_module/formation_hils}
 RESULT_ROOT=${RESULT_ROOT:-${HILS_ROOT}/result}
 RUN_DURATION_SECONDS=${RUN_DURATION_SECONDS:-55}
@@ -15,7 +18,7 @@ MODE=${1:-avoidance}
 SEARCH_MODE=${MANEUVER_SEARCH_MODE:-heuristic}
 V4_MODE=${V4_MODE:-shadow}
 EXECUTION_POLICY=${AVOIDANCE_EXECUTION_POLICY:-amac_ad_threshold}
-AMAC_AD_THRESHOLD_M=${AMAC_AD_THRESHOLD_M:-0.0}
+AMAC_POLICY_CONFIG=${AMAC_POLICY_CONFIG:-${HILS_ROOT}/config/amac_dynamic_best.yaml}
 TRAFFIC_PATTERN=${TRAFFIC_PATTERN:-point_convergence}
 
 if [[ "${MODE}" != "avoidance" && "${MODE}" != "baseline" ]]; then
@@ -53,8 +56,9 @@ if [[ "${V4_MODE}" == "cutover" && "${SEARCH_MODE}" == "exhaustive" ]]; then
 fi
 if [[ "${TRAFFIC_PATTERN}" != "point_convergence" \
         && "${TRAFFIC_PATTERN}" != "opposite_edge_crossing" \
-        && "${TRAFFIC_PATTERN}" != "flocking" ]]; then
-    echo "TRAFFIC_PATTERN must be point_convergence, opposite_edge_crossing, or flocking"
+        && "${TRAFFIC_PATTERN}" != "flocking" \
+        && "${TRAFFIC_PATTERN}" != "flocking_pentagon" ]]; then
+    echo "TRAFFIC_PATTERN must be point_convergence, opposite_edge_crossing, flocking, or flocking_pentagon"
     exit 2
 fi
 
@@ -89,6 +93,15 @@ if [[ "${TRAFFIC_PATTERN}" == "opposite_edge_crossing" ]]; then
 elif [[ "${TRAFFIC_PATTERN}" == "flocking" ]]; then
     SPAWN_CONFIG=${FORMATION_HILS}/config/spawn_config.yaml
     COORDINATE_CONFIG=${COLLISION_WS}/src/collision_avoidance/config/ros_params.yaml
+    GUIDANCE_CONFIG=${COLLISION_WS}/src/collision_avoidance/config/flocking_params.yaml
+    GUIDANCE_MODE=flocking
+    SHOW_ASSIGNED_TARGETS=false
+    TARGET_NORTHS=(0.0 0.0 0.0 0.0 0.0)
+    TARGET_EASTS=(0.0 0.0 0.0 0.0 0.0)
+    COURSES=(0.0 0.0 0.0 0.0 0.0)
+elif [[ "${TRAFFIC_PATTERN}" == "flocking_pentagon" ]]; then
+    SPAWN_CONFIG=${HILS_ROOT}/config/spawn_point_convergence.yaml
+    COORDINATE_CONFIG=${HILS_ROOT}/config/coordinate_point_convergence.yaml
     GUIDANCE_CONFIG=${COLLISION_WS}/src/collision_avoidance/config/flocking_params.yaml
     GUIDANCE_MODE=flocking
     SHOW_ASSIGNED_TARGETS=false
@@ -165,6 +178,10 @@ if [[ ! -x "${AGENT_BIN}" ]]; then
     echo "[run] ERROR: MicroXRCEAgent not executable: ${AGENT_BIN}"
     exit 1
 fi
+if [[ ! -f "${AMAC_POLICY_CONFIG}" ]]; then
+    echo "[run] ERROR: AMAC policy config not found: ${AMAC_POLICY_CONFIG}"
+    exit 2
+fi
 if [[ "${GUIDANCE_MODE}" == "point_convergence" ]] \
         && ! grep -Eq 'test_guidance_mode:[[:space:]]*point_convergence' \
             "${GUIDANCE_CONFIG}"; then
@@ -176,7 +193,7 @@ if [[ -e "${BAG_DIR}" ]]; then
     exit 2
 fi
 
-echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} policy=${EXECUTION_POLICY} ad_threshold=${AMAC_AD_THRESHOLD_M}m run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
+echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} policy=${EXECUTION_POLICY} ad_threshold=0m active_switch_config=${AMAC_POLICY_CONFIG} run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
 for vehicle in 0 1 2 3 4; do
     port=$((8888 + vehicle))
     pkill -KILL -f "MicroXRCEAgent udp4 -p ${port}" 2>/dev/null || true
@@ -230,6 +247,7 @@ for vehicle in 0 1 2 3 4; do
     "${GUIDANCE_BIN}" \
         --ros-args \
         --params-file "${GUIDANCE_CONFIG}" \
+        --params-file "${AMAC_POLICY_CONFIG}" \
         -r "__node:=vtol_guidance_${vehicle}" \
         -p "vehicle_ID:=${vehicle}" \
         -p total_agent_num:=5 \
@@ -240,7 +258,6 @@ for vehicle in 0 1 2 3 4; do
         -p preflight_desired_ground_speed_mps:=20.0 \
         -p "collision_avoidance_shadow_only:=${SHADOW_ONLY}" \
         -p "avoidance_execution_policy:=${EXECUTION_POLICY}" \
-        -p "amac_activation_threshold_m:=${AMAC_AD_THRESHOLD_M}" \
         -p "maneuver_selection_exhaustive_test_mode:=${EXHAUSTIVE_TEST_MODE}" \
         -p v4_safe_control_enabled:=true \
         -p "v4_shadow_only:=${V4_SHADOW_ONLY}" \

@@ -386,6 +386,18 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 message.proposal_valid = decision.proposal_valid;
                 message.proposal_consensus_confirmed =
                     decision.proposal_consensus_confirmed;
+                message.switch_superiority_evaluated =
+                    decision.switch_superiority_evaluated;
+                message.switch_clearly_superior =
+                    decision.switch_clearly_superior;
+                message.switch_current_cost = static_cast<float>(
+                    decision.switch_current_cost);
+                message.switch_proposed_cost = static_cast<float>(
+                    decision.switch_proposed_cost);
+                message.switch_current_minimum_ad_m = static_cast<float>(
+                    decision.switch_current_minimum_ad_m);
+                message.switch_proposed_minimum_ad_m = static_cast<float>(
+                    decision.switch_proposed_minimum_ad_m);
                 message.pmr_m = static_cast<float>(decision.pmr_m);
                 message.masd_m = static_cast<float>(decision.masd_m);
                 message.ad_m = static_cast<float>(decision.ad_m);
@@ -516,7 +528,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 m_node.get_logger(),
                 "[maneuver-selection] vehicle=%d selected_epoch=%llu "
                 "proposal_epoch=%llu remote_epoch=%llu qualified=%d "
-                "proposal_confirmed=%d own=%u threat=%u AD=%.3f active=%d "
+                "proposal_confirmed=%d switch_eval=%d superior=%d "
+                "accepted=%d own=%u threat=%u AD=%.3f active=%d "
                 "execute=%d h_local=%d h_gate=%d h_worst=%.3f start=%d end=%d reason=%u",
                 m_vehicle_id,
                 static_cast<unsigned long long>(
@@ -527,6 +540,9 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     output->decision.remote_selection_epoch),
                 output->decision.coordination_qualified ? 1 : 0,
                 output->decision.proposal_consensus_confirmed ? 1 : 0,
+                output->decision.switch_superiority_evaluated ? 1 : 0,
+                output->decision.switch_clearly_superior ? 1 : 0,
+                output->decision.new_best_accepted ? 1 : 0,
                 static_cast<unsigned>(output->decision.ownship_candidate_id),
                 static_cast<unsigned>(output->decision.threat_candidate_id),
                 output->decision.ad_m,

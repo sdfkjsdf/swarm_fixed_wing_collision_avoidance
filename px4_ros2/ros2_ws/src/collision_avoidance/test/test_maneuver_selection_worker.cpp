@@ -553,6 +553,17 @@ TEST(ManeuverSelectionWorker, HorizonGatedV4RequiresConeBarrierFilter)
         "trim_fallback");
 }
 
+TEST(ManeuverSelectionWorker, ActiveSwitchingRequiresPositiveMargins)
+{
+    auto invalid_params = params();
+    invalid_params.active_switching_enabled = true;
+    invalid_params.active_switch_cost_margin = 0.0;
+    invalid_params.active_switch_minimum_ad_margin_m = 0.0;
+    cs::ManeuverSelectionWorker worker(invalid_params);
+    EXPECT_FALSE(worker.processPendingForTest());
+    EXPECT_FALSE(worker.start());
+}
+
 TEST(ManeuverSelectionWorker,
     V4CutoverUsesDynamicCandidatesOnlyAfterLegacyBootstrapConsensus)
 {
@@ -1309,10 +1320,17 @@ TEST(ManeuverSelectionWorker,
 }
 
 TEST(ManeuverSelectionWorker,
-    ActiveAircraftLatchesOnlyItsOwnCandidateAcrossAConfirmedNewEpoch)
+    NonSuperiorActiveSwitchRetainsPreviousBest)
 {
-    cs::ManeuverSelectionWorker first(params());
-    cs::ManeuverSelectionWorker second(params(1));
+    auto first_params = params();
+    first_params.active_switching_enabled = true;
+    first_params.active_switch_cost_margin = 1.0e9;
+    first_params.active_switch_minimum_ad_margin_m = 1.0e9;
+    first_params.evaluator_params.desired_separation_distance_m = 1'000.0;
+    auto second_params = params(1);
+    second_params.evaluator_params.desired_separation_distance_m = 1'000.0;
+    cs::ManeuverSelectionWorker first(first_params);
+    cs::ManeuverSelectionWorker second(second_params);
     constexpr std::uint64_t start = 12'000'000ULL;
 
     cs::ManeuverSelectionWorkerOutput first_output;
@@ -1363,41 +1381,124 @@ TEST(ManeuverSelectionWorker,
     first_output = pushBeliefAndProcess(
         first, beliefSnapshot(start + 500'000, -40.0, 0.0, 20.0, 0.0));
     ASSERT_TRUE(first_output.has_decision);
-    ASSERT_TRUE(first_output.decision.proposal_valid);
-    EXPECT_EQ(
-        first_output.decision.proposed_candidate_ids[0], latched_ownship_id);
+    EXPECT_FALSE(first_output.decision.proposal_valid);
+    EXPECT_TRUE(first_output.decision.switch_superiority_evaluated);
+    EXPECT_FALSE(first_output.decision.switch_clearly_superior);
     EXPECT_EQ(first_output.decision.ownship_candidate_id, latched_ownship_id);
     EXPECT_EQ(
         first_output.decision.local_selection_epoch, first_committed_epoch);
-    EXPECT_GT(
-        first_output.decision.proposal_epoch,
-        first_output.decision.local_selection_epoch);
-    EXPECT_FALSE(first_output.decision.proposal_consensus_confirmed);
+    EXPECT_TRUE(first_output.decision.activation_requested);
+    EXPECT_TRUE(first_output.decision.command_execution_requested);
+}
+
+TEST(ManeuverSelectionWorker,
+    ClearlySuperiorActiveBestUsesReadinessBeforeAtomicReplacement)
+{
+    auto first_params = params();
+    first_params.active_switching_enabled = true;
+    first_params.active_switch_cost_margin = 1.0e-9;
+    first_params.active_switch_minimum_ad_margin_m = 1.0e-9;
+    cs::ManeuverSelectionWorker first(first_params);
+    cs::ManeuverSelectionWorker second(params(1));
+    constexpr std::uint64_t start = 14'000'000ULL;
+
+    cs::ManeuverSelectionWorkerOutput first_output;
+    cs::ManeuverSelectionWorkerOutput second_output;
+    for (const std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                start + offset, -45.0 + 20.0 * elapsed_s,
+                0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                start + offset, 45.0 - 20.0 * elapsed_s,
+                0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 250'000, -40.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second, beliefSnapshot(start + 250'000, 40.0, 0.0, -20.0, 0.0));
+    auto commits = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    ASSERT_TRUE(commits[0].decision.activation_requested);
+    const std::uint8_t previous_ownship_id =
+        commits[0].decision.ownship_candidate_id;
+    const std::uint64_t activation_timestamp_us =
+        commits[0].decision.activation_timestamp_us;
+    exchangePackets(first, second, commits[0], commits[1]);
+
+    auto peer_inactive = peerDecision(commits[1].decision);
+    peer_inactive.activation_requested = false;
+    ASSERT_TRUE(first.pushRemoteDecision(1, peer_inactive));
+    ASSERT_TRUE(first.processPendingForTest());
+
+    for (const std::uint64_t offset : {
+             300'000ULL, 350'000ULL, 400'000ULL, 450'000ULL}) {
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(start + offset, -40.0, 0.0, 20.0, 0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(start + offset, 40.0, 0.0, -20.0, 0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+    first_output = pushBeliefAndProcess(
+        first, beliefSnapshot(start + 500'000, -40.0, 0.0, 20.0, 0.0));
+    ASSERT_TRUE(first_output.has_decision);
+    ASSERT_TRUE(first_output.decision.proposal_valid);
+    ASSERT_TRUE(first_output.decision.switch_superiority_evaluated);
+    ASSERT_TRUE(first_output.decision.switch_clearly_superior);
+    const std::uint8_t proposed_ownship_id =
+        first_output.decision.proposed_candidate_ids[0];
+    ASSERT_NE(proposed_ownship_id, previous_ownship_id);
+    EXPECT_EQ(
+        first_output.decision.ownship_candidate_id, previous_ownship_id);
 
     auto matching_peer = peerDecision(first_output.decision);
     matching_peer.vehicle_id = 1;
     matching_peer.ownship_candidate_id =
-        matching_peer.proposed_candidate_ids[1];
-    // This synthetic peer is confirming the proposal before committing it;
-    // do not label the changed ownship role as an already-qualified selection.
+        matching_peer.selected_candidate_ids[1];
     matching_peer.coordination_qualified = false;
     matching_peer.activation_requested = false;
+    matching_peer.proposal_consensus_confirmed = false;
     ASSERT_TRUE(first.pushRemoteDecision(1, matching_peer));
     ASSERT_TRUE(first.processPendingForTest());
-    const auto next_commit = first.tryPopOutput();
-    ASSERT_TRUE(next_commit.has_value());
-    ASSERT_TRUE(next_commit->has_decision);
-    EXPECT_TRUE(next_commit->decision.proposal_consensus_confirmed);
-    EXPECT_TRUE(next_commit->decision.coordination_qualified);
+    const auto local_ready = first.tryPopOutput();
+    ASSERT_TRUE(local_ready.has_value());
+    ASSERT_TRUE(local_ready->has_decision);
+    EXPECT_TRUE(local_ready->decision.proposal_consensus_confirmed);
+    EXPECT_FALSE(local_ready->decision.new_best_accepted);
+    EXPECT_TRUE(local_ready->decision.previous_best_retained);
+    EXPECT_EQ(local_ready->decision.ownship_candidate_id, previous_ownship_id);
+    EXPECT_TRUE(local_ready->decision.activation_requested);
+    EXPECT_TRUE(local_ready->decision.command_execution_requested);
+
+    EXPECT_FALSE(first.processPendingForTest());
+    EXPECT_FALSE(first.tryPopOutput().has_value());
+
+    matching_peer.proposal_consensus_confirmed = true;
+    ASSERT_TRUE(first.pushRemoteDecision(1, matching_peer));
+    ASSERT_TRUE(first.processPendingForTest());
+    const auto committed = first.tryPopOutput();
+    ASSERT_TRUE(committed.has_value());
+    ASSERT_TRUE(committed->has_decision);
+    EXPECT_TRUE(committed->decision.new_best_accepted);
+    EXPECT_FALSE(committed->decision.previous_best_retained);
+    EXPECT_TRUE(committed->decision.activation_requested);
+    EXPECT_FALSE(committed->decision.activation_just_started);
+    EXPECT_FALSE(committed->decision.activation_just_ended);
+    EXPECT_TRUE(committed->decision.command_execution_requested);
     EXPECT_EQ(
-        next_commit->decision.local_selection_epoch,
-        first_output.decision.proposal_epoch);
-    EXPECT_EQ(next_commit->decision.ownship_candidate_id, latched_ownship_id);
+        committed->decision.activation_timestamp_us,
+        activation_timestamp_us);
+    EXPECT_EQ(committed->decision.ownship_candidate_id, proposed_ownship_id);
     EXPECT_EQ(
-        next_commit->decision.selected_candidate_ids[0], latched_ownship_id);
-    EXPECT_EQ(
-        next_commit->decision.selected_candidate_ids[1],
-        first_output.decision.proposed_candidate_ids[1]);
+        committed->decision.selected_candidate_ids[0], proposed_ownship_id);
 }
 
 TEST(ManeuverSelectionWorker, StartsStopsAndKeepsInstancesIndependent)

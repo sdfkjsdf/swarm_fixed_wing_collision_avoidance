@@ -5,6 +5,14 @@
 set -o pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-export TRAFFIC_PATTERN=flocking
+FLOCKING_LAYOUT=${FLOCKING_LAYOUT:-line}
+if [[ "${FLOCKING_LAYOUT}" == "line" ]]; then
+    export TRAFFIC_PATTERN=flocking
+elif [[ "${FLOCKING_LAYOUT}" == "pentagon" ]]; then
+    export TRAFFIC_PATTERN=flocking_pentagon
+else
+    echo "FLOCKING_LAYOUT must be line or pentagon"
+    exit 2
+fi
 MODE=${1:-avoidance}
 exec "${SCRIPT_DIR}/run_point_convergence_case.sh" "${MODE}"
