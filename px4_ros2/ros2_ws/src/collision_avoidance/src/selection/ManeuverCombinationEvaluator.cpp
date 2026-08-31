@@ -54,6 +54,10 @@ struct PairCandidateCache
         BarrierDirectionEvaluation,
         kExhaustiveCandidatesPerAircraft
             * kExhaustiveCandidatesPerAircraft> second_right{};
+    std::array<
+        TrajectoryBarrierEvaluation,
+        kExhaustiveCandidatesPerAircraft
+            * kExhaustiveCandidatesPerAircraft> trajectory_barrier{};
 };
 
 bool finiteParams(const ManeuverCombinationEvaluatorParams & params) noexcept
@@ -68,15 +72,17 @@ bool finiteParams(const ManeuverCombinationEvaluatorParams & params) noexcept
         && params.confidence_chi_squared > 0.0
         && std::isfinite(params.stale_timeout_s)
         && params.stale_timeout_s > 0.0
-        && (!params.positive_margin_filter_enabled
+        && (!(params.positive_margin_filter_enabled
+                || params.robust_cone_filter_enabled)
             || (std::isfinite(params.positive_margin_gamma)
                 && params.positive_margin_gamma > 0.0
                 && params.positive_margin_gamma <= 1.0
                 && std::isfinite(params.positive_margin_reference_m)
                 && params.positive_margin_reference_m > 0.0
-                && std::isfinite(
-                    params.maximum_lateral_acceleration_mps2)
-                && params.maximum_lateral_acceleration_mps2 > 0.0));
+                && (!params.positive_margin_filter_enabled
+                    || (std::isfinite(
+                            params.maximum_lateral_acceleration_mps2)
+                        && params.maximum_lateral_acceleration_mps2 > 0.0))));
 }
 
 bool finiteConePoint(const estimation::TrajectoryConePoint & point) noexcept
@@ -291,7 +297,7 @@ struct BarrierPairEvaluations
 };
 
 template<typename PairEvaluationProvider>
-bool evaluateSelectedCombinationBarrier(
+bool evaluateSelectedDirectionBarrier(
     const std::array<
         const estimation::ReceivedTrajectoryIntent *,
         kMaximumSelectionAircraft> & selected_intents,
@@ -385,6 +391,47 @@ bool evaluateSelectedCombinationBarrier(
     return true;
 }
 
+template<typename PairEvaluationProvider>
+bool evaluateSelectedTrajectoryBarrier(
+    std::size_t aircraft_count,
+    PairEvaluationProvider && provide_pair_evaluations,
+    JointCombinationEvaluation & combination)
+{
+    combination.barrier_evaluated = true;
+    combination.barrier_admissible = combination.valid;
+    combination.minimum_barrier_residual_m =
+        std::numeric_limits<double>::infinity();
+
+    for (std::size_t first = 0; first < aircraft_count; ++first) {
+        for (std::size_t second = first + 1;
+             second < aircraft_count; ++second) {
+            TrajectoryBarrierEvaluation pair{};
+            if (!provide_pair_evaluations(first, second, pair)
+                || pair.validity != CombinationValidity::Valid) {
+                combination.valid = false;
+                break;
+            }
+            combination.barrier_admissible =
+                combination.barrier_admissible && pair.admissible;
+            combination.minimum_barrier_residual_m = std::min(
+                combination.minimum_barrier_residual_m,
+                pair.minimum_residual_m);
+        }
+        if (!combination.valid) {
+            break;
+        }
+    }
+
+    if (!combination.valid || !combination.barrier_admissible) {
+        combination.barrier_admissible = false;
+        combination.all_pairs_feasible = false;
+        combination.reciprocal_cost_sum =
+            std::numeric_limits<double>::quiet_NaN();
+        return false;
+    }
+    return true;
+}
+
 std::size_t pairCacheIndex(
     std::size_t first,
     std::size_t second,
@@ -401,6 +448,7 @@ std::size_t initializePairCandidateCaches(
     std::size_t aircraft_count,
     std::size_t candidate_count,
     bool positive_margin_filter_enabled,
+    bool robust_cone_filter_enabled,
     const PositiveMarginBarrierEvaluator & barrier_evaluator,
     const ManeuverCombinationEvaluator & pair_evaluator,
     std::array<PairCandidateCache, kMaximumSelectionPairCount> & pair_caches,
@@ -444,7 +492,17 @@ std::size_t initializePairCandidateCaches(
                             candidate_sets[first][first_candidate],
                             BarrierDirection::Right,
                             cache.second_right[cache_index]));
-                    } else {
+                    }
+                    if (robust_cone_filter_enabled) {
+                        static_cast<void>(
+                            barrier_evaluator.evaluateTrajectoryPair(
+                                evaluation_timestamp_us,
+                                candidate_sets[first][first_candidate],
+                                candidate_sets[second][second_candidate],
+                                cache.trajectory_barrier[cache_index]));
+                    }
+                    if (!positive_margin_filter_enabled
+                        && !robust_cone_filter_enabled) {
                         static_cast<void>(pair_evaluator.evaluatePair(
                             evaluation_timestamp_us,
                             candidate_sets[first][first_candidate],
@@ -789,6 +847,184 @@ bool PositiveMarginBarrierEvaluator::evaluateDirection(
     return true;
 }
 
+bool PositiveMarginBarrierEvaluator::evaluateTrajectoryPair(
+    std::uint64_t evaluation_timestamp_us,
+    const estimation::ReceivedTrajectoryIntent & ownship_intent,
+    const estimation::ReceivedTrajectoryIntent & threat_intent,
+    TrajectoryBarrierEvaluation & evaluation) const
+{
+    TrajectoryBarrierEvaluation result{};
+    if (!std::isfinite(m_params.positive_margin_gamma)
+        || m_params.positive_margin_gamma <= 0.0
+        || m_params.positive_margin_gamma > 1.0
+        || !std::isfinite(m_params.positive_margin_reference_m)
+        || m_params.positive_margin_reference_m <= 0.0
+        || !std::isfinite(m_params.confidence_chi_squared)
+        || m_params.confidence_chi_squared <= 0.0
+        || !std::isfinite(m_params.ownship_half_wingspan_m)
+        || m_params.ownship_half_wingspan_m < 0.0
+        || !std::isfinite(m_params.threat_half_wingspan_m)
+        || m_params.threat_half_wingspan_m < 0.0
+        || !std::isfinite(m_params.stale_timeout_s)
+        || m_params.stale_timeout_s <= 0.0) {
+        evaluation = result;
+        return false;
+    }
+
+    double ownship_age_s = 0.0;
+    double threat_age_s = 0.0;
+    std::size_t sample_count = 0;
+    result.validity = alignedHorizon(
+        evaluation_timestamp_us,
+        ownship_intent,
+        threat_intent,
+        m_params.stale_timeout_s,
+        ownship_age_s,
+        threat_age_s,
+        sample_count);
+    if (result.validity != CombinationValidity::Valid || sample_count < 2) {
+        if (result.validity == CombinationValidity::Valid) {
+            result.validity = CombinationValidity::NoCommonHorizon;
+        }
+        evaluation = result;
+        return false;
+    }
+
+    const double size_clearance_m = m_params.ownship_half_wingspan_m
+        + m_params.threat_half_wingspan_m;
+    const auto robust_clearance = [this, size_clearance_m](
+                                      const AlignedConeSample & ownship,
+                                      const AlignedConeSample & threat,
+                                      double & nominal_range_m,
+                                      double & uncertainty_margin_m,
+                                      double & clearance_m) {
+        nominal_range_m = distance(ownship, threat);
+        if (!std::isfinite(nominal_range_m)
+            || !uncertaintyMargin(
+                ownship,
+                threat,
+                nominal_range_m,
+                m_params.confidence_chi_squared,
+                uncertainty_margin_m)) {
+            return false;
+        }
+        clearance_m = nominal_range_m
+            - size_clearance_m - uncertainty_margin_m;
+        return std::isfinite(clearance_m);
+    };
+
+    bool all_residuals_nonnegative = true;
+    bool all_clearances_nonnegative = true;
+    result.minimum_clearance_m = std::numeric_limits<double>::infinity();
+    result.minimum_residual_m = std::numeric_limits<double>::infinity();
+    for (std::size_t interval = 0; interval + 1 < sample_count; ++interval) {
+        const double time_offset_s = static_cast<double>(interval)
+            * kStepSeconds;
+        AlignedConeSample ownship_current;
+        AlignedConeSample ownship_next;
+        AlignedConeSample threat_current;
+        AlignedConeSample threat_next;
+        if (!interpolateCone(
+                ownship_intent,
+                ownship_age_s + time_offset_s,
+                ownship_current)
+            || !interpolateCone(
+                ownship_intent,
+                ownship_age_s + time_offset_s + kStepSeconds,
+                ownship_next)
+            || !interpolateCone(
+                threat_intent,
+                threat_age_s + time_offset_s,
+                threat_current)
+            || !interpolateCone(
+                threat_intent,
+                threat_age_s + time_offset_s + kStepSeconds,
+                threat_next)) {
+            result.validity = CombinationValidity::InvalidTrajectory;
+            evaluation = result;
+            return false;
+        }
+
+        double current_range_m = 0.0;
+        double current_uncertainty_m = 0.0;
+        double current_clearance_m = 0.0;
+        double next_range_m = 0.0;
+        double next_uncertainty_m = 0.0;
+        double next_clearance_m = 0.0;
+        if (!robust_clearance(
+                ownship_current,
+                threat_current,
+                current_range_m,
+                current_uncertainty_m,
+                current_clearance_m)
+            || !robust_clearance(
+                ownship_next,
+                threat_next,
+                next_range_m,
+                next_uncertainty_m,
+                next_clearance_m)) {
+            result.validity = CombinationValidity::InvalidTrajectory;
+            evaluation = result;
+            return false;
+        }
+
+        const auto consider_minimum = [&result](
+                                          std::size_t sample,
+                                          double offset_s,
+                                          double range_m,
+                                          double uncertainty_m,
+                                          double clearance_m) {
+            if (clearance_m < result.minimum_clearance_m) {
+                result.minimum_clearance_m = clearance_m;
+                result.minimum_clearance_sample = sample;
+                result.minimum_clearance_time_offset_s = offset_s;
+                result.minimum_nominal_range_m = range_m;
+                result.uncertainty_margin_at_minimum_m = uncertainty_m;
+            }
+        };
+        consider_minimum(
+            interval,
+            time_offset_s,
+            current_range_m,
+            current_uncertainty_m,
+            current_clearance_m);
+        consider_minimum(
+            interval + 1,
+            time_offset_s + kStepSeconds,
+            next_range_m,
+            next_uncertainty_m,
+            next_clearance_m);
+        if (interval == 0) {
+            result.initial_clearance_nonnegative =
+                current_clearance_m >= -kBarrierTolerance;
+        }
+        const double required_next_m =
+            (1.0 - m_params.positive_margin_gamma) * current_clearance_m
+            + m_params.positive_margin_gamma
+                * m_params.positive_margin_reference_m;
+        const double residual_m = next_clearance_m - required_next_m;
+        result.minimum_residual_m = std::min(
+            result.minimum_residual_m, residual_m);
+        ++result.evaluated_interval_count;
+
+        const bool clearance_ok = current_clearance_m >= -kBarrierTolerance
+            && next_clearance_m >= -kBarrierTolerance;
+        const bool residual_ok = residual_m >= -kBarrierTolerance;
+        if ((!clearance_ok || !residual_ok)
+            && all_clearances_nonnegative && all_residuals_nonnegative) {
+            result.first_violation_interval = interval;
+        }
+        all_clearances_nonnegative = all_clearances_nonnegative && clearance_ok;
+        all_residuals_nonnegative = all_residuals_nonnegative && residual_ok;
+    }
+
+    result.evaluated_sample_count = sample_count;
+    result.admissible = result.initial_clearance_nonnegative
+        && all_clearances_nonnegative && all_residuals_nonnegative;
+    evaluation = result;
+    return true;
+}
+
 ManeuverCombinationEvaluator::ManeuverCombinationEvaluator(
     const ManeuverCombinationEvaluatorParams & params)
 : m_params(params)
@@ -912,6 +1148,32 @@ bool ManeuverCombinationEvaluator::evaluate(
                     continue;
                 }
             }
+            if (m_params.robust_cone_filter_enabled) {
+                TrajectoryBarrierEvaluation barrier;
+                const bool prior_barrier_evaluated =
+                    combination.barrier_evaluated;
+                combination.barrier_evaluated = true;
+                if (!barrier_evaluator.evaluateTrajectoryPair(
+                        evaluation_timestamp_us,
+                        ownship_candidates[ownship_index],
+                        threat_candidates[threat_index],
+                        barrier)) {
+                    combination.validity = barrier.validity;
+                    continue;
+                }
+                combination.minimum_barrier_residual_m =
+                    prior_barrier_evaluated
+                    ? std::min(
+                        combination.minimum_barrier_residual_m,
+                        barrier.minimum_residual_m)
+                    : barrier.minimum_residual_m;
+                combination.barrier_admissible =
+                    combination.barrier_admissible && barrier.admissible;
+                if (!combination.barrier_admissible) {
+                    combination.validity = CombinationValidity::BarrierRejected;
+                    continue;
+                }
+            }
             const bool barrier_evaluated = combination.barrier_evaluated;
             const bool barrier_admissible = combination.barrier_admissible;
             const double minimum_barrier_residual_m =
@@ -949,7 +1211,8 @@ JointManeuverCombinationEvaluator::JointManeuverCombinationEvaluator(
     const ManeuverCombinationEvaluatorParams & params)
 : m_pair_evaluator(params),
   m_barrier_evaluator(params),
-  m_positive_margin_filter_enabled(params.positive_margin_filter_enabled)
+  m_positive_margin_filter_enabled(params.positive_margin_filter_enabled),
+  m_robust_cone_filter_enabled(params.robust_cone_filter_enabled)
 {
 }
 
@@ -1004,6 +1267,7 @@ bool JointManeuverCombinationEvaluator::evaluate(
         aircraft_count,
         kCandidatesPerAircraft,
         m_positive_margin_filter_enabled,
+        m_robust_cone_filter_enabled,
         m_barrier_evaluator,
         m_pair_evaluator,
         pair_caches,
@@ -1065,8 +1329,32 @@ bool JointManeuverCombinationEvaluator::evaluate(
                 pair.second_right = cache.second_right[cache_index];
                 return true;
             };
-            if (!evaluateSelectedCombinationBarrier(
+            if (!evaluateSelectedDirectionBarrier(
                     selected_intents,
+                    aircraft_count,
+                    provide_pair,
+                    combination)) {
+                continue;
+            }
+        }
+        if (m_robust_cone_filter_enabled) {
+            const auto provide_pair = [aircraft_count,
+                                       &pair_caches,
+                                       &combination](
+                                          std::size_t first,
+                                          std::size_t second,
+                                          TrajectoryBarrierEvaluation & pair) {
+                const PairCandidateCache & cache = pair_caches[
+                    pairCacheIndex(first, second, aircraft_count)];
+                const std::size_t cache_index =
+                    static_cast<std::size_t>(
+                        combination.candidate_slots[first])
+                        * kCandidatesPerAircraft
+                    + combination.candidate_slots[second];
+                pair = cache.trajectory_barrier[cache_index];
+                return true;
+            };
+            if (!evaluateSelectedTrajectoryBarrier(
                     aircraft_count,
                     provide_pair,
                     combination)) {
@@ -1153,7 +1441,8 @@ ExhaustiveManeuverCombinationEvaluator(
     const ManeuverCombinationEvaluatorParams & params)
 : m_pair_evaluator(params),
   m_barrier_evaluator(params),
-  m_positive_margin_filter_enabled(params.positive_margin_filter_enabled)
+  m_positive_margin_filter_enabled(params.positive_margin_filter_enabled),
+  m_robust_cone_filter_enabled(params.robust_cone_filter_enabled)
 {
 }
 
@@ -1178,6 +1467,7 @@ bool ExhaustiveManeuverCombinationEvaluator::evaluate(
         aircraft_count,
         kExhaustiveCandidatesPerAircraft,
         m_positive_margin_filter_enabled,
+        m_robust_cone_filter_enabled,
         m_barrier_evaluator,
         m_pair_evaluator,
         pair_caches,
@@ -1245,8 +1535,33 @@ bool ExhaustiveManeuverCombinationEvaluator::evaluate(
                 pair.second_right = cache.second_right[cache_index];
                 return true;
             };
-            if (!evaluateSelectedCombinationBarrier(
+            if (!evaluateSelectedDirectionBarrier(
                     selected_intents,
+                    aircraft_count,
+                    provide_pair,
+                    combination)) {
+                continue;
+            }
+        }
+        if (m_robust_cone_filter_enabled) {
+            const auto provide_pair = [aircraft_count,
+                                       &pair_caches,
+                                       &combination](
+                                          std::size_t first,
+                                          std::size_t second,
+                                          TrajectoryBarrierEvaluation & pair) {
+                const std::size_t pair_index = pairCacheIndex(
+                    first, second, aircraft_count);
+                const PairCandidateCache & cache = pair_caches[pair_index];
+                const std::size_t cache_index =
+                    static_cast<std::size_t>(
+                        combination.candidate_slots[first])
+                        * kExhaustiveCandidatesPerAircraft
+                    + combination.candidate_slots[second];
+                pair = cache.trajectory_barrier[cache_index];
+                return true;
+            };
+            if (!evaluateSelectedTrajectoryBarrier(
                     aircraft_count,
                     provide_pair,
                     combination)) {

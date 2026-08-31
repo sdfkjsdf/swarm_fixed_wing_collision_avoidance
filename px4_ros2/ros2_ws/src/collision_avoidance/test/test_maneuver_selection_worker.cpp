@@ -25,10 +25,55 @@ TEST(ManeuverExecutionPolicy, SeparatesAmacActivationFromContinuousV4)
         cs::ManeuverExecutionPolicy::AmacAdThreshold, decision));
     EXPECT_TRUE(cs::maneuverCommandExecutionRequested(
         cs::ManeuverExecutionPolicy::ContinuousV4, decision));
+    EXPECT_FALSE(cs::maneuverCommandExecutionRequested(
+        cs::ManeuverExecutionPolicy::HorizonGatedV4, decision));
+
+    decision.v4_horizon_gate_active = true;
+    EXPECT_TRUE(cs::maneuverCommandExecutionRequested(
+        cs::ManeuverExecutionPolicy::HorizonGatedV4, decision));
 
     decision.coordination_qualified = false;
     EXPECT_FALSE(cs::maneuverCommandExecutionRequested(
         cs::ManeuverExecutionPolicy::ContinuousV4, decision));
+}
+
+TEST(ManeuverExecutionPolicy, HorizonGateUsesWorstClearanceThreshold)
+{
+    EXPECT_FALSE(cs::updateV4HorizonGateState(
+        false, true, 10.001, 10.0));
+    EXPECT_TRUE(cs::updateV4HorizonGateState(
+        false, true, 10.0, 10.0));
+    EXPECT_TRUE(cs::updateV4HorizonGateState(
+        false, true, -2.0, 10.0));
+    EXPECT_TRUE(cs::updateV4HorizonGateState(
+        true,
+        false,
+        std::numeric_limits<double>::quiet_NaN(),
+        10.0));
+    EXPECT_FALSE(cs::updateV4HorizonGateState(
+        false,
+        false,
+        std::numeric_limits<double>::quiet_NaN(),
+        10.0));
+
+    constexpr std::uint64_t activation_us = 1'000'000ULL;
+    constexpr std::uint64_t horizon_us = 4'500'000ULL;
+    EXPECT_FALSE(cs::v4HorizonHoldElapsed(
+        activation_us, activation_us + horizon_us - 1, horizon_us));
+    EXPECT_TRUE(cs::v4HorizonHoldElapsed(
+        activation_us, activation_us + horizon_us, horizon_us));
+    EXPECT_FALSE(cs::v4HorizonHoldElapsed(
+        activation_us, activation_us - 1, horizon_us));
+
+    EXPECT_TRUE(cs::v4HorizonFailClosedRequested(
+        cs::ManeuverExecutionPolicy::HorizonGatedV4,
+        cs::SafeControlSetStatus::SearchSetInfeasible));
+    EXPECT_FALSE(cs::v4HorizonFailClosedRequested(
+        cs::ManeuverExecutionPolicy::HorizonGatedV4,
+        cs::SafeControlSetStatus::Valid));
+    EXPECT_FALSE(cs::v4HorizonFailClosedRequested(
+        cs::ManeuverExecutionPolicy::ContinuousV4,
+        cs::SafeControlSetStatus::SearchSetInfeasible));
 }
 
 namespace
@@ -174,6 +219,8 @@ cs::ManeuverSelectionPeerDecision peerDecision(
     peer.activation_requested = decision.activation_requested;
     peer.command_execution_requested =
         decision.command_execution_requested;
+    peer.v4_horizon_local_gate_active =
+        decision.v4_horizon_local_gate_active;
     peer.v4_cutover_candidate_ready =
         cs::v4CutoverCandidateReady(decision);
     return peer;
@@ -486,12 +533,14 @@ TEST(ManeuverSelectionWorker, V4ShadowClassifiesFutureTasAndInvalidNominal)
     }
 }
 
-TEST(ManeuverSelectionWorker, V4CutoverRejectsLegacyPositiveMarginGate)
+TEST(ManeuverSelectionWorker, HorizonGatedV4RequiresConeBarrierFilter)
 {
     auto invalid_params = params();
     invalid_params.v4_safe_control_enabled = true;
     invalid_params.v4_shadow_only = false;
-    invalid_params.evaluator_params.positive_margin_filter_enabled = true;
+    invalid_params.execution_policy =
+        cs::ManeuverExecutionPolicy::HorizonGatedV4;
+    invalid_params.evaluator_params.robust_cone_filter_enabled = false;
     cs::ManeuverSelectionWorker worker(invalid_params);
     EXPECT_FALSE(worker.processPendingForTest());
     EXPECT_FALSE(worker.start());

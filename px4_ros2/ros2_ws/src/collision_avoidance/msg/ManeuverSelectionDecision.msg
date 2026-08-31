@@ -37,6 +37,17 @@ bool command_execution_requested
 bool activation_just_started
 bool activation_just_ended
 
+# Robust 4.5 s near-nominal cone supervisor used only by horizon_gated_v4.
+bool v4_horizon_gate_evaluated
+bool v4_horizon_gate_valid
+bool v4_horizon_local_gate_active
+bool v4_horizon_gate_active
+float32 v4_horizon_h_worst_m
+float32 v4_horizon_trigger_m
+float32 v4_horizon_worst_time_offset_s
+int32 v4_horizon_worst_first_vehicle_id
+int32 v4_horizon_worst_second_vehicle_id
+
 # V4 diagnostics. v4_shadow_only distinguishes observation from cutover mode.
 bool v4_enabled
 bool v4_shadow_only

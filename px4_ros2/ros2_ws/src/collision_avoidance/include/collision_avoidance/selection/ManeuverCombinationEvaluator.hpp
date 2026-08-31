@@ -59,6 +59,7 @@ struct ManeuverCombinationEvaluatorParams
     double confidence_chi_squared{7.814727903251179};
     double stale_timeout_s{3.0};
     bool positive_margin_filter_enabled{false};
+    bool robust_cone_filter_enabled{false};
     // Project tuning seed only; this is not a validated fixed-wing TC-CBF gain.
     double positive_margin_gamma{0.02};
     // Kept separate from MASD uncertainty; production wires this to DSD.
@@ -72,6 +73,29 @@ struct BarrierDirectionEvaluation
     BarrierDirection direction{BarrierDirection::Left};
     std::size_t evaluated_interval_count{0};
     std::size_t first_violation_interval{0};
+    double minimum_clearance_m{std::numeric_limits<double>::quiet_NaN()};
+    double minimum_residual_m{std::numeric_limits<double>::quiet_NaN()};
+    bool initial_clearance_nonnegative{false};
+    bool admissible{false};
+};
+
+// Same-time robust separation over the aligned 4.5 s trajectory cones.
+// The clearance excludes DSD; positive_margin_reference_m is the desired
+// clearance threshold.  The uncertainty support is the 95% relative-position
+// covariance projected onto the instantaneous line of sight.
+struct TrajectoryBarrierEvaluation
+{
+    CombinationValidity validity{CombinationValidity::InvalidTrajectory};
+    std::size_t evaluated_sample_count{0};
+    std::size_t evaluated_interval_count{0};
+    std::size_t first_violation_interval{0};
+    std::size_t minimum_clearance_sample{0};
+    double minimum_clearance_time_offset_s{
+        std::numeric_limits<double>::quiet_NaN()};
+    double minimum_nominal_range_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    double uncertainty_margin_at_minimum_m{
+        std::numeric_limits<double>::quiet_NaN()};
     double minimum_clearance_m{std::numeric_limits<double>::quiet_NaN()};
     double minimum_residual_m{std::numeric_limits<double>::quiet_NaN()};
     bool initial_clearance_nonnegative{false};
@@ -154,6 +178,12 @@ public:
         BarrierDirection direction,
         BarrierDirectionEvaluation & evaluation) const;
 
+    bool evaluateTrajectoryPair(
+        std::uint64_t evaluation_timestamp_us,
+        const estimation::ReceivedTrajectoryIntent & ownship_intent,
+        const estimation::ReceivedTrajectoryIntent & threat_intent,
+        TrajectoryBarrierEvaluation & evaluation) const;
+
 private:
     ManeuverCombinationEvaluatorParams m_params;
 };
@@ -234,6 +264,7 @@ private:
     ManeuverCombinationEvaluator m_pair_evaluator;
     PositiveMarginBarrierEvaluator m_barrier_evaluator;
     bool m_positive_margin_filter_enabled{false};
+    bool m_robust_cone_filter_enabled{false};
 };
 
 class ExhaustiveManeuverCombinationEvaluator
@@ -252,6 +283,7 @@ private:
     ManeuverCombinationEvaluator m_pair_evaluator;
     PositiveMarginBarrierEvaluator m_barrier_evaluator;
     bool m_positive_margin_filter_enabled{false};
+    bool m_robust_cone_filter_enabled{false};
 };
 
 }  // namespace collision_avoidance::selection

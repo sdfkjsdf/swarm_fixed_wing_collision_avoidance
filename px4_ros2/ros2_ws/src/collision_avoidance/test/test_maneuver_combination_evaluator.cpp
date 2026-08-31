@@ -236,6 +236,88 @@ TEST(PositiveMarginBarrierEvaluator, ReportsOnlyAlignedCommonIntervals)
     EXPECT_EQ(result.evaluated_interval_count, 44U);
 }
 
+TEST(PositiveMarginBarrierEvaluator,
+    TrajectoryPairUsesConeSupportAtEveryAlignedSample)
+{
+    constexpr std::uint64_t timestamp_us = 1'100'000ULL;
+    auto params = barrierParams();
+    params.positive_margin_gamma = 1.0;
+    params.positive_margin_reference_m = 10.0;
+    params.confidence_chi_squared = 7.814727903251179;
+    const auto ownship = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 0.0, 100.0, 10.0, 0.0, 1.0);
+    auto threat = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 30.0, 100.0, 10.0, 0.0, 1.0);
+    constexpr std::size_t violation_index = 20;
+    threat.reconstructed_mean[violation_index].p_e = 12.0;
+    threat.cone[violation_index].mean.p_e = 12.0;
+
+    cs::PositiveMarginBarrierEvaluator evaluator(params);
+    cs::TrajectoryBarrierEvaluation result;
+    ASSERT_TRUE(evaluator.evaluateTrajectoryPair(
+        timestamp_us, ownship, threat, result));
+
+    const double expected_uncertainty = std::sqrt(
+        params.confidence_chi_squared * 2.0);
+    EXPECT_FALSE(result.admissible);
+    EXPECT_EQ(result.minimum_clearance_sample, violation_index);
+    EXPECT_NEAR(
+        result.minimum_clearance_time_offset_s,
+        violation_index * ce::kTrajectoryIntentStepSeconds,
+        1.0e-12);
+    EXPECT_NEAR(result.minimum_nominal_range_m, 12.0, 1.0e-12);
+    EXPECT_NEAR(
+        result.uncertainty_margin_at_minimum_m,
+        expected_uncertainty,
+        1.0e-12);
+    EXPECT_NEAR(
+        result.minimum_clearance_m,
+        12.0 - expected_uncertainty,
+        1.0e-12);
+    EXPECT_LT(result.minimum_residual_m, 0.0);
+}
+
+TEST(ManeuverCombinationEvaluator,
+    RobustConeFilterRejectsUnsafeTrajectoryWithoutChangingLegacyFilter)
+{
+    constexpr std::uint64_t timestamp_us = 1'200'000ULL;
+    auto params = barrierParams();
+    params.positive_margin_filter_enabled = false;
+    params.robust_cone_filter_enabled = true;
+    params.positive_margin_gamma = 1.0;
+    params.positive_margin_reference_m = 10.0;
+    const auto ownship = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 0.0, 100.0, 10.0, 0.0, 1.0);
+    auto threat = linearIntent(
+        timestamp_us,
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollZero),
+        0.0, 30.0, 100.0, 10.0, 0.0, 1.0);
+    threat.reconstructed_mean[20].p_e = 12.0;
+    threat.cone[20].mean.p_e = 12.0;
+
+    cs::ManeuverCombinationEvaluator evaluator(params);
+    cs::StaticCombinationEvaluation evaluation;
+    EXPECT_FALSE(evaluator.evaluate(
+        timestamp_us,
+        repeatedCandidates(ownship),
+        repeatedCandidates(threat),
+        evaluation));
+    for (const auto & combination : evaluation.combinations) {
+        EXPECT_TRUE(combination.barrier_evaluated);
+        EXPECT_FALSE(combination.barrier_admissible);
+        EXPECT_EQ(
+            combination.validity,
+            cs::CombinationValidity::BarrierRejected);
+        EXPECT_EQ(combination.evaluated_sample_count, 0U);
+    }
+}
+
 TEST(ManeuverCombinationEvaluator, BarrierRejectsBeforeStaticAdEvaluation)
 {
     constexpr std::uint64_t timestamp_us = 750'000ULL;

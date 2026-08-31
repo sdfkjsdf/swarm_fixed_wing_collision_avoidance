@@ -228,6 +228,41 @@ def v4_shadow_summary(decisions):
     return result
 
 
+def v4_horizon_gate_summary(decisions):
+    result = []
+    for vehicle, records in enumerate(decisions):
+        evaluated = [
+            message for _, message in records
+            if message.v4_horizon_gate_evaluated]
+        valid = [
+            message for message in evaluated
+            if message.v4_horizon_gate_valid
+            and math.isfinite(message.v4_horizon_h_worst_m)]
+        h_worst = [
+            float(message.v4_horizon_h_worst_m) for message in valid]
+        result.append({
+            "vehicle_id": vehicle,
+            "evaluated_record_count": len(evaluated),
+            "valid_record_count": len(valid),
+            "local_active_record_count": sum(
+                bool(message.v4_horizon_local_gate_active)
+                for _, message in records),
+            "active_record_count": sum(
+                bool(message.v4_horizon_gate_active)
+                for _, message in records),
+            "command_execution_record_count": sum(
+                bool(message.command_execution_requested)
+                for _, message in records),
+            "h_worst_m_range": (
+                [min(h_worst), max(h_worst)] if h_worst else None),
+            "trigger_m_values": sorted(set(
+                float(message.v4_horizon_trigger_m)
+                for message in valid
+                if math.isfinite(message.v4_horizon_trigger_m))),
+        })
+    return result
+
+
 def activation_state_summary(decisions):
     result = []
     for vehicle, records in enumerate(decisions):
@@ -818,6 +853,7 @@ def analyze(args):
             np.count_nonzero(below_dsd) * sample_dt_s),
         "decision_diagnostics": decision_summary(decisions),
         "v4_shadow_diagnostics": v4_shadow_summary(decisions),
+        "v4_horizon_gate_diagnostics": v4_horizon_gate_summary(decisions),
         "activation_state_diagnostics": activation_state_summary(decisions),
         "trajectory_intent_diagnostics": trajectory_intent_summary(
             intents, decisions, int(grid_ns[0])),

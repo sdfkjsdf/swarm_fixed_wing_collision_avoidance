@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -53,6 +54,7 @@ enum class ManeuverExecutionPolicy : std::uint8_t
 {
     AmacAdThreshold = 0,
     ContinuousV4,
+    HorizonGatedV4,
 };
 
 struct ManeuverSelectionWorkerParams
@@ -80,6 +82,9 @@ struct ManeuverSelectionWorkerParams
     std::uint64_t v4_maximum_nominal_age_us{1'000'000};
     SafeControlSetV4Params v4_safe_control_params{};
     SafeControlCandidateAdapterParams v4_candidate_adapter_params{};
+    // Robust cone clearance h excludes DSD. V4 commands are applied when the
+    // worst aligned near-nominal horizon clearance reaches this threshold.
+    double v4_horizon_trigger_m{10.0};
     std::array<std::uint8_t, kEligibleLateralCandidateCount> eligible_candidate_ids{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero),
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollMinus15),
@@ -167,6 +172,20 @@ struct ManeuverSelectionDecision
     bool activation_just_started{false};
     bool activation_just_ended{false};
 
+    // Horizon-gated V4 supervision. This is distinct from AMAC AD activation.
+    bool v4_horizon_gate_evaluated{false};
+    bool v4_horizon_gate_valid{false};
+    bool v4_horizon_local_gate_active{false};
+    bool v4_horizon_gate_active{false};
+    double v4_horizon_h_worst_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    double v4_horizon_trigger_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    double v4_horizon_worst_time_offset_s{
+        std::numeric_limits<double>::quiet_NaN()};
+    int v4_horizon_worst_first_vehicle_id{-1};
+    int v4_horizon_worst_second_vehicle_id{-1};
+
     // V4 diagnostics. They are observation-only in shadow mode; in cutover
     // mode v4_candidates is the source of the downstream candidate set.
     bool v4_enabled{false};
@@ -220,6 +239,7 @@ struct ManeuverSelectionPeerDecision
     bool coordination_qualified{false};
     bool activation_requested{false};
     bool command_execution_requested{false};
+    bool v4_horizon_local_gate_active{false};
     // Derived from the peer's published V4 diagnostics. This advertises only
     // bootstrap readiness; it is neither a command nor a committed cutover.
     bool v4_cutover_candidate_ready{false};
@@ -250,7 +270,44 @@ inline bool maneuverCommandExecutionRequested(
     if (policy == ManeuverExecutionPolicy::ContinuousV4) {
         return decision.selected_v4_cutover;
     }
+    if (policy == ManeuverExecutionPolicy::HorizonGatedV4) {
+        return decision.selected_v4_cutover
+            && decision.v4_horizon_gate_active;
+    }
     return decision.activation_requested;
+}
+
+inline bool updateV4HorizonGateState(
+    bool previous_active,
+    bool evaluation_valid,
+    double h_worst_m,
+    double trigger_m) noexcept
+{
+    if (!evaluation_valid || !std::isfinite(h_worst_m)
+        || !std::isfinite(trigger_m) || trigger_m <= 0.0) {
+        // A transient missing snapshot must not cancel an avoidance command
+        // that was already justified by the last complete common horizon.
+        return previous_active;
+    }
+    return h_worst_m <= trigger_m;
+}
+
+inline bool v4HorizonHoldElapsed(
+    std::uint64_t activation_timestamp_us,
+    std::uint64_t now_us,
+    std::uint64_t hold_duration_us) noexcept
+{
+    return hold_duration_us > 0
+        && now_us >= activation_timestamp_us
+        && now_us - activation_timestamp_us >= hold_duration_us;
+}
+
+inline bool v4HorizonFailClosedRequested(
+    ManeuverExecutionPolicy policy,
+    SafeControlSetStatus safe_control_status) noexcept
+{
+    return policy == ManeuverExecutionPolicy::HorizonGatedV4
+        && safe_control_status == SafeControlSetStatus::SearchSetInfeasible;
 }
 
 struct ManeuverSelectionWorkerOutput
@@ -395,6 +452,14 @@ private:
     void evaluateCurrentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
+    bool evaluateV4HorizonGate(
+        std::uint64_t now_us,
+        const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
+        const std::array<std::size_t, kMaximumSelectionAircraft>
+            & candidate_counts,
+        ManeuverSelectionDecision & decision);
+    void rollupV4HorizonGate(std::uint64_t now_us) noexcept;
+    bool latchV4HorizonOwnshipCandidate() noexcept;
     bool constrainActiveAircraftCandidates(
         MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
         const std::array<std::size_t, kMaximumSelectionAircraft>
@@ -476,6 +541,13 @@ private:
         estimation::CandidateSetKind::LegacyRoll};
     bool m_v4_cutover_ready{false};
     bool m_selected_v4_cutover{false};
+    bool m_v4_horizon_local_gate_active{false};
+    bool m_v4_horizon_gate_active{false};
+    std::uint64_t m_v4_horizon_activation_timestamp_us{0};
+    std::uint8_t m_v4_horizon_latched_candidate_id{0};
+    std::uint64_t m_v4_horizon_latched_input_revision{0};
+    estimation::PredictInput m_v4_horizon_latched_input{};
+    bool m_v4_horizon_latch_valid{false};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
         m_remote_caches{};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>

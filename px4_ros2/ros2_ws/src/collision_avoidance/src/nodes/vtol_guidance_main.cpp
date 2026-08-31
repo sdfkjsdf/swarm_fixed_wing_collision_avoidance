@@ -87,9 +87,12 @@ int main(int argc, char * argv[])
         } else if (execution_policy == "continuous_v4") {
             params.execution_policy = collision_avoidance::selection::
                 ManeuverExecutionPolicy::ContinuousV4;
+        } else if (execution_policy == "horizon_gated_v4") {
+            params.execution_policy = collision_avoidance::selection::
+                ManeuverExecutionPolicy::HorizonGatedV4;
         } else {
             throw std::invalid_argument(
-                "avoidance_execution_policy must be amac_ad_threshold or continuous_v4");
+                "avoidance_execution_policy must be amac_ad_threshold, continuous_v4, or horizon_gated_v4");
         }
         params.activation_params.activation_threshold_m = node->get_parameter(
             "amac_activation_threshold_m").as_double();
@@ -109,6 +112,14 @@ int main(int argc, char * argv[])
             node->get_parameter("positive_margin_gamma").as_double();
         params.evaluator_params.positive_margin_reference_m =
             params.evaluator_params.desired_separation_distance_m;
+        params.v4_horizon_trigger_m =
+            params.evaluator_params.desired_separation_distance_m;
+        if (params.execution_policy == collision_avoidance::selection::
+                ManeuverExecutionPolicy::HorizonGatedV4) {
+            // The horizon policy requires the robust cone barrier as its hard
+            // candidate-admissibility layer. AD remains a secondary ranking.
+            params.evaluator_params.robust_cone_filter_enabled = true;
+        }
         params.evaluator_params.maximum_lateral_acceleration_mps2 =
             params.predictor_params.a_lat_max;
         const double half_wingspan =
@@ -121,12 +132,14 @@ int main(int argc, char * argv[])
             "v4_safe_control_enabled").as_bool();
         params.v4_shadow_only = node->get_parameter(
             "v4_shadow_only").as_bool();
-        if (params.execution_policy == collision_avoidance::selection::
+        if ((params.execution_policy == collision_avoidance::selection::
                 ManeuverExecutionPolicy::ContinuousV4
+            || params.execution_policy == collision_avoidance::selection::
+                ManeuverExecutionPolicy::HorizonGatedV4)
             && (!params.v4_safe_control_enabled || params.v4_shadow_only
                 || params.activation_params.activation_threshold_m != 0.0)) {
             throw std::invalid_argument(
-                "continuous_v4 requires V4 cutover and amac_activation_threshold_m=0");
+                "V4 execution policies require V4 cutover and amac_activation_threshold_m=0");
         }
         params.v4_trim_airspeed_mps = node->get_parameter(
             "airspeed_cruise").as_double();

@@ -156,6 +156,8 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->activation_requested;
                     decision.command_execution_requested =
                         message->command_execution_requested;
+                    decision.v4_horizon_local_gate_active =
+                        message->v4_horizon_local_gate_active;
                     decision.v4_cutover_candidate_ready =
                         message->v4_enabled
                         && !message->v4_shadow_only
@@ -401,6 +403,24 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 message.activation_requested = decision.activation_requested;
                 message.command_execution_requested =
                     decision.command_execution_requested;
+                message.v4_horizon_gate_evaluated =
+                    decision.v4_horizon_gate_evaluated;
+                message.v4_horizon_gate_valid =
+                    decision.v4_horizon_gate_valid;
+                message.v4_horizon_local_gate_active =
+                    decision.v4_horizon_local_gate_active;
+                message.v4_horizon_gate_active =
+                    decision.v4_horizon_gate_active;
+                message.v4_horizon_h_worst_m = static_cast<float>(
+                    decision.v4_horizon_h_worst_m);
+                message.v4_horizon_trigger_m = static_cast<float>(
+                    decision.v4_horizon_trigger_m);
+                message.v4_horizon_worst_time_offset_s = static_cast<float>(
+                    decision.v4_horizon_worst_time_offset_s);
+                message.v4_horizon_worst_first_vehicle_id =
+                    decision.v4_horizon_worst_first_vehicle_id;
+                message.v4_horizon_worst_second_vehicle_id =
+                    decision.v4_horizon_worst_second_vehicle_id;
                 message.activation_just_started =
                     decision.activation_just_started;
                 message.activation_just_ended =
@@ -497,7 +517,7 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 "[maneuver-selection] vehicle=%d selected_epoch=%llu "
                 "proposal_epoch=%llu remote_epoch=%llu qualified=%d "
                 "proposal_confirmed=%d own=%u threat=%u AD=%.3f active=%d "
-                "execute=%d start=%d end=%d reason=%u",
+                "execute=%d h_local=%d h_gate=%d h_worst=%.3f start=%d end=%d reason=%u",
                 m_vehicle_id,
                 static_cast<unsigned long long>(
                     output->decision.local_selection_epoch),
@@ -512,6 +532,9 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 output->decision.ad_m,
                 output->decision.activation_requested ? 1 : 0,
                 output->decision.command_execution_requested ? 1 : 0,
+                output->decision.v4_horizon_local_gate_active ? 1 : 0,
+                output->decision.v4_horizon_gate_active ? 1 : 0,
+                output->decision.v4_horizon_h_worst_m,
                 output->decision.activation_just_started ? 1 : 0,
                 output->decision.activation_just_ended ? 1 : 0,
                 static_cast<unsigned>(output->decision.deactivation_reason));

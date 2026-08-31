@@ -30,8 +30,9 @@ if [[ "${V4_MODE}" != "shadow" && "${V4_MODE}" != "cutover" ]]; then
     exit 2
 fi
 if [[ "${EXECUTION_POLICY}" != "amac_ad_threshold" \
-        && "${EXECUTION_POLICY}" != "continuous_v4" ]]; then
-    echo "AVOIDANCE_EXECUTION_POLICY must be amac_ad_threshold or continuous_v4"
+        && "${EXECUTION_POLICY}" != "continuous_v4" \
+        && "${EXECUTION_POLICY}" != "horizon_gated_v4" ]]; then
+    echo "AVOIDANCE_EXECUTION_POLICY must be amac_ad_threshold, continuous_v4, or horizon_gated_v4"
     exit 2
 fi
 if [[ "${EXECUTION_POLICY}" == "amac_ad_threshold" \
@@ -39,9 +40,10 @@ if [[ "${EXECUTION_POLICY}" == "amac_ad_threshold" \
     echo "amac_ad_threshold comparison requires V4_MODE=shadow"
     exit 2
 fi
-if [[ "${EXECUTION_POLICY}" == "continuous_v4" \
+if [[ ("${EXECUTION_POLICY}" == "continuous_v4" \
+        || "${EXECUTION_POLICY}" == "horizon_gated_v4") \
         && "${V4_MODE}" != "cutover" ]]; then
-    echo "continuous_v4 comparison requires V4_MODE=cutover"
+    echo "V4 execution policies require V4_MODE=cutover"
     exit 2
 fi
 if [[ "${V4_MODE}" == "cutover" && "${SEARCH_MODE}" == "exhaustive" ]]; then

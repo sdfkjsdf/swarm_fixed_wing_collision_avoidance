@@ -18,6 +18,8 @@ constexpr double kTrajectoryStepSeconds =
 constexpr double kTrajectoryHorizonSeconds =
     static_cast<double>(estimation::kTrajectoryPointCount - 1)
     * kTrajectoryStepSeconds;
+constexpr std::uint64_t kTrajectoryHorizonMicroseconds =
+    static_cast<std::uint64_t>(kTrajectoryHorizonSeconds * 1.0e6);
 
 struct IntentKinematics
 {
@@ -40,6 +42,9 @@ bool finitePositive(double value) noexcept
 
 bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
 {
+    const bool v4_execution_policy =
+        params.execution_policy == ManeuverExecutionPolicy::ContinuousV4
+        || params.execution_policy == ManeuverExecutionPolicy::HorizonGatedV4;
     if (params.total_agent_count < 2
         || params.total_agent_count
             > static_cast<int>(kMaximumSelectionAircraft)
@@ -57,9 +62,12 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
         || params.activation_params.separating_rate_threshold_mps < 0.0
         || !std::isfinite(params.activation_params.activation_threshold_m)
         || params.activation_params.activation_threshold_m < 0.0
-        || (params.execution_policy == ManeuverExecutionPolicy::ContinuousV4
+        || (v4_execution_policy
             && (!params.v4_safe_control_enabled || params.v4_shadow_only
                 || params.activation_params.activation_threshold_m != 0.0))
+        || (params.execution_policy == ManeuverExecutionPolicy::HorizonGatedV4
+            && (!finitePositive(params.v4_horizon_trigger_m)
+                || !params.evaluator_params.robust_cone_filter_enabled))
         || (params.v4_safe_control_enabled
             && (!finitePositive(params.v4_trim_airspeed_mps)
                 || params.v4_maximum_airspeed_age_us == 0
@@ -69,18 +77,19 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
                 || !SafeControlCandidateAdapter::validParams(
                     params.v4_candidate_adapter_params)))
         || (params.v4_safe_control_enabled && !params.v4_shadow_only
-            && (params.exhaustive_test_mode
-                || params.evaluator_params.positive_margin_filter_enabled))
-        || (params.evaluator_params.positive_margin_filter_enabled
+            && params.exhaustive_test_mode)
+        || ((params.evaluator_params.positive_margin_filter_enabled
+                || params.evaluator_params.robust_cone_filter_enabled)
             && (!std::isfinite(
                     params.evaluator_params.positive_margin_gamma)
                 || params.evaluator_params.positive_margin_gamma <= 0.0
                 || params.evaluator_params.positive_margin_gamma > 1.0
                 || !finitePositive(
                     params.evaluator_params.positive_margin_reference_m)
-                || !finitePositive(
-                    params.evaluator_params
-                        .maximum_lateral_acceleration_mps2)))) {
+                || (params.evaluator_params.positive_margin_filter_enabled
+                    && !finitePositive(
+                        params.evaluator_params
+                            .maximum_lateral_acceleration_mps2))))) {
         return false;
     }
 
@@ -829,6 +838,10 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
     }
     cache.decision = decision;
     cache.valid = true;
+    if (m_params.execution_policy
+        == ManeuverExecutionPolicy::HorizonGatedV4) {
+        rollupV4HorizonGate(m_latest_state_timestamp_us);
+    }
     if (decision.coordination_qualified) {
         const auto find_selected = [remote_index, &decision](
                                        const RemoteCandidateCache & candidate_cache)
@@ -1411,6 +1424,21 @@ void ManeuverSelectionWorker::evaluateV4(
     decision.v4_shadow_evaluated = true;
     decision.v4_shadow_status = V4ShadowEvaluationStatus::CoreEvaluated;
 
+    if (v4HorizonFailClosedRequested(
+            m_params.execution_policy,
+            decision.v4_safe_control.status)) {
+        // Failing to find a safe sampled-data interval is not evidence that
+        // the raw nominal command is safe. Keep the last coordinated ownship
+        // V4 command instead of failing open to point convergence.
+        m_v4_horizon_local_gate_active = true;
+        rollupV4HorizonGate(now_us);
+        decision.v4_horizon_gate_evaluated = true;
+        decision.v4_horizon_gate_valid = false;
+        decision.v4_horizon_local_gate_active = true;
+        decision.v4_horizon_gate_active = m_v4_horizon_gate_active;
+        decision.v4_horizon_trigger_m = m_params.v4_horizon_trigger_m;
+    }
+
     if (decision.v4_safe_control.status == SafeControlSetStatus::Valid
         || decision.v4_safe_control.status
             == SafeControlSetStatus::SearchSetInfeasible) {
@@ -1548,6 +1576,16 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
         candidate_counts[aircraft_index] = remote_cache->count;
     }
 
+    if (all_candidate_sets_complete) {
+        if (m_params.execution_policy
+                == ManeuverExecutionPolicy::HorizonGatedV4
+            && required_set_kind
+                == estimation::CandidateSetKind::V4SafeControl) {
+            static_cast<void>(evaluateV4HorizonGate(
+                now_us, candidate_sets, candidate_counts, decision));
+        }
+    }
+
     if (all_candidate_sets_complete
         && constrainActiveAircraftCandidates(
             candidate_sets, candidate_counts)) {
@@ -1660,6 +1698,148 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
     output.has_decision = true;
 }
 
+bool ManeuverSelectionWorker::evaluateV4HorizonGate(
+    std::uint64_t now_us,
+    const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
+    const std::array<std::size_t, kMaximumSelectionAircraft>
+        & candidate_counts,
+    ManeuverSelectionDecision & decision)
+{
+    decision.v4_horizon_gate_evaluated = true;
+    decision.v4_horizon_gate_valid = false;
+    decision.v4_horizon_local_gate_active =
+        m_v4_horizon_local_gate_active;
+    decision.v4_horizon_gate_active = m_v4_horizon_gate_active;
+    decision.v4_horizon_h_worst_m =
+        std::numeric_limits<double>::quiet_NaN();
+    decision.v4_horizon_trigger_m = m_params.v4_horizon_trigger_m;
+    decision.v4_horizon_worst_time_offset_s =
+        std::numeric_limits<double>::quiet_NaN();
+    decision.v4_horizon_worst_first_vehicle_id = -1;
+    decision.v4_horizon_worst_second_vehicle_id = -1;
+
+    std::array<
+        const estimation::ReceivedTrajectoryIntent *,
+        kMaximumSelectionAircraft> near_nominal{};
+    const std::uint8_t near_nominal_id = static_cast<std::uint8_t>(
+        SafeCandidateRole::NearNominal);
+    for (int aircraft = 0; aircraft < m_params.total_agent_count; ++aircraft) {
+        const std::size_t aircraft_index = static_cast<std::size_t>(aircraft);
+        if (candidate_counts[aircraft_index] == 0
+            || candidate_counts[aircraft_index]
+                > kExhaustiveCandidatesPerAircraft) {
+            return false;
+        }
+        const auto begin = candidate_sets[aircraft_index].begin();
+        const auto end = begin + static_cast<std::ptrdiff_t>(
+            candidate_counts[aircraft_index]);
+        const auto found = std::find_if(
+            begin, end, [near_nominal_id](const auto & candidate) {
+                return candidate.candidate_id == near_nominal_id;
+            });
+        if (found == end) {
+            return false;
+        }
+        near_nominal[aircraft_index] = &*found;
+    }
+
+    double h_worst_m = std::numeric_limits<double>::infinity();
+    for (int first = 0; first < m_params.total_agent_count; ++first) {
+        for (int second = first + 1;
+             second < m_params.total_agent_count; ++second) {
+            TrajectoryBarrierEvaluation pair;
+            if (!m_barrier_evaluator.evaluateTrajectoryPair(
+                    now_us,
+                    *near_nominal[static_cast<std::size_t>(first)],
+                    *near_nominal[static_cast<std::size_t>(second)],
+                    pair)) {
+                return false;
+            }
+            if (pair.minimum_clearance_m < h_worst_m) {
+                h_worst_m = pair.minimum_clearance_m;
+                decision.v4_horizon_worst_time_offset_s =
+                    pair.minimum_clearance_time_offset_s;
+                decision.v4_horizon_worst_first_vehicle_id = first;
+                decision.v4_horizon_worst_second_vehicle_id = second;
+            }
+        }
+    }
+    if (!std::isfinite(h_worst_m)) {
+        return false;
+    }
+
+    m_v4_horizon_local_gate_active = updateV4HorizonGateState(
+        m_v4_horizon_local_gate_active,
+        true,
+        h_worst_m,
+        m_params.v4_horizon_trigger_m);
+    rollupV4HorizonGate(now_us);
+    decision.v4_horizon_gate_valid = true;
+    decision.v4_horizon_local_gate_active =
+        m_v4_horizon_local_gate_active;
+    decision.v4_horizon_gate_active = m_v4_horizon_gate_active;
+    decision.v4_horizon_h_worst_m = h_worst_m;
+    return true;
+}
+
+void ManeuverSelectionWorker::rollupV4HorizonGate(
+    std::uint64_t now_us) noexcept
+{
+    bool aggregate_request = m_v4_horizon_local_gate_active;
+    for (int aircraft = 0; aircraft < m_params.total_agent_count; ++aircraft) {
+        if (aircraft == m_params.vehicle_id) {
+            continue;
+        }
+        const RemoteDecisionCache & cache = m_remote_decision_caches[
+            static_cast<std::size_t>(aircraft)];
+        aggregate_request = aggregate_request
+            || (cache.valid
+                && cache.decision.v4_horizon_local_gate_active);
+    }
+
+    if (!m_v4_horizon_gate_active && aggregate_request) {
+        if (latchV4HorizonOwnshipCandidate()) {
+            m_v4_horizon_gate_active = true;
+            m_v4_horizon_activation_timestamp_us = now_us;
+        }
+    } else if (m_v4_horizon_gate_active && !aggregate_request
+        && v4HorizonHoldElapsed(
+            m_v4_horizon_activation_timestamp_us,
+            now_us,
+            kTrajectoryHorizonMicroseconds)) {
+        m_v4_horizon_gate_active = false;
+        m_v4_horizon_activation_timestamp_us = 0;
+        m_v4_horizon_latch_valid = false;
+        m_v4_horizon_latched_input_revision = 0;
+    }
+    m_latest_selection_decision.v4_horizon_local_gate_active =
+        m_v4_horizon_local_gate_active;
+    m_latest_selection_decision.v4_horizon_gate_active =
+        m_v4_horizon_gate_active;
+}
+
+bool ManeuverSelectionWorker::latchV4HorizonOwnshipCandidate() noexcept
+{
+    if (!m_has_selected_combination || !m_selected_v4_cutover) {
+        return false;
+    }
+    const std::size_t ownship_index = static_cast<std::size_t>(
+        m_params.vehicle_id);
+    const std::uint8_t candidate_id =
+        m_selected_candidate_ids[ownship_index];
+    const std::uint64_t input_revision =
+        m_selected_candidate_input_revisions[ownship_index];
+    if (candidate_id >= kMaximumSafeControlCandidates
+        || input_revision == 0) {
+        return false;
+    }
+    m_v4_horizon_latched_candidate_id = candidate_id;
+    m_v4_horizon_latched_input_revision = input_revision;
+    m_v4_horizon_latched_input = m_latest_selection_decision.ownship_input;
+    m_v4_horizon_latch_valid = true;
+    return true;
+}
+
 bool ManeuverSelectionWorker::constrainActiveAircraftCandidates(
     MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
     const std::array<std::size_t, kMaximumSelectionAircraft>
@@ -1679,10 +1859,20 @@ bool ManeuverSelectionWorker::constrainActiveAircraftCandidates(
         if (aircraft == m_params.vehicle_id) {
             const ManeuverActivationStatus status =
                 m_activation_controller.status();
-            active = status.active;
-            active_candidate_id = status.latched_candidate_id;
-            active_candidate_input_revision =
-                status.latched_candidate_input_revision;
+            if (m_params.execution_policy
+                    == ManeuverExecutionPolicy::HorizonGatedV4
+                && m_v4_horizon_gate_active
+                && m_v4_horizon_latch_valid) {
+                active = true;
+                active_candidate_id = m_v4_horizon_latched_candidate_id;
+                active_candidate_input_revision =
+                    m_v4_horizon_latched_input_revision;
+            } else {
+                active = status.active;
+                active_candidate_id = status.latched_candidate_id;
+                active_candidate_input_revision =
+                    status.latched_candidate_input_revision;
+            }
         } else {
             const RemoteDecisionCache & cache =
                 m_remote_decision_caches[aircraft_index];
@@ -1690,7 +1880,10 @@ bool ManeuverSelectionWorker::constrainActiveAircraftCandidates(
                 && cache.decision.coordination_qualified
                 && cache.decision.selected_v4_cutover
                     == m_selected_v4_cutover
-                && cache.decision.activation_requested;
+                && (cache.decision.activation_requested
+                    || (m_params.execution_policy
+                            == ManeuverExecutionPolicy::HorizonGatedV4
+                        && cache.decision.command_execution_requested));
             active_candidate_id = cache.decision.ownship_candidate_id;
             active_candidate_input_revision =
                 cache.decision.selected_candidate_input_revisions[
@@ -1802,6 +1995,20 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
         output.has_decision = true;
         return false;
     }
+    if (m_params.execution_policy == ManeuverExecutionPolicy::HorizonGatedV4
+        && m_v4_horizon_gate_active && m_v4_horizon_latch_valid
+        && (m_pending_proposal.candidate_ids[ownship_index]
+                != m_v4_horizon_latched_candidate_id
+            || m_pending_proposal.candidate_input_revisions[ownship_index]
+                != m_v4_horizon_latched_input_revision)) {
+        m_pending_proposal.resolved = true;
+        decision.proposal_consensus_confirmed = false;
+        decision.coordination_qualified = m_has_selected_combination;
+        m_latest_selection_decision = decision;
+        output.decision = decision;
+        output.has_decision = true;
+        return false;
+    }
 
     const bool changed = !m_has_selected_combination
         || m_pending_proposal.candidate_ids != m_selected_candidate_ids
@@ -1816,7 +2023,9 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
     m_has_selected_combination = true;
     m_current_best_id = activation.active
         ? activation.latched_candidate_id
-        : m_selected_candidate_ids[ownship_index];
+        : m_v4_horizon_gate_active && m_v4_horizon_latch_valid
+            ? m_v4_horizon_latched_candidate_id
+            : m_selected_candidate_ids[ownship_index];
 
     // Proposal agreement can arrive after the next 4 Hz candidate refresh.
     // Keep the newly committed ownship command in that already-open epoch's
@@ -2060,7 +2269,9 @@ void ManeuverSelectionWorker::updateActivationState(
     }
     m_last_activation_monitor_timestamp_us = now_us;
 
-    if (m_params.execution_policy == ManeuverExecutionPolicy::ContinuousV4) {
+    if (m_params.execution_policy == ManeuverExecutionPolicy::ContinuousV4
+        || m_params.execution_policy
+            == ManeuverExecutionPolicy::HorizonGatedV4) {
         // Continuous V4 has no AMAC activation/latch state. Keeping these
         // semantics separate allows the coordinated V4 tuple to be refreshed
         // instead of being frozen for the AMAC active duration.
@@ -2071,6 +2282,15 @@ void ManeuverSelectionWorker::updateActivationState(
         m_latest_selection_decision.activation_timestamp_us = 0;
         m_latest_selection_decision.deactivation_reason =
             ManeuverDeactivationReason::None;
+        if (m_params.execution_policy
+                == ManeuverExecutionPolicy::HorizonGatedV4
+            && m_v4_horizon_gate_active && m_v4_horizon_latch_valid) {
+            m_latest_selection_decision.ownship_candidate_id =
+                m_v4_horizon_latched_candidate_id;
+            m_latest_selection_decision.ownship_input =
+                m_v4_horizon_latched_input;
+            m_current_best_id = m_v4_horizon_latched_candidate_id;
+        }
         if (force_decision_output) {
             output.decision = m_latest_selection_decision;
             output.has_decision = true;

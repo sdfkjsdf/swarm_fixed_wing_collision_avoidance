@@ -33,11 +33,14 @@ scripts/run_execution_policy_comparison.sh 5.0   # explicit override
 ```
 
 The generated run IDs include the explicit threshold, for example
-`_amac_ad_5p0m`, and end in `_continuous_v4` for the V4 case.
+`_amac_ad_5p0m`, and end in `_horizon_gated_v4` for the V4 case.
 The first case uses legacy AMAC selection with `AD < threshold`; the second
-uses coordinated V4 candidates continuously after coordination, without the
-AMAC AD activation gate. An empty V4 safe set remains an explicit infeasible
-diagnostic and is not reported as a safety guarantee.
+opens the coordinated V4 command gate only when the minimum 95% robust
+near-nominal cone clearance over the aligned 4.5 s horizon reaches the 10 m
+DSD threshold. Candidate combinations must first pass the same-time robust
+positive-margin cone filter; AD cost ranks only the remaining combinations.
+An empty V4 safe set remains an explicit infeasible diagnostic and is not
+reported as a safety guarantee.
 
 The runner starts five headless PX4 SITL instances, one DDS agent per instance,
 the shared-coordinate transformer, and one guidance node per aircraft. It
@@ -82,7 +85,9 @@ Selection and execution are separate. Selection proposals are refreshed at
 threat AD. Under `amac_ad_threshold`, once activated the ownship command
 remains latched until the separating-rate criterion or the 4.5 s timeout ends
 that conflict episode. Under `continuous_v4`, AMAC activation and latching stay
-disabled; every newly coordinated V4 tuple is eligible for execution. V4
+disabled; every newly coordinated V4 tuple is eligible for execution.
+Under `horizon_gated_v4`, AMAC activation remains separate and V4 execution is
+controlled by the 4.5 s robust-cone horizon gate described above. V4
 cutover uses a two-phase bootstrap: every aircraft first advertises that it can
 generate a non-empty V4 candidate set while legacy intents remain available,
 then V4 intents enter the existing distributed proposal/confirmation path.

@@ -23,10 +23,10 @@ AVOIDANCE_EXECUTION_POLICY=amac_ad_threshold \
 AMAC_AD_THRESHOLD_M="${AMAC_THRESHOLD_M}" \
     "${SCRIPT_DIR}/run_point_convergence_case.sh" avoidance
 
-echo "[compare] B: continuous V4 positive-margin control"
-RUN_ID="${BASE_RUN_ID}_continuous_v4" \
+echo "[compare] B: horizon-gated V4 cone-barrier control"
+RUN_ID="${BASE_RUN_ID}_horizon_gated_v4" \
 V4_MODE=cutover \
-AVOIDANCE_EXECUTION_POLICY=continuous_v4 \
+AVOIDANCE_EXECUTION_POLICY=horizon_gated_v4 \
 AMAC_AD_THRESHOLD_M=0.0 \
     "${SCRIPT_DIR}/run_point_convergence_case.sh" avoidance
 
