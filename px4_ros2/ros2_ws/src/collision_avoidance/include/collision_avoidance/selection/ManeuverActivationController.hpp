@@ -21,6 +21,10 @@ struct ManeuverActivationControllerParams
     std::uint64_t maximum_active_duration_us{4'500'000};
     // 100 ft/s from the disclosed baseline Auto ACAS termination criterion.
     double separating_rate_threshold_mps{30.48};
+    // Experimental early-activation boundary [m]. The disclosed AMAC
+    // baseline is recovered with zero; a positive value activates while AD
+    // still has that much residual separation margin.
+    double activation_threshold_m{0.0};
 };
 
 struct ManeuverActivationSample

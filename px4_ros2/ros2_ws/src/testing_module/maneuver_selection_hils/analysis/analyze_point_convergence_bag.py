@@ -24,6 +24,12 @@ V4_CANDIDATE_ROLES = ("near", "left", "right")
 COLORS = plt.get_cmap("tab10").colors[:AIRCRAFT_COUNT]
 
 
+def command_execution_requested(message):
+    """Read the actual PX4 command gate, with old-bag compatibility."""
+    return bool(getattr(
+        message, "command_execution_requested", message.activation_requested))
+
+
 def read_bag(bag: Path):
     selected_topics = set()
     for vehicle in range(AIRCRAFT_COUNT):
@@ -235,7 +241,7 @@ def activation_state_summary(decisions):
         previous_active_candidate = None
         previous_active_revision = None
         for time_s, message in records:
-            active = bool(message.activation_requested)
+            active = command_execution_requested(message)
             if active and not previous_active:
                 starts.append({
                     "time_s": float(time_s),
@@ -382,7 +388,7 @@ def formation_override_summary(log_dir, messages, intents):
                 missing_reference_count += 1
                 continue
             decision = raw_decisions[index][1]
-            if not decision.activation_requested:
+            if not command_execution_requested(decision):
                 inactive_decision_count += 1
                 continue
             kind = 1 if decision.selected_v4_cutover else 0
@@ -497,11 +503,11 @@ def coordination_invariant_summary(decisions):
                     and selected_epoch == proposal_epoch
                     and not decision.proposal_consensus_confirmed):
                 unconfirmed_current_epoch_qualified_count += 1
-            if (decision.activation_requested
+            if (command_execution_requested(decision)
                     and int(decision.selected_candidate_ids[vehicle])
                     != int(decision.ownship_candidate_id)):
                 active_selected_slot_mismatch_count += 1
-            if (decision.activation_requested
+            if (command_execution_requested(decision)
                     and decision.proposal_valid
                     and int(decision.proposed_candidate_ids[vehicle])
                     != int(decision.ownship_candidate_id)):

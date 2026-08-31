@@ -33,6 +33,7 @@ bool coordination_qualified
 bool new_best_accepted
 bool previous_best_retained
 bool activation_requested
+bool command_execution_requested
 bool activation_just_started
 bool activation_just_ended
 

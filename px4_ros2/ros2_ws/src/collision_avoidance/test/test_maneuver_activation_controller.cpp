@@ -113,3 +113,21 @@ TEST(ManeuverActivationController, RequiresClearConeBeforeNewConflictRearms)
     EXPECT_TRUE(new_conflict.just_activated);
     EXPECT_EQ(new_conflict.latched_candidate_id, 6U);
 }
+
+TEST(ManeuverActivationController, UsesPositiveEarlyActivationThreshold)
+{
+    cs::ManeuverActivationControllerParams params;
+    params.activation_threshold_m = 5.0;
+    cs::ManeuverActivationController controller(params);
+
+    EXPECT_FALSE(controller.update(sample(6'000'000, 5.0, 0.0)).active);
+    const auto activated = controller.update(sample(6'050'000, 4.9, 0.0));
+    EXPECT_TRUE(activated.active);
+    EXPECT_TRUE(activated.just_activated);
+
+    const auto ended = controller.update(sample(6'100'000, 4.0, 30.48));
+    ASSERT_TRUE(ended.just_deactivated);
+    EXPECT_FALSE(controller.update(sample(6'150'000, 4.9, 0.0)).active);
+    EXPECT_FALSE(controller.update(sample(6'200'000, 5.0, 0.0)).active);
+    EXPECT_TRUE(controller.update(sample(6'250'000, 4.9, 0.0)).active);
+}

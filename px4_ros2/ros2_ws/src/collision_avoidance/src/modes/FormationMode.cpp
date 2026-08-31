@@ -314,7 +314,7 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
         !m_collision_avoidance_shadow_only_mt
         && m_has_maneuver_decision_mt
         && m_maneuver_decision_mt.coordination_qualified
-        && m_maneuver_decision_mt.activation_requested;
+        && m_maneuver_decision_mt.command_execution_requested;
     if (avoidance_override) {
         float course = m_initial_course;
         if (m_vehicle_id >= 0

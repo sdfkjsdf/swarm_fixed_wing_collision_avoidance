@@ -14,6 +14,23 @@
 namespace ce = collision_avoidance::estimation;
 namespace cs = collision_avoidance::selection;
 
+TEST(ManeuverExecutionPolicy, SeparatesAmacActivationFromContinuousV4)
+{
+    cs::ManeuverSelectionDecision decision;
+    decision.coordination_qualified = true;
+    decision.selected_v4_cutover = true;
+    decision.activation_requested = false;
+
+    EXPECT_FALSE(cs::maneuverCommandExecutionRequested(
+        cs::ManeuverExecutionPolicy::AmacAdThreshold, decision));
+    EXPECT_TRUE(cs::maneuverCommandExecutionRequested(
+        cs::ManeuverExecutionPolicy::ContinuousV4, decision));
+
+    decision.coordination_qualified = false;
+    EXPECT_FALSE(cs::maneuverCommandExecutionRequested(
+        cs::ManeuverExecutionPolicy::ContinuousV4, decision));
+}
+
 namespace
 {
 
@@ -155,6 +172,10 @@ cs::ManeuverSelectionPeerDecision peerDecision(
         decision.proposal_consensus_confirmed;
     peer.coordination_qualified = decision.coordination_qualified;
     peer.activation_requested = decision.activation_requested;
+    peer.command_execution_requested =
+        decision.command_execution_requested;
+    peer.v4_cutover_candidate_ready =
+        cs::v4CutoverCandidateReady(decision);
     return peer;
 }
 
@@ -545,8 +566,43 @@ TEST(ManeuverSelectionWorker,
     ASSERT_TRUE(second.pushRemoteDecision(
         0, peerDecision(bootstrap_commits[0].decision)));
 
+    // Phase 1: both aircraft can independently generate a V4 candidate set,
+    // but they keep broadcasting legacy intents until that readiness has
+    // crossed the peer decision channel in both directions.
+    constexpr std::uint64_t readiness_offset = 300'000ULL;
+    pushV4Inputs(first, start + readiness_offset);
+    pushV4Inputs(second, start + readiness_offset);
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(
+            start + readiness_offset, -94.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second,
+        beliefSnapshot(
+            start + readiness_offset, 94.0, 0.0, -20.0, 0.0));
+    ASSERT_TRUE(cs::v4CutoverCandidateReady(first_output.decision));
+    ASSERT_TRUE(cs::v4CutoverCandidateReady(second_output.decision));
+    ASSERT_GT(first_output.intent_packet_count, 0U);
+    ASSERT_GT(second_output.intent_packet_count, 0U);
+    EXPECT_EQ(
+        first_output.intent_packets[0].candidate_set_kind,
+        ce::CandidateSetKind::LegacyRoll);
+    EXPECT_EQ(
+        second_output.intent_packets[0].candidate_set_kind,
+        ce::CandidateSetKind::LegacyRoll);
+    exchangePackets(first, second, first_output, second_output);
+    ASSERT_TRUE(first.pushRemoteDecision(
+        1, peerDecision(second_output.decision)));
+    ASSERT_TRUE(second.pushRemoteDecision(
+        0, peerDecision(first_output.decision)));
+    EXPECT_TRUE(first.processPendingForTest());
+    EXPECT_TRUE(second.processPendingForTest());
+
+    // Phase 2: after the all-participant readiness barrier, both aircraft
+    // publish V4 intents. Actual command execution still waits for the normal
+    // distributed proposal/confirmation below.
     for (const std::uint64_t offset : {
-             300'000ULL, 350'000ULL, 400'000ULL, 450'000ULL}) {
+             350'000ULL, 400'000ULL, 450'000ULL}) {
         const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
         pushV4Inputs(first, start + offset);
         pushV4Inputs(second, start + offset);
@@ -723,10 +779,14 @@ TEST(ManeuverSelectionWorker,
     for (const auto & packet : east_far.intent_packets) {
         ASSERT_TRUE(local->pushRemoteIntent(2, packet));
     }
-    ASSERT_TRUE(local->pushRemoteDecision(
-        1, coordinatedPeerForIntent(1, west_far.intent_packets[0])));
-    ASSERT_TRUE(local->pushRemoteDecision(
-        2, coordinatedPeerForIntent(2, east_far.intent_packets[0])));
+    auto west_ready = coordinatedPeerForIntent(
+        1, west_far.intent_packets[0]);
+    auto east_ready = coordinatedPeerForIntent(
+        2, east_far.intent_packets[0]);
+    west_ready.v4_cutover_candidate_ready = true;
+    east_ready.v4_cutover_candidate_ready = true;
+    ASSERT_TRUE(local->pushRemoteDecision(1, west_ready));
+    ASSERT_TRUE(local->pushRemoteDecision(2, east_ready));
     pushV4Inputs(*local, start);
     const auto initially_valid = pushBeliefAndProcess(
         *local,
@@ -755,10 +815,12 @@ TEST(ManeuverSelectionWorker,
     for (const auto & packet : east_close.intent_packets) {
         ASSERT_TRUE(local->pushRemoteIntent(2, packet));
     }
-    ASSERT_TRUE(local->pushRemoteDecision(
-        1, coordinatedPeerForIntent(1, west_close.intent_packets[0])));
-    ASSERT_TRUE(local->pushRemoteDecision(
-        2, coordinatedPeerForIntent(2, east_close.intent_packets[0])));
+    west_ready = coordinatedPeerForIntent(1, west_close.intent_packets[0]);
+    east_ready = coordinatedPeerForIntent(2, east_close.intent_packets[0]);
+    west_ready.v4_cutover_candidate_ready = true;
+    east_ready.v4_cutover_candidate_ready = true;
+    ASSERT_TRUE(local->pushRemoteDecision(1, west_ready));
+    ASSERT_TRUE(local->pushRemoteDecision(2, east_ready));
     pushV4Inputs(*local, close_time);
     const auto infeasible = pushBeliefAndProcess(
         *local,

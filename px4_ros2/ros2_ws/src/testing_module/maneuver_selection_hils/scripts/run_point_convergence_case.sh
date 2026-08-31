@@ -14,6 +14,8 @@ RUN_DURATION_SECONDS=${RUN_DURATION_SECONDS:-55}
 MODE=${1:-avoidance}
 SEARCH_MODE=${MANEUVER_SEARCH_MODE:-heuristic}
 V4_MODE=${V4_MODE:-shadow}
+EXECUTION_POLICY=${AVOIDANCE_EXECUTION_POLICY:-amac_ad_threshold}
+AMAC_AD_THRESHOLD_M=${AMAC_AD_THRESHOLD_M:-0.0}
 
 if [[ "${MODE}" != "avoidance" && "${MODE}" != "baseline" ]]; then
     echo "Usage: run_point_convergence_case.sh [avoidance|baseline]"
@@ -25,6 +27,21 @@ if [[ "${SEARCH_MODE}" != "heuristic" && "${SEARCH_MODE}" != "exhaustive" ]]; th
 fi
 if [[ "${V4_MODE}" != "shadow" && "${V4_MODE}" != "cutover" ]]; then
     echo "V4_MODE must be shadow or cutover"
+    exit 2
+fi
+if [[ "${EXECUTION_POLICY}" != "amac_ad_threshold" \
+        && "${EXECUTION_POLICY}" != "continuous_v4" ]]; then
+    echo "AVOIDANCE_EXECUTION_POLICY must be amac_ad_threshold or continuous_v4"
+    exit 2
+fi
+if [[ "${EXECUTION_POLICY}" == "amac_ad_threshold" \
+        && "${V4_MODE}" != "shadow" ]]; then
+    echo "amac_ad_threshold comparison requires V4_MODE=shadow"
+    exit 2
+fi
+if [[ "${EXECUTION_POLICY}" == "continuous_v4" \
+        && "${V4_MODE}" != "cutover" ]]; then
+    echo "continuous_v4 comparison requires V4_MODE=cutover"
     exit 2
 fi
 if [[ "${V4_MODE}" == "cutover" && "${SEARCH_MODE}" == "exhaustive" ]]; then
@@ -116,7 +133,7 @@ if [[ -e "${BAG_DIR}" ]]; then
     exit 2
 fi
 
-echo "[run] mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
+echo "[run] mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} policy=${EXECUTION_POLICY} ad_threshold=${AMAC_AD_THRESHOLD_M}m run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
 for vehicle in 0 1 2 3 4; do
     port=$((8888 + vehicle))
     pkill -KILL -f "MicroXRCEAgent udp4 -p ${port}" 2>/dev/null || true
@@ -178,6 +195,8 @@ for vehicle in 0 1 2 3 4; do
         -p "preflight_desired_course_rad:=${COURSES[$vehicle]}" \
         -p preflight_desired_ground_speed_mps:=20.0 \
         -p "collision_avoidance_shadow_only:=${SHADOW_ONLY}" \
+        -p "avoidance_execution_policy:=${EXECUTION_POLICY}" \
+        -p "amac_activation_threshold_m:=${AMAC_AD_THRESHOLD_M}" \
         -p "maneuver_selection_exhaustive_test_mode:=${EXHAUSTIVE_TEST_MODE}" \
         -p v4_safe_control_enabled:=true \
         -p "v4_shadow_only:=${V4_SHADOW_ONLY}" \

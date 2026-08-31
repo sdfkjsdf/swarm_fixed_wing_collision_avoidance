@@ -154,6 +154,23 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->coordination_qualified;
                     decision.activation_requested =
                         message->activation_requested;
+                    decision.command_execution_requested =
+                        message->command_execution_requested;
+                    decision.v4_cutover_candidate_ready =
+                        message->v4_enabled
+                        && !message->v4_shadow_only
+                        && message->v4_shadow_evaluated
+                        && message->v4_shadow_status
+                            == static_cast<std::uint8_t>(
+                                selection::V4ShadowEvaluationStatus::
+                                    CoreEvaluated)
+                        && message->v4_candidate_status
+                            == static_cast<std::uint8_t>(
+                                selection::
+                                    SafeControlCandidateAdapterStatus::Valid)
+                        && message->v4_candidate_count > 0
+                        && message->v4_candidate_count
+                            <= selection::kMaximumSafeControlCandidates;
                     if (!m_worker.pushRemoteDecision(
                             remote_vehicle_id, decision)) {
                         RCLCPP_WARN_THROTTLE(
@@ -382,6 +399,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 message.previous_best_retained =
                     decision.previous_best_retained;
                 message.activation_requested = decision.activation_requested;
+                message.command_execution_requested =
+                    decision.command_execution_requested;
                 message.activation_just_started =
                     decision.activation_just_started;
                 message.activation_just_ended =
@@ -478,7 +497,7 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 "[maneuver-selection] vehicle=%d selected_epoch=%llu "
                 "proposal_epoch=%llu remote_epoch=%llu qualified=%d "
                 "proposal_confirmed=%d own=%u threat=%u AD=%.3f active=%d "
-                "start=%d end=%d reason=%u",
+                "execute=%d start=%d end=%d reason=%u",
                 m_vehicle_id,
                 static_cast<unsigned long long>(
                     output->decision.local_selection_epoch),
@@ -492,6 +511,7 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 static_cast<unsigned>(output->decision.threat_candidate_id),
                 output->decision.ad_m,
                 output->decision.activation_requested ? 1 : 0,
+                output->decision.command_execution_requested ? 1 : 0,
                 output->decision.activation_just_started ? 1 : 0,
                 output->decision.activation_just_ended ? 1 : 0,
                 static_cast<unsigned>(output->decision.deactivation_reason));

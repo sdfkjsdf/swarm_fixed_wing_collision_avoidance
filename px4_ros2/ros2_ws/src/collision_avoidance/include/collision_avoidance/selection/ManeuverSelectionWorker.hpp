@@ -49,6 +49,12 @@ enum class V4AirspeedSource : std::uint8_t
     TrimFallback,
 };
 
+enum class ManeuverExecutionPolicy : std::uint8_t
+{
+    AmacAdThreshold = 0,
+    ContinuousV4,
+};
+
 struct ManeuverSelectionWorkerParams
 {
     int vehicle_id{0};
@@ -63,6 +69,8 @@ struct ManeuverSelectionWorkerParams
     std::uint64_t coordination_delay_us{250'000};
     std::uint64_t maximum_belief_delay_us{1'000'000};
     ManeuverActivationControllerParams activation_params{};
+    ManeuverExecutionPolicy execution_policy{
+        ManeuverExecutionPolicy::AmacAdThreshold};
     bool exhaustive_test_mode{false};
     bool v4_safe_control_enabled{false};
     // True keeps V4 diagnostic-only; false supplies V4 candidates downstream.
@@ -153,6 +161,9 @@ struct ManeuverSelectionDecision
     bool new_best_accepted{false};
     bool previous_best_retained{true};
     bool activation_requested{false};
+    // The command gate actually used by FormationMode. This stays distinct
+    // from AMAC activation so continuous V4 does not falsify AMAC state.
+    bool command_execution_requested{false};
     bool activation_just_started{false};
     bool activation_just_ended{false};
 
@@ -208,7 +219,39 @@ struct ManeuverSelectionPeerDecision
     bool proposal_consensus_confirmed{false};
     bool coordination_qualified{false};
     bool activation_requested{false};
+    bool command_execution_requested{false};
+    // Derived from the peer's published V4 diagnostics. This advertises only
+    // bootstrap readiness; it is neither a command nor a committed cutover.
+    bool v4_cutover_candidate_ready{false};
 };
+
+inline bool v4CutoverCandidateReady(
+    const ManeuverSelectionDecision & decision) noexcept
+{
+    return decision.v4_enabled
+        && !decision.v4_shadow_only
+        && decision.v4_shadow_evaluated
+        && decision.v4_shadow_status
+            == V4ShadowEvaluationStatus::CoreEvaluated
+        && decision.v4_candidates.status
+            == SafeControlCandidateAdapterStatus::Valid
+        && decision.v4_candidates.candidate_count > 0
+        && decision.v4_candidates.candidate_count
+            <= kMaximumSafeControlCandidates;
+}
+
+inline bool maneuverCommandExecutionRequested(
+    ManeuverExecutionPolicy policy,
+    const ManeuverSelectionDecision & decision) noexcept
+{
+    if (!decision.coordination_qualified) {
+        return false;
+    }
+    if (policy == ManeuverExecutionPolicy::ContinuousV4) {
+        return decision.selected_v4_cutover;
+    }
+    return decision.activation_requested;
+}
 
 struct ManeuverSelectionWorkerOutput
 {
@@ -368,6 +411,8 @@ private:
         ManeuverSelectionWorkerOutput & output);
     std::size_t activeCandidateCount() const noexcept;
     bool v4CutoverMode() const noexcept;
+    bool allV4CutoverParticipantsReady(
+        const ManeuverSelectionDecision & local_decision) const noexcept;
     bool publishOutput(const ManeuverSelectionWorkerOutput & output) noexcept;
 
     ManeuverSelectionWorkerParams m_params;

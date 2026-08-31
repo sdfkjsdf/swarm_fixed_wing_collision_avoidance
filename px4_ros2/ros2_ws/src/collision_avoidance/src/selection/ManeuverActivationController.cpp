@@ -45,14 +45,14 @@ ManeuverActivationStatus ManeuverActivationController::update(
 
     if (m_rearm_required) {
         if (sample.valid && std::isfinite(sample.minimum_ad_m)
-            && sample.minimum_ad_m >= 0.0) {
+            && sample.minimum_ad_m >= m_params.activation_threshold_m) {
             m_rearm_required = false;
         }
         return m_status;
     }
 
     if (!sample.valid || !std::isfinite(sample.minimum_ad_m)
-        || sample.minimum_ad_m >= 0.0
+        || sample.minimum_ad_m >= m_params.activation_threshold_m
         || sample.unsafe_threat_mask == 0U) {
         return m_status;
     }

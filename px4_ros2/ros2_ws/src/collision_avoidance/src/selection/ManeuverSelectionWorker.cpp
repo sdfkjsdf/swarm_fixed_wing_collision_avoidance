@@ -55,6 +55,11 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
         || !std::isfinite(
             params.activation_params.separating_rate_threshold_mps)
         || params.activation_params.separating_rate_threshold_mps < 0.0
+        || !std::isfinite(params.activation_params.activation_threshold_m)
+        || params.activation_params.activation_threshold_m < 0.0
+        || (params.execution_policy == ManeuverExecutionPolicy::ContinuousV4
+            && (!params.v4_safe_control_enabled || params.v4_shadow_only
+                || params.activation_params.activation_threshold_m != 0.0))
         || (params.v4_safe_control_enabled
             && (!finitePositive(params.v4_trim_airspeed_mps)
                 || params.v4_maximum_airspeed_age_us == 0
@@ -362,6 +367,28 @@ bool ManeuverSelectionWorker::v4CutoverMode() const noexcept
     return m_params.v4_safe_control_enabled && !m_params.v4_shadow_only;
 }
 
+bool ManeuverSelectionWorker::allV4CutoverParticipantsReady(
+    const ManeuverSelectionDecision & local_decision) const noexcept
+{
+    if (!v4CutoverMode() || !v4CutoverCandidateReady(local_decision)) {
+        return false;
+    }
+    for (int aircraft = 0;
+         aircraft < m_params.total_agent_count; ++aircraft) {
+        if (aircraft == m_params.vehicle_id) {
+            continue;
+        }
+        const RemoteDecisionCache & peer = m_remote_decision_caches[
+            static_cast<std::size_t>(aircraft)];
+        if (!peer.valid
+            || !peer.decision.coordination_qualified
+            || !peer.decision.v4_cutover_candidate_ready) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void ManeuverSelectionWorker::workerLoop()
 {
     using namespace std::chrono_literals;
@@ -430,14 +457,21 @@ bool ManeuverSelectionWorker::processPending()
         }
         if (v4CutoverMode()) {
             const bool v4_candidates_valid = output.has_decision
-                && output.decision.v4_shadow_evaluated
-                && output.decision.v4_candidates.status
-                    == SafeControlCandidateAdapterStatus::Valid
-                && output.decision.v4_candidates.candidate_count > 0;
+                && v4CutoverCandidateReady(output.decision);
+            if (!m_v4_cutover_ready
+                && v4_candidates_valid
+                && allV4CutoverParticipantsReady(output.decision)) {
+                // Phase 1 keeps publishing the selected legacy bootstrap
+                // intent. Only after every participant has independently
+                // advertised a usable V4 set do we enter phase 2 and publish
+                // V4 intents for the existing proposal/consensus path.
+                m_v4_cutover_ready = true;
+            }
             const bool active = m_activation_controller.status().active;
             const bool retain_selected_v4 =
                 m_has_selected_combination && m_selected_v4_cutover;
-            if (v4_candidates_valid || active || retain_selected_v4) {
+            if (m_v4_cutover_ready
+                && (v4_candidates_valid || active || retain_selected_v4)) {
                 buildV4IntentSet(
                     now_us, output.decision.v4_candidates, output);
             } else if (m_v4_cutover_ready) {
@@ -461,6 +495,14 @@ bool ManeuverSelectionWorker::processPending()
             now_us, selection_due || coordination_committed, output);
     }
 
+    if (output.has_decision) {
+        output.decision.command_execution_requested =
+            m_activation_enabled.load(std::memory_order_acquire)
+            && maneuverCommandExecutionRequested(
+                m_params.execution_policy, output.decision);
+        m_latest_selection_decision.command_execution_requested =
+            output.decision.command_execution_requested;
+    }
     if (output.intent_packet_count > 0 || output.has_decision) {
         publishOutput(output);
     }
@@ -1173,7 +1215,6 @@ bool ManeuverSelectionWorker::buildV4IntentSet(
     m_ownship_candidate_count = candidate_count;
     m_ownship_candidate_set_kind =
         estimation::CandidateSetKind::V4SafeControl;
-    m_v4_cutover_ready = m_v4_cutover_ready || generated_safe_set;
     output.intent_packets = packets;
     output.intent_packet_count = candidate_count;
     output.generated_timestamp_us = now_us;
@@ -1967,7 +2008,8 @@ bool ManeuverSelectionWorker::buildActivationSample(
             decision.masd_m = pair.masd_m;
             decision.threat_candidate_id = remote_candidate_id;
         }
-        if (pair.ad_m < 0.0) {
+        if (pair.ad_m
+            < m_params.activation_params.activation_threshold_m) {
             sample.unsafe_threat_mask |= std::uint32_t{1} << remote_index;
         }
         if (pair.reciprocal_cost_defined) {
@@ -2017,6 +2059,24 @@ void ManeuverSelectionWorker::updateActivationState(
         return;
     }
     m_last_activation_monitor_timestamp_us = now_us;
+
+    if (m_params.execution_policy == ManeuverExecutionPolicy::ContinuousV4) {
+        // Continuous V4 has no AMAC activation/latch state. Keeping these
+        // semantics separate allows the coordinated V4 tuple to be refreshed
+        // instead of being frozen for the AMAC active duration.
+        m_activation_controller.reset();
+        m_latest_selection_decision.activation_requested = false;
+        m_latest_selection_decision.activation_just_started = false;
+        m_latest_selection_decision.activation_just_ended = false;
+        m_latest_selection_decision.activation_timestamp_us = 0;
+        m_latest_selection_decision.deactivation_reason =
+            ManeuverDeactivationReason::None;
+        if (force_decision_output) {
+            output.decision = m_latest_selection_decision;
+            output.has_decision = true;
+        }
+        return;
+    }
 
     if (v4CutoverMode() && !m_selected_v4_cutover) {
         m_activation_controller.reset();
