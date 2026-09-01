@@ -623,6 +623,9 @@ TEST(JointManeuverCombinationEvaluator, EvaluatesAllFiveAircraftCombinations)
     EXPECT_TRUE(best.valid);
     EXPECT_TRUE(best.all_pairs_feasible);
     EXPECT_TRUE(best.selected_best);
+    EXPECT_EQ(evaluation.valid_combination_count, 243U);
+    EXPECT_GT(evaluation.safe_combination_count, 0U);
+    EXPECT_GT(evaluation.maximum_minimum_ad_m, 0.0);
     EXPECT_EQ(best.evaluated_pair_count, 10U);
     EXPECT_GT(best.minimum_ad_m, 0.0);
     for (std::size_t aircraft = 0; aircraft < 5; ++aircraft) {
@@ -687,6 +690,10 @@ TEST(JointManeuverCombinationEvaluator, UsesMaximinFallbackWhenAllAreUnsafe)
     EXPECT_TRUE(best.valid);
     EXPECT_FALSE(best.all_pairs_feasible);
     EXPECT_LE(best.minimum_ad_m, 0.0);
+    EXPECT_EQ(evaluation.valid_combination_count, 243U);
+    EXPECT_EQ(evaluation.safe_combination_count, 0U);
+    EXPECT_NEAR(
+        evaluation.maximum_minimum_ad_m, best.minimum_ad_m, 1.0e-12);
     for (std::size_t index = 0;
          index < evaluation.combination_count; ++index) {
         const auto & combination = evaluation.combinations[index];
@@ -709,12 +716,47 @@ TEST(ExhaustiveManeuverCombinationEvaluator, EvaluatesAllFortyNineTwoAircraftCom
         timestamp_us, candidate_sets, 2U, evaluation));
     EXPECT_EQ(evaluation.combination_count, 49U);
     EXPECT_EQ(evaluation.evaluated_unique_pair_count, 49U);
+    EXPECT_EQ(evaluation.valid_combination_count, 49U);
+    EXPECT_EQ(evaluation.safe_combination_count, 49U);
+    EXPECT_NEAR(evaluation.maximum_minimum_ad_m, 96.0, 1.0e-12);
     EXPECT_EQ(evaluation.best_combination_index, 6U);
     ASSERT_TRUE(evaluation.has_best);
     EXPECT_EQ(evaluation.best_combination.candidate_slots[0], 0U);
     EXPECT_EQ(evaluation.best_combination.candidate_slots[1], 6U);
     EXPECT_NEAR(evaluation.best_combination.minimum_pmr_m, 106.0, 1.0e-12);
     EXPECT_NEAR(evaluation.best_combination.minimum_ad_m, 96.0, 1.0e-12);
+}
+
+TEST(ExhaustiveManeuverCombinationEvaluator,
+    SafeRejoinPrefersSafeCandidatesClosestToNominalCommands)
+{
+    constexpr std::uint64_t timestamp_us = 9'500'000ULL;
+    cs::MultiAircraftExhaustiveCandidateIntentSets candidate_sets{};
+    candidate_sets[0] = exhaustiveParallelCandidates(timestamp_us, 0.0, 1.0);
+    candidate_sets[1] = exhaustiveParallelCandidates(timestamp_us, 100.0, 1.0);
+    const std::array<double, 7> accelerations{
+        -10.0, -5.0, -2.0, 0.0, 2.0, 5.0, 10.0};
+    for (std::size_t aircraft = 0; aircraft < 2; ++aircraft) {
+        for (std::size_t candidate = 0; candidate < accelerations.size();
+             ++candidate) {
+            candidate_sets[aircraft][candidate].candidate_input.a_lat_cmd =
+                accelerations[candidate];
+        }
+    }
+    cs::ManeuverRejoinObjective objective;
+    objective.enabled = true;
+    objective.nominal_lateral_acceleration_mps2[0] = -4.9;
+    objective.nominal_lateral_acceleration_mps2[1] = 2.1;
+
+    cs::ExhaustiveManeuverCombinationEvaluator evaluator;
+    cs::ExhaustiveManeuverEvaluation evaluation;
+    ASSERT_TRUE(evaluator.evaluate(
+        timestamp_us, candidate_sets, 2U, evaluation, &objective));
+    ASSERT_TRUE(evaluation.best_combination.all_pairs_feasible);
+    EXPECT_EQ(evaluation.best_combination.candidate_slots[0], 1U);
+    EXPECT_EQ(evaluation.best_combination.candidate_slots[1], 4U);
+    EXPECT_NEAR(
+        evaluation.best_combination.nominal_rejoin_cost, 0.02, 1.0e-12);
 }
 
 TEST(ExhaustiveManeuverCombinationEvaluator, EvaluatesAllFiveAircraftCombinations)
@@ -736,6 +778,9 @@ TEST(ExhaustiveManeuverCombinationEvaluator, EvaluatesAllFiveAircraftCombination
         evaluation));
     EXPECT_EQ(evaluation.combination_count, 16'807U);
     EXPECT_EQ(evaluation.evaluated_unique_pair_count, 490U);
+    EXPECT_EQ(evaluation.valid_combination_count, 16'807U);
+    EXPECT_GT(evaluation.safe_combination_count, 0U);
+    EXPECT_GT(evaluation.maximum_minimum_ad_m, 0.0);
     ASSERT_TRUE(evaluation.has_best);
     EXPECT_TRUE(evaluation.best_combination.valid);
     EXPECT_TRUE(evaluation.best_combination.all_pairs_feasible);

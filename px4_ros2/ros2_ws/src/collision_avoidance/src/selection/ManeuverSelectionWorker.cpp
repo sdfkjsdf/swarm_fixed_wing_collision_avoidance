@@ -41,6 +41,28 @@ bool finitePositive(double value) noexcept
     return std::isfinite(value) && value > 0.0;
 }
 
+bool nominalPredictInput(
+    const ManeuverSelectionNominalSetpointSnapshot & snapshot,
+    std::uint64_t now_us,
+    std::uint64_t maximum_age_us,
+    estimation::PredictInput & input) noexcept
+{
+    if (!snapshot.valid || snapshot.timestamp_us == 0
+        || snapshot.timestamp_us > now_us
+        || now_us - snapshot.timestamp_us > maximum_age_us
+        || !finitePositive(snapshot.ground_speed_command_mps)
+        || (!std::isfinite(snapshot.altitude_command_m)
+            && !std::isnan(snapshot.altitude_command_m))
+        || !std::isfinite(snapshot.lateral_acceleration_px4_mps2)) {
+        return false;
+    }
+    input.V_cmd = snapshot.ground_speed_command_mps;
+    input.h_cmd = snapshot.altitude_command_m;
+    input.h_dot_cmd = 0.0;
+    input.a_lat_cmd = snapshot.lateral_acceleration_px4_mps2;
+    return true;
+}
+
 bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
 {
     const bool v4_execution_policy =
@@ -1774,6 +1796,34 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
         std::numeric_limits<double>::quiet_NaN();
     decision.switch_proposed_minimum_ad_m =
         std::numeric_limits<double>::quiet_NaN();
+    decision.evaluated_combination_count = 0;
+    decision.evaluated_valid_combination_count = 0;
+    decision.evaluated_safe_combination_count = 0;
+    decision.maximum_evaluated_minimum_ad_m =
+        std::numeric_limits<double>::quiet_NaN();
+    decision.selected_combination_safe = false;
+    estimation::PredictInput nominal_input{};
+    decision.nominal_setpoint_available = m_has_latest_nominal
+        && nominalPredictInput(
+            m_latest_nominal,
+            now_us,
+            m_params.v4_maximum_nominal_age_us,
+            nominal_input);
+    decision.nominal_setpoint_timestamp_us = m_has_latest_nominal
+        ? m_latest_nominal.timestamp_us : 0;
+    decision.nominal_ground_speed_command_mps =
+        decision.nominal_setpoint_available
+        ? nominal_input.V_cmd : std::numeric_limits<double>::quiet_NaN();
+    decision.nominal_altitude_command_m =
+        decision.nominal_setpoint_available
+        ? nominal_input.h_cmd : std::numeric_limits<double>::quiet_NaN();
+    decision.nominal_lateral_acceleration_mps2 =
+        decision.nominal_setpoint_available
+        ? nominal_input.a_lat_cmd : std::numeric_limits<double>::quiet_NaN();
+    decision.safe_rejoin_active = m_safe_rejoin_active;
+    decision.safe_rejoin_objective_applied = false;
+    decision.selected_nominal_rejoin_cost =
+        std::numeric_limits<double>::quiet_NaN();
     decision.new_best_accepted = false;
     decision.previous_best_retained = true;
     decision.coordination_qualified = m_has_selected_combination;
@@ -1864,9 +1914,20 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
     if (all_candidate_sets_complete
         && constrainV4ActiveAircraftCandidates(
             candidate_sets, candidate_counts)) {
+        ManeuverRejoinObjective rejoin_objective;
+        const ManeuverRejoinObjective * rejoin_objective_ptr = nullptr;
+        if (m_safe_rejoin_active
+            && buildManeuverRejoinObjective(now_us, rejoin_objective)) {
+            rejoin_objective_ptr = &rejoin_objective;
+            decision.safe_rejoin_objective_applied = true;
+        }
         JointCombinationEvaluation best{};
         std::size_t best_combination_index = 0;
         std::size_t combination_count = 0;
+        std::size_t valid_combination_count = 0;
+        std::size_t safe_combination_count = 0;
+        double maximum_minimum_ad_m =
+            std::numeric_limits<double>::quiet_NaN();
         bool evaluated = false;
         if (m_params.exhaustive_test_mode) {
             ExhaustiveManeuverEvaluation evaluation;
@@ -1874,11 +1935,15 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                 now_us,
                 candidate_sets,
                 static_cast<std::size_t>(m_params.total_agent_count),
-                evaluation);
+                evaluation,
+                rejoin_objective_ptr);
+            combination_count = evaluation.combination_count;
+            valid_combination_count = evaluation.valid_combination_count;
+            safe_combination_count = evaluation.safe_combination_count;
+            maximum_minimum_ad_m = evaluation.maximum_minimum_ad_m;
             if (evaluated) {
                 best = evaluation.best_combination;
                 best_combination_index = evaluation.best_combination_index;
-                combination_count = evaluation.combination_count;
             }
         } else {
             MultiAircraftCandidateIntentSets reduced_candidate_sets{};
@@ -1903,15 +1968,25 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                 reduced_candidate_sets,
                 candidate_counts,
                 static_cast<std::size_t>(m_params.total_agent_count),
-                evaluation);
+                evaluation,
+                rejoin_objective_ptr);
+            combination_count = evaluation.combination_count;
+            valid_combination_count = evaluation.valid_combination_count;
+            safe_combination_count = evaluation.safe_combination_count;
+            maximum_minimum_ad_m = evaluation.maximum_minimum_ad_m;
             if (evaluated) {
                 best = evaluation.combinations[
                     evaluation.best_combination_index];
                 best_combination_index = evaluation.best_combination_index;
-                combination_count = evaluation.combination_count;
             }
         }
+        decision.evaluated_combination_count = combination_count;
+        decision.evaluated_valid_combination_count = valid_combination_count;
+        decision.evaluated_safe_combination_count = safe_combination_count;
+        decision.maximum_evaluated_minimum_ad_m = maximum_minimum_ad_m;
         if (evaluated) {
+            decision.selected_nominal_rejoin_cost =
+                best.nominal_rejoin_cost;
             std::array<std::uint8_t, kMaximumSelectionAircraft>
                 proposed_candidate_ids = m_selected_candidate_ids;
             std::array<std::uint64_t, kMaximumSelectionAircraft>
@@ -1940,23 +2015,87 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                     proposed_candidate_ids,
                     proposed_candidate_input_revisions);
             JointCombinationEvaluation current_evaluation{};
-            const bool current_evaluation_valid = active_command_change
-                && evaluateSelectedTuple(
-                    now_us,
-                    candidate_sets,
-                    candidate_counts,
-                    current_evaluation);
+            std::array<std::uint8_t, kMaximumSelectionAircraft>
+                incumbent_candidate_ids{};
+            const bool common_incumbent_available =
+                m_params.execution_policy
+                        != ManeuverExecutionPolicy::AmacAdThreshold
+                    || buildCommonIncumbentCandidateIds(
+                        incumbent_candidate_ids);
+            const bool current_evaluation_available = active_command_change
+                && common_incumbent_available
+                && (m_params.execution_policy
+                            == ManeuverExecutionPolicy::AmacAdThreshold
+                        ? evaluateCandidateIdTuple(
+                            now_us,
+                            candidate_sets,
+                            candidate_counts,
+                            incumbent_candidate_ids,
+                            current_evaluation)
+                        : evaluateSelectedTuple(
+                            now_us,
+                            candidate_sets,
+                            candidate_counts,
+                            current_evaluation));
+            const bool current_evaluation_valid =
+                current_evaluation_available && current_evaluation.valid;
+            if (current_evaluation_valid
+                && rejoin_objective_ptr != nullptr) {
+                current_evaluation.nominal_rejoin_cost = 0.0;
+                for (int aircraft = 0;
+                     aircraft < m_params.total_agent_count; ++aircraft) {
+                    const std::size_t aircraft_index =
+                        static_cast<std::size_t>(aircraft);
+                    const auto begin = candidate_sets[aircraft_index].begin();
+                    const auto end = begin + static_cast<std::ptrdiff_t>(
+                        candidate_counts[aircraft_index]);
+                    const std::uint8_t selected_id =
+                        m_selected_candidate_ids[aircraft_index];
+                    const auto found = std::find_if(
+                        begin, end, [selected_id](const auto & candidate) {
+                            return candidate.candidate_id == selected_id;
+                        });
+                    if (found == end) {
+                        current_evaluation.nominal_rejoin_cost =
+                            std::numeric_limits<double>::infinity();
+                        break;
+                    }
+                    const double error = found->candidate_input.a_lat_cmd
+                        - rejoin_objective_ptr
+                            ->nominal_lateral_acceleration_mps2[
+                                aircraft_index];
+                    current_evaluation.nominal_rejoin_cost += error * error;
+                }
+            }
             const bool mode_b_role_recertification = active_command_change
                 && m_selected_v4_cutover
                 && m_params.execution_policy
                     == ManeuverExecutionPolicy::ContinuousV4;
+            const bool rejoin_improves = active_command_change
+                && rejoin_objective_ptr != nullptr
+                && best.valid && best.all_pairs_feasible
+                && (!current_evaluation_valid
+                    || !current_evaluation.all_pairs_feasible
+                    || (std::isfinite(best.nominal_rejoin_cost)
+                        && std::isfinite(
+                            current_evaluation.nominal_rejoin_cost)
+                        && best.nominal_rejoin_cost
+                            < current_evaluation.nominal_rejoin_cost
+                                - 1.0e-12));
             const bool superiority_evaluated = active_command_change
-                && (current_evaluation_valid
-                    || mode_b_role_recertification);
+                && (current_evaluation_available
+                    || mode_b_role_recertification
+                    || rejoin_improves);
             const bool clearly_superior = superiority_evaluated
                 && m_params.active_switching_enabled
                 && ((!current_evaluation_valid
+                        && current_evaluation_available
+                        && m_params.execution_policy
+                            == ManeuverExecutionPolicy::AmacAdThreshold
+                        && best.valid)
+                    || (!current_evaluation_valid
                         && mode_b_role_recertification)
+                    || rejoin_improves
                     || clearlySuperior(current_evaluation, best));
             decision.switch_superiority_evaluated = superiority_evaluated;
             decision.switch_clearly_superior = clearly_superior;
@@ -2002,6 +2141,11 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
             m_pending_proposal.clearly_superior = clearly_superior;
             m_pending_proposal.combination_index = best_combination_index;
             m_pending_proposal.combination_count = combination_count;
+            m_pending_proposal.valid_combination_count =
+                valid_combination_count;
+            m_pending_proposal.safe_combination_count =
+                safe_combination_count;
+            m_pending_proposal.maximum_minimum_ad_m = maximum_minimum_ad_m;
             m_pending_proposal.valid = true;
             m_pending_proposal.resolved = false;
 
@@ -2014,6 +2158,12 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                 m_pending_proposal.v4_cutover;
             decision.proposal_valid = true;
             decision.evaluated_combination_count = combination_count;
+            decision.evaluated_valid_combination_count =
+                valid_combination_count;
+            decision.evaluated_safe_combination_count =
+                safe_combination_count;
+            decision.maximum_evaluated_minimum_ad_m = maximum_minimum_ad_m;
+            decision.selected_combination_safe = best.all_pairs_feasible;
         }
     }
 
@@ -2251,6 +2401,56 @@ bool ManeuverSelectionWorker::evaluateSelectedTuple(
         return false;
     }
 
+    return evaluateCandidateIdTuple(
+        evaluation_timestamp_us,
+        candidate_sets,
+        candidate_counts,
+        m_selected_candidate_ids,
+        evaluation);
+}
+
+bool ManeuverSelectionWorker::buildCommonIncumbentCandidateIds(
+    std::array<std::uint8_t, kMaximumSelectionAircraft>
+        & candidate_ids) const noexcept
+{
+    if (!m_has_selected_combination) {
+        return false;
+    }
+
+    candidate_ids = m_selected_candidate_ids;
+    const std::size_t ownship_index = static_cast<std::size_t>(
+        m_params.vehicle_id);
+    const ManeuverActivationStatus ownship_status =
+        m_activation_controller.status();
+    candidate_ids[ownship_index] = ownship_status.active
+        ? ownship_status.latched_candidate_id
+        : m_current_best_id;
+
+    for (int aircraft = 0; aircraft < m_params.total_agent_count; ++aircraft) {
+        if (aircraft == m_params.vehicle_id) {
+            continue;
+        }
+        const std::size_t aircraft_index = static_cast<std::size_t>(aircraft);
+        const RemoteDecisionCache & peer =
+            m_remote_decision_caches[aircraft_index];
+        if (!peer.valid || !peer.decision.coordination_qualified) {
+            return false;
+        }
+        candidate_ids[aircraft_index] = peer.decision.ownship_candidate_id;
+    }
+    return true;
+}
+
+bool ManeuverSelectionWorker::evaluateCandidateIdTuple(
+    std::uint64_t evaluation_timestamp_us,
+    const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
+    const std::array<std::size_t, kMaximumSelectionAircraft>
+        & candidate_counts,
+    const std::array<std::uint8_t, kMaximumSelectionAircraft>
+        & candidate_ids,
+    JointCombinationEvaluation & evaluation) const
+{
+
     // ReceivedTrajectoryIntent contains the full reconstructed cone. Keep the
     // temporary one-candidate-per-aircraft set off the worker thread stack.
     auto selected_sets =
@@ -2261,8 +2461,7 @@ bool ManeuverSelectionWorker::evaluateSelectedTuple(
         const auto begin = candidate_sets[aircraft_index].begin();
         const auto end = begin + static_cast<std::ptrdiff_t>(
             candidate_counts[aircraft_index]);
-        const std::uint8_t selected_id =
-            m_selected_candidate_ids[aircraft_index];
+        const std::uint8_t selected_id = candidate_ids[aircraft_index];
         const auto found = std::find_if(
             begin, end, [selected_id](const auto & candidate) {
                 return candidate.candidate_id == selected_id;
@@ -2275,17 +2474,19 @@ bool ManeuverSelectionWorker::evaluateSelectedTuple(
     }
 
     JointManeuverEvaluation selected_evaluation;
-    if (!m_joint_evaluator.evaluate(
+    static_cast<void>(m_joint_evaluator.evaluate(
             evaluation_timestamp_us,
             *selected_sets,
             selected_counts,
             static_cast<std::size_t>(m_params.total_agent_count),
-            selected_evaluation)) {
+            selected_evaluation));
+    if (selected_evaluation.combination_count != 1) {
         return false;
     }
     evaluation = selected_evaluation.combinations[
-        selected_evaluation.best_combination_index];
-    return evaluation.valid;
+        selected_evaluation.has_best
+            ? selected_evaluation.best_combination_index : 0];
+    return true;
 }
 
 bool ManeuverSelectionWorker::proposalChangesActiveCommand(
@@ -2335,8 +2536,10 @@ bool ManeuverSelectionWorker::proposalChangesActiveCommand(
         }
         if (active
             && (candidate_ids[aircraft_index] != actual_candidate_id
-                || candidate_input_revisions[aircraft_index]
-                    != actual_input_revision)) {
+                || (m_params.execution_policy
+                        != ManeuverExecutionPolicy::AmacAdThreshold
+                    && candidate_input_revisions[aircraft_index]
+                        != actual_input_revision))) {
             return true;
         }
     }
@@ -2407,6 +2610,10 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
     bool all_proposals_match = true;
     auto authoritative_source_timestamps_us =
         m_pending_proposal.candidate_source_timestamps_us;
+    auto authoritative_input_revisions =
+        m_pending_proposal.candidate_input_revisions;
+    const bool require_revision_consensus =
+        m_params.execution_policy != ManeuverExecutionPolicy::AmacAdThreshold;
     for (int aircraft = 0;
          aircraft < m_params.total_agent_count; ++aircraft) {
         if (aircraft == m_params.vehicle_id) {
@@ -2424,10 +2631,14 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
         authoritative_source_timestamps_us[aircraft_index] =
             cache.decision.proposed_candidate_source_timestamps_us[
                 aircraft_index];
+        authoritative_input_revisions[aircraft_index] =
+            cache.decision.proposed_candidate_input_revisions[
+                aircraft_index];
         if (cache.decision.proposed_candidate_ids
                 != m_pending_proposal.candidate_ids
-            || cache.decision.proposed_candidate_input_revisions
-                != m_pending_proposal.candidate_input_revisions
+            || (require_revision_consensus
+                && cache.decision.proposed_candidate_input_revisions
+                    != m_pending_proposal.candidate_input_revisions)
             || cache.decision.proposed_v4_cutover
                 != m_pending_proposal.v4_cutover
             || (!m_pending_proposal.active_command_change
@@ -2435,11 +2646,12 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
                 && (cache.decision.proposed_candidate_ids[
                         static_cast<std::size_t>(aircraft)]
                         != cache.decision.ownship_candidate_id
-                    || cache.decision.proposed_candidate_input_revisions[
-                        static_cast<std::size_t>(aircraft)]
-                        != cache.decision
-                            .selected_candidate_input_revisions[
-                                static_cast<std::size_t>(aircraft)]
+                    || (require_revision_consensus
+                        && cache.decision.proposed_candidate_input_revisions[
+                            static_cast<std::size_t>(aircraft)]
+                            != cache.decision
+                                .selected_candidate_input_revisions[
+                                    static_cast<std::size_t>(aircraft)])
                     || cache.decision.proposed_v4_cutover
                         != cache.decision.selected_v4_cutover))) {
             all_proposals_match = false;
@@ -2494,6 +2706,7 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
         return false;
     }
     if (m_pending_proposal.active_command_change
+        && require_revision_consensus
         && !allProposalParticipantsReady()) {
         decision.coordination_qualified = m_has_selected_combination;
         m_latest_selection_decision = decision;
@@ -2542,8 +2755,7 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
     }
 
     m_selected_candidate_ids = m_pending_proposal.candidate_ids;
-    m_selected_candidate_input_revisions =
-        m_pending_proposal.candidate_input_revisions;
+    m_selected_candidate_input_revisions = authoritative_input_revisions;
     m_selected_candidate_source_timestamps_us =
         authoritative_source_timestamps_us;
     m_selected_v4_cutover = m_pending_proposal.v4_cutover;
@@ -2579,6 +2791,19 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
         m_pending_proposal.combination_index;
     decision.evaluated_combination_count =
         m_pending_proposal.combination_count;
+    decision.evaluated_valid_combination_count =
+        m_pending_proposal.valid_combination_count;
+    decision.evaluated_safe_combination_count =
+        m_pending_proposal.safe_combination_count;
+    decision.maximum_evaluated_minimum_ad_m =
+        m_pending_proposal.maximum_minimum_ad_m;
+    decision.selected_combination_safe =
+        m_pending_proposal.evaluation.all_pairs_feasible;
+    decision.selected_nominal_rejoin_cost =
+        m_pending_proposal.evaluation.nominal_rejoin_cost;
+    decision.safe_rejoin_objective_applied =
+        m_safe_rejoin_active
+        && std::isfinite(decision.selected_nominal_rejoin_cost);
     decision.selected_candidate_ids = m_selected_candidate_ids;
     decision.selected_candidate_input_revisions =
         m_selected_candidate_input_revisions;
@@ -2816,6 +3041,210 @@ bool ManeuverSelectionWorker::buildActivationSample(
     return true;
 }
 
+bool ManeuverSelectionWorker::evaluateNominalPostRelease(
+    std::uint64_t now_us,
+    JointCombinationEvaluation & evaluation)
+{
+    if (!m_has_latest_state || !m_has_latest_nominal) {
+        return false;
+    }
+
+    MultiAircraftCandidateIntentSets candidate_sets{};
+    std::array<std::size_t, kMaximumSelectionAircraft> candidate_counts{};
+    estimation::PredictInput ownship_input{};
+    if (!nominalPredictInput(
+            m_latest_nominal,
+            now_us,
+            m_params.v4_maximum_nominal_age_us,
+            ownship_input)) {
+        return false;
+    }
+
+    const auto build_intent = [this](
+                                  std::uint64_t source_timestamp_us,
+                                  const estimation::PredictInput & input,
+                                  const estimation::PredictState & state,
+                                  const estimation::PredictStateCovariance
+                                      & covariance,
+                                  estimation::ReceivedTrajectoryIntent
+                                      & received) {
+        estimation::TrajectoryIntentPacket packet;
+        if (!m_sender.buildForCandidateInput(
+                source_timestamp_us,
+                kRollZeroId,
+                input,
+                state,
+                covariance,
+                packet,
+                m_selection_epoch)) {
+            return false;
+        }
+        packet.candidate_set_size = 1;
+        packet.candidate_set_kind =
+            estimation::CandidateSetKind::LegacyRoll;
+        return m_receiver.receive(packet, received);
+    };
+
+    const std::size_t ownship_index = static_cast<std::size_t>(
+        m_params.vehicle_id);
+    if (!build_intent(
+            m_latest_state_timestamp_us,
+            ownship_input,
+            m_latest_state,
+            m_latest_covariance,
+            candidate_sets[ownship_index][0])) {
+        return false;
+    }
+    candidate_counts[ownship_index] = 1;
+
+    for (int aircraft = 0;
+         aircraft < m_params.total_agent_count; ++aircraft) {
+        if (aircraft == m_params.vehicle_id) {
+            continue;
+        }
+        const std::size_t aircraft_index = static_cast<std::size_t>(aircraft);
+        const RemoteDecisionCache & decision_cache =
+            m_remote_decision_caches[aircraft_index];
+        if (!decision_cache.valid) {
+            return false;
+        }
+        const ManeuverSelectionPeerDecision & peer = decision_cache.decision;
+        ManeuverSelectionNominalSetpointSnapshot peer_nominal;
+        peer_nominal.timestamp_us = peer.nominal_setpoint_timestamp_us;
+        peer_nominal.ground_speed_command_mps =
+            peer.nominal_ground_speed_command_mps;
+        peer_nominal.altitude_command_m = peer.nominal_altitude_command_m;
+        peer_nominal.lateral_acceleration_px4_mps2 =
+            peer.nominal_lateral_acceleration_mps2;
+        peer_nominal.valid = peer.nominal_setpoint_available;
+        estimation::PredictInput peer_input{};
+        if (!nominalPredictInput(
+                peer_nominal,
+                now_us,
+                m_params.v4_maximum_nominal_age_us,
+                peer_input)) {
+            return false;
+        }
+
+        const estimation::ReceivedTrajectoryIntent * anchor = nullptr;
+        const auto consider_cache = [&anchor](const RemoteCandidateCache & cache) {
+            if (cache.count == 0 || cache.count != cache.expected_count) {
+                return;
+            }
+            for (std::size_t index = 0; index < cache.count; ++index) {
+                const auto & candidate = cache.candidates[index];
+                if (anchor == nullptr
+                    || candidate.source_timestamp_us
+                        > anchor->source_timestamp_us) {
+                    anchor = &candidate;
+                }
+            }
+        };
+        consider_cache(m_remote_caches[aircraft_index]);
+        consider_cache(m_remote_previous_caches[aircraft_index]);
+        if (anchor == nullptr
+            || !build_intent(
+                anchor->source_timestamp_us,
+                peer_input,
+                anchor->cone[0].mean,
+                anchor->cone[0].state_covariance,
+                candidate_sets[aircraft_index][0])) {
+            return false;
+        }
+        candidate_counts[aircraft_index] = 1;
+    }
+
+    JointManeuverEvaluation nominal_evaluation;
+    if (!m_joint_evaluator.evaluate(
+            now_us,
+            candidate_sets,
+            candidate_counts,
+            static_cast<std::size_t>(m_params.total_agent_count),
+            nominal_evaluation)
+        || !nominal_evaluation.has_best) {
+        return false;
+    }
+    evaluation = nominal_evaluation.combinations[
+        nominal_evaluation.best_combination_index];
+    return evaluation.valid;
+}
+
+bool ManeuverSelectionWorker::buildManeuverRejoinObjective(
+    std::uint64_t now_us,
+    ManeuverRejoinObjective & objective) const noexcept
+{
+    ManeuverRejoinObjective candidate{};
+    estimation::PredictInput input{};
+    if (!m_has_latest_nominal
+        || !nominalPredictInput(
+            m_latest_nominal,
+            now_us,
+            m_params.v4_maximum_nominal_age_us,
+            input)) {
+        return false;
+    }
+    candidate.nominal_lateral_acceleration_mps2[
+        static_cast<std::size_t>(m_params.vehicle_id)] = input.a_lat_cmd;
+
+    for (int aircraft = 0;
+         aircraft < m_params.total_agent_count; ++aircraft) {
+        if (aircraft == m_params.vehicle_id) {
+            continue;
+        }
+        const RemoteDecisionCache & cache = m_remote_decision_caches[
+            static_cast<std::size_t>(aircraft)];
+        if (!cache.valid) {
+            return false;
+        }
+        ManeuverSelectionNominalSetpointSnapshot peer_nominal;
+        peer_nominal.timestamp_us =
+            cache.decision.nominal_setpoint_timestamp_us;
+        peer_nominal.ground_speed_command_mps =
+            cache.decision.nominal_ground_speed_command_mps;
+        peer_nominal.altitude_command_m =
+            cache.decision.nominal_altitude_command_m;
+        peer_nominal.lateral_acceleration_px4_mps2 =
+            cache.decision.nominal_lateral_acceleration_mps2;
+        peer_nominal.valid = cache.decision.nominal_setpoint_available;
+        if (!nominalPredictInput(
+                peer_nominal,
+                now_us,
+                m_params.v4_maximum_nominal_age_us,
+                input)) {
+            return false;
+        }
+        candidate.nominal_lateral_acceleration_mps2[
+            static_cast<std::size_t>(aircraft)] = input.a_lat_cmd;
+    }
+    candidate.enabled = true;
+    objective = candidate;
+    return true;
+}
+
+bool ManeuverSelectionWorker::allPeersConfirmPostRelease(
+    std::uint64_t now_us) const noexcept
+{
+    for (int aircraft = 0;
+         aircraft < m_params.total_agent_count; ++aircraft) {
+        if (aircraft == m_params.vehicle_id) {
+            continue;
+        }
+        const RemoteDecisionCache & cache = m_remote_decision_caches[
+            static_cast<std::size_t>(aircraft)];
+        if (!cache.valid || !cache.decision.post_release_evaluated
+            || !cache.decision.post_release_safe
+            || cache.decision.post_release_evaluation_timestamp_us == 0
+            || cache.decision.post_release_evaluation_timestamp_us > now_us
+            || now_us - cache.decision.post_release_evaluation_timestamp_us
+                > m_params.maximum_belief_delay_us
+            || cache.decision.local_selection_epoch
+                != m_latest_selection_decision.local_selection_epoch) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void ManeuverSelectionWorker::applyFormationActivationGate(
     const std::uint64_t now_us,
     ManeuverActivationSample & sample,
@@ -3007,11 +3436,75 @@ void ManeuverSelectionWorker::updateActivationState(
     decision.activation_just_started = false;
     decision.activation_just_ended = false;
     decision.deactivation_reason = ManeuverDeactivationReason::None;
+    estimation::PredictInput nominal_input{};
+    decision.nominal_setpoint_available = m_has_latest_nominal
+        && nominalPredictInput(
+            m_latest_nominal,
+            now_us,
+            m_params.v4_maximum_nominal_age_us,
+            nominal_input);
+    decision.nominal_setpoint_timestamp_us = m_has_latest_nominal
+        ? m_latest_nominal.timestamp_us : 0;
+    decision.nominal_ground_speed_command_mps =
+        decision.nominal_setpoint_available
+        ? nominal_input.V_cmd : std::numeric_limits<double>::quiet_NaN();
+    decision.nominal_altitude_command_m =
+        decision.nominal_setpoint_available
+        ? nominal_input.h_cmd : std::numeric_limits<double>::quiet_NaN();
+    decision.nominal_lateral_acceleration_mps2 =
+        decision.nominal_setpoint_available
+        ? nominal_input.a_lat_cmd : std::numeric_limits<double>::quiet_NaN();
+    decision.cpa_clear = false;
+    const bool retained_post_release_evaluation =
+        m_has_last_post_release_evaluation
+        && m_last_post_release_evaluation_timestamp_us <= now_us
+        && now_us - m_last_post_release_evaluation_timestamp_us
+            <= m_params.maximum_belief_delay_us;
+    decision.post_release_evaluated = retained_post_release_evaluation;
+    decision.post_release_safe = retained_post_release_evaluation
+        && m_last_post_release_evaluation.all_pairs_feasible;
+    decision.post_release_minimum_ad_m = retained_post_release_evaluation
+        ? m_last_post_release_evaluation.minimum_ad_m
+        : std::numeric_limits<double>::quiet_NaN();
+    decision.post_release_evaluation_timestamp_us =
+        retained_post_release_evaluation
+        ? m_last_post_release_evaluation_timestamp_us : 0;
+    decision.post_release_peer_confirmed = false;
 
     ManeuverActivationSample sample;
     const bool sample_valid = buildActivationSample(now_us, sample, decision);
     sample.valid = sample_valid;
     applyFormationActivationGate(now_us, sample, decision);
+    JointCombinationEvaluation post_release_evaluation;
+    if (evaluateNominalPostRelease(now_us, post_release_evaluation)) {
+        m_last_post_release_evaluation = post_release_evaluation;
+        m_last_post_release_evaluation_timestamp_us = now_us;
+        m_has_last_post_release_evaluation = true;
+        decision.post_release_evaluated = true;
+        decision.post_release_safe =
+            post_release_evaluation.all_pairs_feasible;
+        decision.post_release_minimum_ad_m =
+            post_release_evaluation.minimum_ad_m;
+        decision.post_release_evaluation_timestamp_us = now_us;
+    }
+    const ManeuverActivationStatus previous_status =
+        m_activation_controller.status();
+    if (previous_status.active && sample.valid) {
+        decision.cpa_clear = m_activation_controller.futureCpaClear(sample);
+    }
+    if (previous_status.active && decision.cpa_clear) {
+        decision.post_release_peer_confirmed =
+            decision.post_release_safe
+            && std::isfinite(sample.minimum_ad_m)
+            && sample.minimum_ad_m >= 0.0
+            && allPeersConfirmPostRelease(now_us);
+        sample.allow_deactivation =
+            decision.post_release_peer_confirmed;
+        m_safe_rejoin_active = !sample.allow_deactivation;
+    } else {
+        sample.allow_deactivation = true;
+        m_safe_rejoin_active = false;
+    }
     const ManeuverActivationStatus status =
         m_activation_controller.update(sample);
     decision.activation_requested = status.active;
@@ -3019,6 +3512,10 @@ void ManeuverSelectionWorker::updateActivationState(
     decision.activation_just_ended = status.just_deactivated;
     decision.activation_timestamp_us = status.activation_timestamp_us;
     decision.deactivation_reason = status.deactivation_reason;
+    if (!status.active) {
+        m_safe_rejoin_active = false;
+    }
+    decision.safe_rejoin_active = m_safe_rejoin_active;
     if (status.active) {
         decision.ownship_candidate_id = status.latched_candidate_id;
         decision.ownship_input = status.latched_input;

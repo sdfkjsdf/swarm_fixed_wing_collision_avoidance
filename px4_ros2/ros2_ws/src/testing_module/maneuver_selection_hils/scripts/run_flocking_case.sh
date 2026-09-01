@@ -9,6 +9,12 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # flocking HILS case. Point-convergence/crossing runs keep their own policy.
 AMAC_POLICY_CONFIG=${AMAC_POLICY_CONFIG:-${SCRIPT_DIR}/../config/amac_flocking_formation.yaml}
 export AMAC_POLICY_CONFIG
+# The shared point-convergence runner historically enabled the experimental
+# positive-margin filter for every shadow run through a later CLI override.
+# Keep the Lockheed/AMAC flocking comparison AD-only unless explicitly
+# overridden by the caller.
+POSITIVE_MARGIN_FILTER_ENABLED=${POSITIVE_MARGIN_FILTER_ENABLED:-false}
+export POSITIVE_MARGIN_FILTER_ENABLED
 FLOCKING_LAYOUT=${FLOCKING_LAYOUT:-line}
 if [[ "${FLOCKING_LAYOUT}" == "line" ]]; then
     export TRAFFIC_PATTERN=flocking

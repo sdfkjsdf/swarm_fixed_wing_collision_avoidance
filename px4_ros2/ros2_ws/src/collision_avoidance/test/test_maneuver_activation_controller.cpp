@@ -81,6 +81,26 @@ TEST(ManeuverActivationController, DeactivatesWhenFutureCpaIsClear)
         cs::ManeuverDeactivationReason::FutureCpaClear);
 }
 
+TEST(ManeuverActivationController,
+    PostReleaseGateCanHoldACommandAfterCpaIsClear)
+{
+    cs::ManeuverActivationController controller;
+    ASSERT_TRUE(controller.update(sample(2'000'000, -1.0, 5.0, -1.0)).active);
+
+    auto blocked = sample(2'100'000, 1.0, 20.0, 1.0);
+    blocked.allow_deactivation = false;
+    const auto held = controller.update(blocked);
+    EXPECT_TRUE(held.active);
+    EXPECT_FALSE(held.just_deactivated);
+    EXPECT_TRUE(controller.futureCpaClear(blocked));
+
+    auto released = sample(2'200'000, 1.0, 20.0, 1.0);
+    released.allow_deactivation = true;
+    const auto ended = controller.update(released);
+    EXPECT_FALSE(ended.active);
+    EXPECT_TRUE(ended.just_deactivated);
+}
+
 TEST(ManeuverActivationController, FormationInhibitBlocksOnlyNewActivation)
 {
     cs::ManeuverActivationController controller;

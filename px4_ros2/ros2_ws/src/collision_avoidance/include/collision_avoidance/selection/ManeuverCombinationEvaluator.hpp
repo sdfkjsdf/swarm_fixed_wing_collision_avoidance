@@ -162,7 +162,16 @@ struct JointCombinationEvaluation
     double minimum_masd_m{std::numeric_limits<double>::quiet_NaN()};
     double minimum_ad_m{std::numeric_limits<double>::quiet_NaN()};
     double reciprocal_cost_sum{std::numeric_limits<double>::quiet_NaN()};
+    double nominal_rejoin_cost{
+        std::numeric_limits<double>::quiet_NaN()};
     bool selected_best{false};
+};
+
+struct ManeuverRejoinObjective
+{
+    bool enabled{false};
+    std::array<double, kMaximumSelectionAircraft>
+        nominal_lateral_acceleration_mps2{};
 };
 
 class PositiveMarginBarrierEvaluator
@@ -193,6 +202,10 @@ struct JointManeuverEvaluation
     std::uint64_t evaluation_timestamp_us{0};
     std::size_t aircraft_count{0};
     std::size_t combination_count{0};
+    std::size_t valid_combination_count{0};
+    std::size_t safe_combination_count{0};
+    double maximum_minimum_ad_m{
+        std::numeric_limits<double>::quiet_NaN()};
     std::array<JointCombinationEvaluation, kMaximumJointCombinationCount>
         combinations{};
     bool has_best{false};
@@ -208,6 +221,10 @@ struct ExhaustiveManeuverEvaluation
     std::size_t aircraft_count{0};
     std::size_t combination_count{0};
     std::size_t evaluated_unique_pair_count{0};
+    std::size_t valid_combination_count{0};
+    std::size_t safe_combination_count{0};
+    double maximum_minimum_ad_m{
+        std::numeric_limits<double>::quiet_NaN()};
     bool has_best{false};
     std::size_t best_combination_index{0};
     JointCombinationEvaluation best_combination{};
@@ -250,7 +267,8 @@ public:
         std::uint64_t evaluation_timestamp_us,
         const MultiAircraftCandidateIntentSets & candidate_sets,
         std::size_t aircraft_count,
-        JointManeuverEvaluation & evaluation) const;
+        JointManeuverEvaluation & evaluation,
+        const ManeuverRejoinObjective * rejoin_objective = nullptr) const;
 
     bool evaluate(
         std::uint64_t evaluation_timestamp_us,
@@ -258,7 +276,8 @@ public:
         const std::array<std::size_t, kMaximumSelectionAircraft>
             & candidate_counts,
         std::size_t aircraft_count,
-        JointManeuverEvaluation & evaluation) const;
+        JointManeuverEvaluation & evaluation,
+        const ManeuverRejoinObjective * rejoin_objective = nullptr) const;
 
 private:
     ManeuverCombinationEvaluator m_pair_evaluator;
@@ -277,7 +296,8 @@ public:
         std::uint64_t evaluation_timestamp_us,
         const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
         std::size_t aircraft_count,
-        ExhaustiveManeuverEvaluation & evaluation) const;
+        ExhaustiveManeuverEvaluation & evaluation,
+        const ManeuverRejoinObjective * rejoin_objective = nullptr) const;
 
 private:
     ManeuverCombinationEvaluator m_pair_evaluator;

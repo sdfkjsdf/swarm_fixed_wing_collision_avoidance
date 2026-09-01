@@ -37,7 +37,9 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>(
         "amac_active_switch_minimum_ad_margin_m", 0.0);
     node->declare_parameter<double>("aircraft_half_wingspan", 1.072);
-    node->declare_parameter<bool>("positive_margin_filter_enabled", true);
+    // AMAC/Lockheed selection is AD-ranked. The positive-margin filter is a
+    // separate CBF experiment and must be explicitly enabled by its profile.
+    node->declare_parameter<bool>("positive_margin_filter_enabled", false);
     node->declare_parameter<double>("positive_margin_gamma", 0.02);
     node->declare_parameter<bool>(
         "maneuver_selection_exhaustive_test_mode", false);

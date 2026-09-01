@@ -91,13 +91,20 @@ Generated artifacts are grouped by run ID:
 - `result/summary/<run_id>/summary.json`
 - `result/summary/<run_id>/separation_history.csv`
 - `result/plot/<run_id>/actual_maneuver_overview.png`
-- `result/video/<run_id>/actual_maneuver.mp4`
+- `result/video/<run_id>/actual_maneuver.mp4` (opt-in only)
 
 To rebuild the plot and video without rerunning Gazebo:
 
 ```bash
 scripts/process_point_convergence_bag.sh <run_id>
+
+# Generate the MP4 only after explicitly requesting it.
+GENERATE_VIDEO=true scripts/process_point_convergence_bag.sh <run_id>
 ```
+
+PNG/CSV/JSON generation is the development default. MP4 rendering is disabled
+unless `GENERATE_VIDEO=true` is set, because long scenarios otherwise spend
+most of their post-processing time encoding frames.
 
 HILS validation publishes all seven lateral candidates per aircraft and
 evaluates all `7^5 = 16,807` combinations by default. Pair trajectory

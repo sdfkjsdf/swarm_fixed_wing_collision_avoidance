@@ -29,7 +29,7 @@ ManeuverActivationStatus ManeuverActivationController::update(
             addNewAffectedThreats(sample);
         }
         const bool future_cpa_clear = sample.valid && futureCpaClear(sample);
-        if (future_cpa_clear) {
+        if (future_cpa_clear && sample.allow_deactivation) {
             m_status.active = false;
             m_status.just_deactivated = true;
             m_status.deactivation_reason =

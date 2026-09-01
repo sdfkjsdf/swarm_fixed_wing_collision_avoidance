@@ -1220,7 +1220,8 @@ bool JointManeuverCombinationEvaluator::evaluate(
     std::uint64_t evaluation_timestamp_us,
     const MultiAircraftCandidateIntentSets & candidate_sets,
     std::size_t aircraft_count,
-    JointManeuverEvaluation & evaluation) const
+    JointManeuverEvaluation & evaluation,
+    const ManeuverRejoinObjective * rejoin_objective) const
 {
     std::array<std::size_t, kMaximumSelectionAircraft> candidate_counts{};
     candidate_counts.fill(kCandidatesPerAircraft);
@@ -1229,7 +1230,8 @@ bool JointManeuverCombinationEvaluator::evaluate(
         candidate_sets,
         candidate_counts,
         aircraft_count,
-        evaluation);
+        evaluation,
+        rejoin_objective);
 }
 
 bool JointManeuverCombinationEvaluator::evaluate(
@@ -1238,7 +1240,8 @@ bool JointManeuverCombinationEvaluator::evaluate(
     const std::array<std::size_t, kMaximumSelectionAircraft>
         & candidate_counts,
     std::size_t aircraft_count,
-    JointManeuverEvaluation & evaluation) const
+    JointManeuverEvaluation & evaluation,
+    const ManeuverRejoinObjective * rejoin_objective) const
 {
     JointManeuverEvaluation candidate_evaluation{};
     candidate_evaluation.evaluation_timestamp_us = evaluation_timestamp_us;
@@ -1275,6 +1278,7 @@ bool JointManeuverCombinationEvaluator::evaluate(
 
     bool has_safe_combination = false;
     double best_safe_cost = std::numeric_limits<double>::infinity();
+    double best_safe_rejoin_cost = std::numeric_limits<double>::infinity();
     double best_unsafe_minimum_ad = -std::numeric_limits<double>::infinity();
     constexpr double comparison_tolerance = 1.0e-12;
 
@@ -1404,14 +1408,55 @@ bool JointManeuverCombinationEvaluator::evaluate(
             continue;
         }
 
+        ++candidate_evaluation.valid_combination_count;
+        if (!std::isfinite(candidate_evaluation.maximum_minimum_ad_m)
+            || combination.minimum_ad_m
+                > candidate_evaluation.maximum_minimum_ad_m) {
+            candidate_evaluation.maximum_minimum_ad_m =
+                combination.minimum_ad_m;
+        }
+        if (combination.all_pairs_feasible) {
+            ++candidate_evaluation.safe_combination_count;
+        }
+        const bool use_rejoin_objective = rejoin_objective != nullptr
+            && rejoin_objective->enabled;
+        if (use_rejoin_objective) {
+            combination.nominal_rejoin_cost = 0.0;
+            for (std::size_t aircraft = 0;
+                 aircraft < aircraft_count; ++aircraft) {
+                const double nominal = rejoin_objective
+                    ->nominal_lateral_acceleration_mps2[aircraft];
+                const double candidate = candidate_sets[aircraft][
+                    combination.candidate_slots[aircraft]]
+                        .candidate_input.a_lat_cmd;
+                if (!std::isfinite(nominal) || !std::isfinite(candidate)) {
+                    combination.nominal_rejoin_cost =
+                        std::numeric_limits<double>::infinity();
+                    break;
+                }
+                const double error = candidate - nominal;
+                combination.nominal_rejoin_cost += error * error;
+            }
+        }
+
         bool select = false;
         if (combination.all_pairs_feasible) {
+            const bool lower_rejoin_cost = use_rejoin_objective
+                && combination.nominal_rejoin_cost
+                    < best_safe_rejoin_cost - comparison_tolerance;
+            const bool tied_rejoin_cost = use_rejoin_objective
+                && std::abs(
+                    combination.nominal_rejoin_cost
+                    - best_safe_rejoin_cost) <= comparison_tolerance;
             if (!has_safe_combination
-                || combination.reciprocal_cost_sum
-                    < best_safe_cost - comparison_tolerance) {
+                || lower_rejoin_cost
+                || ((!use_rejoin_objective || tied_rejoin_cost)
+                    && combination.reciprocal_cost_sum
+                        < best_safe_cost - comparison_tolerance)) {
                 select = true;
                 has_safe_combination = true;
                 best_safe_cost = combination.reciprocal_cost_sum;
+                best_safe_rejoin_cost = combination.nominal_rejoin_cost;
             }
         } else if (!has_safe_combination
             && (!candidate_evaluation.has_best
@@ -1450,7 +1495,8 @@ bool ExhaustiveManeuverCombinationEvaluator::evaluate(
     std::uint64_t evaluation_timestamp_us,
     const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
     std::size_t aircraft_count,
-    ExhaustiveManeuverEvaluation & evaluation) const
+    ExhaustiveManeuverEvaluation & evaluation,
+    const ManeuverRejoinObjective * rejoin_objective) const
 {
     ExhaustiveManeuverEvaluation candidate_evaluation{};
     candidate_evaluation.evaluation_timestamp_us = evaluation_timestamp_us;
@@ -1481,6 +1527,7 @@ bool ExhaustiveManeuverCombinationEvaluator::evaluate(
 
     bool has_safe_combination = false;
     double best_safe_cost = std::numeric_limits<double>::infinity();
+    double best_safe_rejoin_cost = std::numeric_limits<double>::infinity();
     double best_unsafe_minimum_ad = -std::numeric_limits<double>::infinity();
     constexpr double comparison_tolerance = 1.0e-12;
 
@@ -1612,14 +1659,55 @@ bool ExhaustiveManeuverCombinationEvaluator::evaluate(
             continue;
         }
 
+        ++candidate_evaluation.valid_combination_count;
+        if (!std::isfinite(candidate_evaluation.maximum_minimum_ad_m)
+            || combination.minimum_ad_m
+                > candidate_evaluation.maximum_minimum_ad_m) {
+            candidate_evaluation.maximum_minimum_ad_m =
+                combination.minimum_ad_m;
+        }
+        if (combination.all_pairs_feasible) {
+            ++candidate_evaluation.safe_combination_count;
+        }
+        const bool use_rejoin_objective = rejoin_objective != nullptr
+            && rejoin_objective->enabled;
+        if (use_rejoin_objective) {
+            combination.nominal_rejoin_cost = 0.0;
+            for (std::size_t aircraft = 0;
+                 aircraft < aircraft_count; ++aircraft) {
+                const double nominal = rejoin_objective
+                    ->nominal_lateral_acceleration_mps2[aircraft];
+                const double candidate = candidate_sets[aircraft][
+                    combination.candidate_slots[aircraft]]
+                        .candidate_input.a_lat_cmd;
+                if (!std::isfinite(nominal) || !std::isfinite(candidate)) {
+                    combination.nominal_rejoin_cost =
+                        std::numeric_limits<double>::infinity();
+                    break;
+                }
+                const double error = candidate - nominal;
+                combination.nominal_rejoin_cost += error * error;
+            }
+        }
+
         bool select = false;
         if (combination.all_pairs_feasible) {
+            const bool lower_rejoin_cost = use_rejoin_objective
+                && combination.nominal_rejoin_cost
+                    < best_safe_rejoin_cost - comparison_tolerance;
+            const bool tied_rejoin_cost = use_rejoin_objective
+                && std::abs(
+                    combination.nominal_rejoin_cost
+                    - best_safe_rejoin_cost) <= comparison_tolerance;
             if (!has_safe_combination
-                || combination.reciprocal_cost_sum
-                    < best_safe_cost - comparison_tolerance) {
+                || lower_rejoin_cost
+                || ((!use_rejoin_objective || tied_rejoin_cost)
+                    && combination.reciprocal_cost_sum
+                        < best_safe_cost - comparison_tolerance)) {
                 select = true;
                 has_safe_combination = true;
                 best_safe_cost = combination.reciprocal_cost_sum;
+                best_safe_rejoin_cost = combination.nominal_rejoin_cost;
             }
         } else if (!has_safe_combination
             && (!candidate_evaluation.has_best

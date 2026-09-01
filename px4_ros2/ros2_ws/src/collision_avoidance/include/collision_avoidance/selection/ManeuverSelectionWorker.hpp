@@ -163,6 +163,30 @@ struct ManeuverSelectionDecision
         selection_epochs_by_aircraft{};
     std::size_t selected_combination_index{0};
     std::size_t evaluated_combination_count{0};
+    std::size_t evaluated_valid_combination_count{0};
+    std::size_t evaluated_safe_combination_count{0};
+    double maximum_evaluated_minimum_ad_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    bool selected_combination_safe{false};
+    bool nominal_setpoint_available{false};
+    std::uint64_t nominal_setpoint_timestamp_us{0};
+    double nominal_ground_speed_command_mps{
+        std::numeric_limits<double>::quiet_NaN()};
+    double nominal_altitude_command_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    double nominal_lateral_acceleration_mps2{
+        std::numeric_limits<double>::quiet_NaN()};
+    bool cpa_clear{false};
+    bool post_release_evaluated{false};
+    bool post_release_safe{false};
+    double post_release_minimum_ad_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    std::uint64_t post_release_evaluation_timestamp_us{0};
+    bool post_release_peer_confirmed{false};
+    bool safe_rejoin_active{false};
+    bool safe_rejoin_objective_applied{false};
+    double selected_nominal_rejoin_cost{
+        std::numeric_limits<double>::quiet_NaN()};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         selected_candidate_ids{};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
@@ -313,6 +337,17 @@ struct ManeuverSelectionPeerDecision
     bool coordination_qualified{false};
     bool activation_requested{false};
     bool command_execution_requested{false};
+    bool nominal_setpoint_available{false};
+    std::uint64_t nominal_setpoint_timestamp_us{0};
+    double nominal_ground_speed_command_mps{
+        std::numeric_limits<double>::quiet_NaN()};
+    double nominal_altitude_command_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    double nominal_lateral_acceleration_mps2{
+        std::numeric_limits<double>::quiet_NaN()};
+    bool post_release_evaluated{false};
+    bool post_release_safe{false};
+    std::uint64_t post_release_evaluation_timestamp_us{0};
     bool v4_horizon_local_gate_active{false};
     V4ControlArchitecture v4_control_architecture{
         V4ControlArchitecture::LegacySafeControlSet};
@@ -531,6 +566,10 @@ private:
         bool clearly_superior{false};
         std::size_t combination_index{0};
         std::size_t combination_count{0};
+        std::size_t valid_combination_count{0};
+        std::size_t safe_combination_count{0};
+        double maximum_minimum_ad_m{
+            std::numeric_limits<double>::quiet_NaN()};
         std::uint64_t last_readiness_publish_timestamp_us{0};
         bool valid{false};
         bool resolved{false};
@@ -585,6 +624,17 @@ private:
         const std::array<std::size_t, kMaximumSelectionAircraft>
             & candidate_counts,
         JointCombinationEvaluation & evaluation) const;
+    bool buildCommonIncumbentCandidateIds(
+        std::array<std::uint8_t, kMaximumSelectionAircraft>
+            & candidate_ids) const noexcept;
+    bool evaluateCandidateIdTuple(
+        std::uint64_t evaluation_timestamp_us,
+        const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
+        const std::array<std::size_t, kMaximumSelectionAircraft>
+            & candidate_counts,
+        const std::array<std::uint8_t, kMaximumSelectionAircraft>
+            & candidate_ids,
+        JointCombinationEvaluation & evaluation) const;
     bool proposalChangesActiveCommand(
         const std::array<std::uint8_t, kMaximumSelectionAircraft>
             & candidate_ids,
@@ -600,6 +650,14 @@ private:
         std::uint64_t now_us,
         ManeuverActivationSample & sample,
         ManeuverSelectionDecision & decision) const;
+    bool evaluateNominalPostRelease(
+        std::uint64_t now_us,
+        JointCombinationEvaluation & evaluation);
+    bool buildManeuverRejoinObjective(
+        std::uint64_t now_us,
+        ManeuverRejoinObjective & objective) const noexcept;
+    bool allPeersConfirmPostRelease(
+        std::uint64_t now_us) const noexcept;
     void applyFormationActivationGate(
         std::uint64_t now_us,
         ManeuverActivationSample & sample,
@@ -664,6 +722,10 @@ private:
         m_selected_candidate_source_timestamps_us{};
     ManeuverSelectionDecision m_latest_selection_decision{};
     bool m_has_selected_combination{false};
+    bool m_safe_rejoin_active{false};
+    JointCombinationEvaluation m_last_post_release_evaluation{};
+    std::uint64_t m_last_post_release_evaluation_timestamp_us{0};
+    bool m_has_last_post_release_evaluation{false};
     std::uint64_t m_last_activation_monitor_timestamp_us{0};
     std::uint64_t m_selection_epoch{0};
     std::uint64_t m_epoch_generation_timestamp_us{0};

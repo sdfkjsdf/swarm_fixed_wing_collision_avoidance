@@ -45,6 +45,9 @@ struct ManeuverActivationSample
     // Formation discrimination may inhibit only a new activation. It never
     // terminates or resets an already active avoidance episode.
     bool allow_new_activation{true};
+    // CPA clear is necessary but not sufficient for release.  The worker
+    // sets this only after the actual nominal/Flocking rollout is safe.
+    bool allow_deactivation{true};
 };
 
 struct ManeuverActivationStatus

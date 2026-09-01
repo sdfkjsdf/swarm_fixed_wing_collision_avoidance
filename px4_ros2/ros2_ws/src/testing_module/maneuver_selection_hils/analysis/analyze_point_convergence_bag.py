@@ -236,6 +236,32 @@ def decision_summary(decisions):
             if int(message.proposal_timestamp_us) > 0
             and int(message.evaluated_combination_count) in (243, 16807)
         }
+        full_evaluation_diagnostics = {
+            (int(message.proposal_epoch),
+             int(message.proposal_timestamp_us)): {
+                "valid_combination_count": int(getattr(
+                    message, "evaluated_valid_combination_count", 0)),
+                "safe_combination_count": int(getattr(
+                    message, "evaluated_safe_combination_count", 0)),
+                "maximum_minimum_ad_m": float(getattr(
+                    message, "maximum_evaluated_minimum_ad_m", math.nan)),
+                "selected_combination_safe": bool(getattr(
+                    message, "selected_combination_safe", False)),
+            }
+            for _, message in records
+            if int(message.proposal_timestamp_us) > 0
+            and int(message.evaluated_combination_count) in (243, 16807)
+        }
+        safe_available_evaluations = sum(
+            diagnostic["safe_combination_count"] > 0
+            for diagnostic in full_evaluation_diagnostics.values())
+        all_unsafe_evaluations = sum(
+            diagnostic["valid_combination_count"] > 0
+            and diagnostic["safe_combination_count"] == 0
+            for diagnostic in full_evaluation_diagnostics.values())
+        all_invalid_evaluations = sum(
+            diagnostic["valid_combination_count"] == 0
+            for diagnostic in full_evaluation_diagnostics.values())
         evaluation_timestamps = [
             timestamp for _, timestamp in full_evaluations]
         bag_timestamps_us = [
@@ -256,6 +282,12 @@ def decision_summary(decisions):
             "proposed_v4_cutover_count": proposed_v4,
             "decision_publish_rate_hz": observed_rate_hz(bag_timestamps_us),
             "unique_full_evaluation_count": len(full_evaluations),
+            "safe_combination_available_evaluation_count":
+                safe_available_evaluations,
+            "all_combinations_unsafe_evaluation_count":
+                all_unsafe_evaluations,
+            "all_combinations_invalid_evaluation_count":
+                all_invalid_evaluations,
             "full_evaluation_rate_hz": observed_rate_hz(
                 evaluation_timestamps),
             "full_evaluation_combination_histogram": dict(sorted(Counter(
@@ -420,7 +452,20 @@ def activation_state_summary(decisions):
         previous_active = False
         previous_active_candidate = None
         previous_active_revision = None
+        latest_full_evaluation = None
         for time_s, message in records:
+            if (int(message.proposal_timestamp_us) > 0
+                    and int(message.evaluated_combination_count)
+                    in (243, 16807)):
+                latest_full_evaluation = {
+                    "time_s": float(time_s),
+                    "valid_combination_count": int(getattr(
+                        message, "evaluated_valid_combination_count", 0)),
+                    "safe_combination_count": int(getattr(
+                        message, "evaluated_safe_combination_count", 0)),
+                    "maximum_minimum_ad_m": float(getattr(
+                        message, "maximum_evaluated_minimum_ad_m", math.nan)),
+                }
             active = command_execution_requested(message)
             if active and not previous_active:
                 starts.append({
@@ -429,6 +474,7 @@ def activation_state_summary(decisions):
                     "candidate_id": int(message.ownship_candidate_id),
                     "candidate_input_revision": int(
                         message.selected_candidate_input_revisions[vehicle]),
+                    "latest_full_evaluation": latest_full_evaluation,
                 })
             if not active and previous_active:
                 ends.append({
@@ -461,6 +507,18 @@ def activation_state_summary(decisions):
             "activation_end_count": len(ends),
             "active_candidate_switch_count": active_candidate_switch_count,
             "active_revision_switch_count": active_revision_switch_count,
+            "activation_start_with_safe_combination_available_count": sum(
+                start["latest_full_evaluation"] is not None
+                and start["latest_full_evaluation"]
+                    ["safe_combination_count"] > 0
+                for start in starts),
+            "activation_start_with_all_combinations_unsafe_count": sum(
+                start["latest_full_evaluation"] is not None
+                and start["latest_full_evaluation"]
+                    ["valid_combination_count"] > 0
+                and start["latest_full_evaluation"]
+                    ["safe_combination_count"] == 0
+                for start in starts),
             "repeated_start_flag_count": repeated_start_flag_count,
             "repeated_end_flag_count": repeated_end_flag_count,
             "starts": starts,
@@ -500,6 +558,40 @@ def formation_gate_summary(decisions):
                 str(mask): count
                 for mask, count in sorted(mask_histogram.items())
             },
+        })
+    return result
+
+
+def post_release_summary(decisions):
+    result = []
+    for vehicle, records in enumerate(decisions):
+        evaluated = [
+            message for _, message in records
+            if bool(getattr(message, "post_release_evaluated", False))]
+        finite_ad = [
+            float(message.post_release_minimum_ad_m)
+            for message in evaluated
+            if math.isfinite(float(message.post_release_minimum_ad_m))]
+        result.append({
+            "vehicle_id": vehicle,
+            "evaluated_record_count": len(evaluated),
+            "safe_record_count": sum(
+                bool(message.post_release_safe) for message in evaluated),
+            "cpa_clear_record_count": sum(
+                bool(getattr(message, "cpa_clear", False))
+                for _, message in records),
+            "peer_confirmed_record_count": sum(
+                bool(getattr(message, "post_release_peer_confirmed", False))
+                for _, message in records),
+            "safe_rejoin_record_count": sum(
+                bool(getattr(message, "safe_rejoin_active", False))
+                for _, message in records),
+            "safe_rejoin_objective_record_count": sum(
+                bool(getattr(
+                    message, "safe_rejoin_objective_applied", False))
+                for _, message in records),
+            "minimum_ad_m_range": (
+                [min(finite_ad), max(finite_ad)] if finite_ad else None),
         })
     return result
 
@@ -1166,7 +1258,10 @@ def analyze(args):
         else [args.target_east] * AIRCRAFT_COUNT,
         dtype=float)
 
-    for directory in (args.summary_dir, args.plot_dir, args.video_dir):
+    output_directories = [args.summary_dir, args.plot_dir]
+    if args.generate_video:
+        output_directories.append(args.video_dir)
+    for directory in output_directories:
         directory.mkdir(parents=True, exist_ok=True)
 
     summary = {
@@ -1205,6 +1300,7 @@ def analyze(args):
         "v4_horizon_gate_diagnostics": v4_horizon_gate_summary(decisions),
         "activation_state_diagnostics": activation_state_summary(decisions),
         "formation_gate_diagnostics": formation_gate_summary(decisions),
+        "post_release_diagnostics": post_release_summary(decisions),
         "trajectory_intent_diagnostics": trajectory_intent_summary(
             intents, decisions, int(grid_ns[0])),
         "formation_override_diagnostics": formation_override_summary(
@@ -1240,13 +1336,14 @@ def analyze(args):
         position_sigma, velocity_sigma, args.desired_separation_distance,
         target_norths, target_easts, args.scenario_label,
         args.show_targets)
-    save_video(
-        args.video_dir / "actual_maneuver.mp4",
-        elapsed_s, tracks, body_headings, minimum_distance,
-        nearest_pair_index,
-        pair_list, decisions, args.desired_separation_distance,
-        target_norths, target_easts, args.scenario_label,
-        args.show_targets, args.fps)
+    if args.generate_video:
+        save_video(
+            args.video_dir / "actual_maneuver.mp4",
+            elapsed_s, tracks, body_headings, minimum_distance,
+            nearest_pair_index,
+            pair_list, decisions, args.desired_separation_distance,
+            target_norths, target_easts, args.scenario_label,
+            args.show_targets, args.fps)
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -1257,6 +1354,7 @@ def parse_args():
     parser.add_argument("--summary-dir", type=Path, required=True)
     parser.add_argument("--plot-dir", type=Path, required=True)
     parser.add_argument("--video-dir", type=Path, required=True)
+    parser.add_argument("--generate-video", action="store_true")
     parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--evaluation-start-ns", type=int, required=True)
     parser.add_argument("--desired-separation-distance", type=float, default=10.0)

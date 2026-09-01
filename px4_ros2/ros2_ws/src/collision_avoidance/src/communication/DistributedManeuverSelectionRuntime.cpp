@@ -156,6 +156,21 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->activation_requested;
                     decision.command_execution_requested =
                         message->command_execution_requested;
+                    decision.nominal_setpoint_available =
+                        message->nominal_setpoint_available;
+                    decision.nominal_setpoint_timestamp_us =
+                        message->nominal_setpoint_timestamp_us;
+                    decision.nominal_ground_speed_command_mps =
+                        message->nominal_ground_speed_command_mps;
+                    decision.nominal_altitude_command_m =
+                        message->nominal_altitude_command_m;
+                    decision.nominal_lateral_acceleration_mps2 =
+                        message->nominal_lateral_acceleration_mps2;
+                    decision.post_release_evaluated =
+                        message->post_release_evaluated;
+                    decision.post_release_safe = message->post_release_safe;
+                    decision.post_release_evaluation_timestamp_us =
+                        message->post_release_evaluation_timestamp_us;
                     decision.v4_horizon_local_gate_active =
                         message->v4_horizon_local_gate_active;
                     decision.v4_control_architecture =
@@ -354,6 +369,42 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 message.evaluated_combination_count =
                     static_cast<std::uint16_t>(
                         decision.evaluated_combination_count);
+                message.evaluated_valid_combination_count =
+                    static_cast<std::uint16_t>(
+                        decision.evaluated_valid_combination_count);
+                message.evaluated_safe_combination_count =
+                    static_cast<std::uint16_t>(
+                        decision.evaluated_safe_combination_count);
+                message.maximum_evaluated_minimum_ad_m = static_cast<float>(
+                    decision.maximum_evaluated_minimum_ad_m);
+                message.selected_combination_safe =
+                    decision.selected_combination_safe;
+                message.nominal_setpoint_available =
+                    decision.nominal_setpoint_available;
+                message.nominal_setpoint_timestamp_us =
+                    decision.nominal_setpoint_timestamp_us;
+                message.nominal_ground_speed_command_mps = static_cast<float>(
+                    decision.nominal_ground_speed_command_mps);
+                message.nominal_altitude_command_m = static_cast<float>(
+                    decision.nominal_altitude_command_m);
+                message.nominal_lateral_acceleration_mps2 =
+                    static_cast<float>(
+                        decision.nominal_lateral_acceleration_mps2);
+                message.cpa_clear = decision.cpa_clear;
+                message.post_release_evaluated =
+                    decision.post_release_evaluated;
+                message.post_release_safe = decision.post_release_safe;
+                message.post_release_minimum_ad_m = static_cast<float>(
+                    decision.post_release_minimum_ad_m);
+                message.post_release_evaluation_timestamp_us =
+                    decision.post_release_evaluation_timestamp_us;
+                message.post_release_peer_confirmed =
+                    decision.post_release_peer_confirmed;
+                message.safe_rejoin_active = decision.safe_rejoin_active;
+                message.safe_rejoin_objective_applied =
+                    decision.safe_rejoin_objective_applied;
+                message.selected_nominal_rejoin_cost = static_cast<float>(
+                    decision.selected_nominal_rejoin_cost);
                 std::copy(
                     decision.selected_candidate_ids.begin(),
                     decision.selected_candidate_ids.end(),

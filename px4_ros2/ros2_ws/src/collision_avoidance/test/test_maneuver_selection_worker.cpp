@@ -265,6 +265,20 @@ cs::ManeuverSelectionPeerDecision peerDecision(
     peer.activation_requested = decision.activation_requested;
     peer.command_execution_requested =
         decision.command_execution_requested;
+    peer.nominal_setpoint_available =
+        decision.nominal_setpoint_available;
+    peer.nominal_setpoint_timestamp_us =
+        decision.nominal_setpoint_timestamp_us;
+    peer.nominal_ground_speed_command_mps =
+        decision.nominal_ground_speed_command_mps;
+    peer.nominal_altitude_command_m =
+        decision.nominal_altitude_command_m;
+    peer.nominal_lateral_acceleration_mps2 =
+        decision.nominal_lateral_acceleration_mps2;
+    peer.post_release_evaluated = decision.post_release_evaluated;
+    peer.post_release_safe = decision.post_release_safe;
+    peer.post_release_evaluation_timestamp_us =
+        decision.post_release_evaluation_timestamp_us;
     peer.v4_control_architecture = decision.v4_control_architecture;
     peer.v4_horizon_local_gate_active =
         decision.v4_horizon_local_gate_active;
@@ -1552,7 +1566,7 @@ TEST(ManeuverSelectionWorker, MonitorsActivationBetweenSelectionEvents)
 }
 
 TEST(ManeuverSelectionWorker,
-    DeactivatesFromCurrentFlightVectorCpaWithoutFlockingPrediction)
+    DeactivatesAfterCpaAndCoordinatedFlockingRolloutAreSafe)
 {
     auto first_params = params();
     first_params.v4_safe_control_enabled = true;
@@ -1635,6 +1649,10 @@ TEST(ManeuverSelectionWorker,
 
     EXPECT_TRUE(first_ended);
     EXPECT_TRUE(second_ended);
+    EXPECT_TRUE(first_output.decision.post_release_evaluated);
+    EXPECT_TRUE(second_output.decision.post_release_evaluated);
+    EXPECT_TRUE(first_output.decision.post_release_safe);
+    EXPECT_TRUE(second_output.decision.post_release_safe);
     EXPECT_FALSE(first_output.decision.activation_requested);
     EXPECT_FALSE(second_output.decision.activation_requested);
     EXPECT_EQ(
@@ -1697,7 +1715,7 @@ TEST(ManeuverSelectionWorker, WarmsSelectionButDoesNotActivateBeforeGateOpens)
 }
 
 TEST(ManeuverSelectionWorker,
-    RejectsSameRoleWithMismatchedInputRevisionWithoutRelabelingCommit)
+    AmacAcceptsSameManeuverTupleDespitePeerRevisionMismatch)
 {
     cs::ManeuverSelectionWorker first(params());
     cs::ManeuverSelectionWorker second(params(1));
@@ -1761,16 +1779,20 @@ TEST(ManeuverSelectionWorker,
     mismatched_peer.proposed_candidate_input_revisions[0] ^= 1ULL;
     ASSERT_TRUE(first.pushRemoteDecision(1, mismatched_peer));
     ASSERT_TRUE(first.processPendingForTest());
-    const auto rejected = first.tryPopOutput();
-    ASSERT_TRUE(rejected.has_value());
-    ASSERT_TRUE(rejected->has_decision);
-    EXPECT_FALSE(rejected->decision.proposal_consensus_confirmed);
-    EXPECT_TRUE(rejected->decision.coordination_qualified);
-    EXPECT_TRUE(rejected->decision.previous_best_retained);
-    EXPECT_FALSE(rejected->decision.new_best_accepted);
-    EXPECT_EQ(rejected->decision.local_selection_epoch, committed_epoch);
-    EXPECT_EQ(rejected->decision.selection_timestamp_us, committed_timestamp);
-    EXPECT_EQ(rejected->decision.selected_candidate_ids, committed_tuple);
+    const auto accepted = first.tryPopOutput();
+    ASSERT_TRUE(accepted.has_value());
+    ASSERT_TRUE(accepted->has_decision);
+    EXPECT_TRUE(accepted->decision.proposal_consensus_confirmed);
+    EXPECT_TRUE(accepted->decision.coordination_qualified);
+    EXPECT_EQ(
+        accepted->decision.local_selection_epoch,
+        first_output.decision.proposal_epoch);
+    EXPECT_GT(accepted->decision.local_selection_epoch, committed_epoch);
+    EXPECT_GT(accepted->decision.selection_timestamp_us, committed_timestamp);
+    EXPECT_EQ(
+        accepted->decision.selected_candidate_ids,
+        first_output.decision.proposed_candidate_ids);
+    EXPECT_NE(accepted->decision.selected_candidate_ids, committed_tuple);
 }
 
 TEST(ManeuverSelectionWorker,
@@ -1846,7 +1868,7 @@ TEST(ManeuverSelectionWorker,
 }
 
 TEST(ManeuverSelectionWorker,
-    ClearlySuperiorActiveBestUsesReadinessBeforeAtomicReplacement)
+    ClearlySuperiorAmacBestCommitsAfterManeuverTupleAgreement)
 {
     auto first_params = params();
     first_params.active_switching_enabled = true;
@@ -1920,22 +1942,6 @@ TEST(ManeuverSelectionWorker,
     matching_peer.coordination_qualified = false;
     matching_peer.activation_requested = false;
     matching_peer.proposal_consensus_confirmed = false;
-    ASSERT_TRUE(first.pushRemoteDecision(1, matching_peer));
-    ASSERT_TRUE(first.processPendingForTest());
-    const auto local_ready = first.tryPopOutput();
-    ASSERT_TRUE(local_ready.has_value());
-    ASSERT_TRUE(local_ready->has_decision);
-    EXPECT_TRUE(local_ready->decision.proposal_consensus_confirmed);
-    EXPECT_FALSE(local_ready->decision.new_best_accepted);
-    EXPECT_TRUE(local_ready->decision.previous_best_retained);
-    EXPECT_EQ(local_ready->decision.ownship_candidate_id, previous_ownship_id);
-    EXPECT_TRUE(local_ready->decision.activation_requested);
-    EXPECT_TRUE(local_ready->decision.command_execution_requested);
-
-    EXPECT_FALSE(first.processPendingForTest());
-    EXPECT_FALSE(first.tryPopOutput().has_value());
-
-    matching_peer.proposal_consensus_confirmed = true;
     ASSERT_TRUE(first.pushRemoteDecision(1, matching_peer));
     ASSERT_TRUE(first.processPendingForTest());
     const auto committed = first.tryPopOutput();

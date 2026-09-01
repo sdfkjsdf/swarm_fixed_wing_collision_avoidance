@@ -5,6 +5,9 @@
     amac_active_switching_enabled: true
     amac_active_switch_cost_margin: 0.01
     amac_active_switch_minimum_ad_margin_m: 1.0
+    # Keep the Lockheed/AMAC baseline AD-only. The CBF positive-margin filter
+    # belongs to explicitly configured CBF comparison profiles.
+    positive_margin_filter_enabled: false
 
     # Bounded CPA project reconstruction. The relative-speed threshold is the
     # rounded 3-sigma first-difference noise estimate from the final half of
