@@ -79,6 +79,9 @@ struct ManeuverSelectionWorkerParams
     std::uint64_t trajectory_refresh_period_us{50'000};
     std::uint64_t candidate_refresh_period_us{250'000};
     std::uint64_t coordination_delay_us{250'000};
+    // Project delay budget represented inside each legacy candidate rollout.
+    // Zero preserves the immediate-command baseline for unit/offline callers.
+    double candidate_application_delay_s{0.0};
     std::uint64_t maximum_belief_delay_us{1'000'000};
     ManeuverActivationControllerParams activation_params{};
     // Project-defined active-best hysteresis. Public AMAC sources do not
@@ -596,6 +599,9 @@ private:
     bool buildCurrentIntentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
+    bool currentExecutedInput(
+        std::uint64_t now_us,
+        estimation::PredictInput & input) const noexcept;
     bool buildV4IntentSet(
         std::uint64_t now_us,
         const SafeControlCandidateAdapterResult & candidates,

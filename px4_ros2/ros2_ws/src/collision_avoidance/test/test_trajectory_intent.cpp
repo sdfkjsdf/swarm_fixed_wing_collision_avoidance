@@ -209,6 +209,78 @@ TEST(TrajectoryIntent, DynamicInputIsTransportedInsteadOfReconstructedFromId)
     EXPECT_FALSE(receiver.receive(tampered_packet, received));
 }
 
+TEST(TrajectoryIntent, DelayedRolloutUsesCurrentThenCandidateInputEverywhere)
+{
+    ce::PredictParams params;
+    params.phi_rate_max = 70.0 * M_PI / 180.0;
+    ce::TrajectoryPredict predictor(params);
+    const auto candidates = ce::makeLevelTurnCandidateTable(20.0, 100.0);
+    ce::TrajectoryIntentSender sender(predictor, candidates);
+    ce::TrajectoryIntentReceiver receiver(predictor);
+    const ce::PredictState state{0.0, 0.0, 100.0, 20.0, 0.0, 0.0, 0.0};
+    const auto covariance = diagonalCovariance(0.04);
+    const ce::PredictInput current_input = *candidates.find(
+        static_cast<std::uint8_t>(ce::ManeuverCandidateId::RollPlus50));
+    const auto candidate_id = static_cast<std::uint8_t>(
+        ce::ManeuverCandidateId::RollMinus50);
+    constexpr double command_delay_s = 0.25;
+
+    ce::TrajectoryIntentPacket packet;
+    ASSERT_TRUE(sender.buildForSelectedCandidateWithCommandDelay(
+        2'000'000ULL,
+        candidate_id,
+        current_input,
+        command_delay_s,
+        state,
+        covariance,
+        packet,
+        9ULL));
+    ce::ReceivedTrajectoryIntent received;
+    ASSERT_TRUE(receiver.receive(packet, received));
+
+    EXPECT_NEAR(received.command_delay_s, command_delay_s, 1.0e-7);
+    EXPECT_NEAR(
+        received.current_input.a_lat_cmd,
+        current_input.a_lat_cmd,
+        1.0e-6);
+
+    ce::PredictionMeanTrajectory expected{};
+    predictor.predictWithCommandDelay(
+        state,
+        received.current_input,
+        received.candidate_input,
+        received.command_delay_s,
+        ce::kTrajectoryIntentStepSeconds,
+        expected);
+    ce::PredictionMeanTrajectory immediate{};
+    predictor.predict(
+        state,
+        received.candidate_input,
+        ce::kTrajectoryIntentStepSeconds,
+        immediate);
+
+    EXPECT_GT(expected[2].phi, 0.0);
+    EXPECT_LT(immediate[2].phi, 0.0);
+    const auto at_020 = predictor.stepRK4(
+        predictor.stepRK4(state, received.current_input, 0.1),
+        received.current_input,
+        0.1);
+    const auto at_025 = predictor.stepRK4(
+        at_020, received.current_input, 0.05);
+    const auto at_030 = predictor.stepRK4(
+        at_025, received.candidate_input, 0.05);
+    EXPECT_NEAR(expected[3].phi, at_030.phi, 1.0e-12);
+
+    for (const std::size_t index : {std::size_t{0}, std::size_t{15},
+                                    std::size_t{30}, std::size_t{45}}) {
+        EXPECT_NEAR(received.reconstructed_mean[index].p_n, expected[index].p_n, 1.0e-3);
+        EXPECT_NEAR(received.reconstructed_mean[index].p_e, expected[index].p_e, 1.0e-3);
+        EXPECT_NEAR(received.reconstructed_mean[index].phi, expected[index].phi, 1.0e-9);
+        EXPECT_TRUE(ce::TrajectoryUncertainty::covarianceIsFiniteAndPsd(
+            received.cone[index].state_covariance));
+    }
+}
+
 TEST(TrajectoryIntent, RejectsUnknownCandidateAndInvalidCovariance)
 {
     ce::TrajectoryPredict predictor(ce::PredictParams{});

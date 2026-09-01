@@ -365,6 +365,29 @@ confirmAllAircraftProposals(
 
 }  // namespace
 
+TEST(ManeuverSelectionWorker, LegacyIntentsRepresentCandidateApplicationDelay)
+{
+    auto worker_params = params();
+    worker_params.candidate_application_delay_s = 0.25;
+    cs::ManeuverSelectionWorker worker(worker_params);
+    constexpr std::uint64_t timestamp_us = 400'000ULL;
+    ASSERT_TRUE(worker.pushNominalSetpoint(
+        nominalSnapshot(timestamp_us, 19.5, 3.0)));
+
+    const auto output = pushBeliefAndProcess(
+        worker,
+        beliefSnapshot(timestamp_us, 0.0, 0.0, 20.0, 0.0));
+
+    ASSERT_GT(output.intent_packet_count, 0U);
+    for (std::size_t index = 0; index < output.intent_packet_count; ++index) {
+        const auto & packet = output.intent_packets[index];
+        EXPECT_FLOAT_EQ(packet.command_delay_s, 0.25F);
+        EXPECT_FLOAT_EQ(packet.current_input[0], 19.5F);
+        EXPECT_FLOAT_EQ(packet.current_input[2], 0.0F);
+        EXPECT_FLOAT_EQ(packet.current_input[3], 3.0F);
+    }
+}
+
 TEST(ManeuverSelectionWorker, V4ShadowReportsMissingPeerWithoutChangingIntents)
 {
     auto worker_params = params();

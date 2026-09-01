@@ -17,8 +17,7 @@ constexpr std::uint8_t kRollZeroId = static_cast<std::uint8_t>(
 constexpr double kTrajectoryStepSeconds =
     estimation::kTrajectoryIntentStepSeconds;
 constexpr double kTrajectoryHorizonSeconds =
-    static_cast<double>(estimation::kTrajectoryPointCount - 1)
-    * kTrajectoryStepSeconds;
+    estimation::kTrajectoryIntentHorizonSeconds;
 constexpr std::uint64_t kTrajectoryHorizonMicroseconds =
     static_cast<std::uint64_t>(kTrajectoryHorizonSeconds * 1.0e6);
 
@@ -78,6 +77,10 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
         || params.trajectory_refresh_period_us == 0
         || params.candidate_refresh_period_us == 0
         || params.coordination_delay_us == 0
+        || !std::isfinite(params.candidate_application_delay_s)
+        || params.candidate_application_delay_s < 0.0
+        || params.candidate_application_delay_s
+            > kTrajectoryHorizonSeconds
         || params.maximum_belief_delay_us == 0
         || !finitePositive(
             params.activation_params
@@ -1133,14 +1136,32 @@ bool ManeuverSelectionWorker::buildCurrentIntentSet(
         estimation::TrajectoryIntentPacket,
         kExhaustiveCandidatesPerAircraft> packets{};
     const std::size_t candidate_count = activeCandidateCount();
+    estimation::PredictInput current_input{};
+    if (m_params.candidate_application_delay_s > 0.0
+        && !currentExecutedInput(now_us, current_input)) {
+        m_ownship_candidates_complete = false;
+        m_ownship_candidate_count = 0;
+        return false;
+    }
     for (std::size_t index = 0; index < candidate_count; ++index) {
-        if (!m_sender.buildForSelectedCandidate(
+        const bool built = m_params.candidate_application_delay_s > 0.0
+            ? m_sender.buildForSelectedCandidateWithCommandDelay(
+                now_us,
+                m_held_candidate_ids[index],
+                current_input,
+                m_params.candidate_application_delay_s,
+                m_latest_state,
+                m_latest_covariance,
+                packets[index],
+                m_selection_epoch)
+            : m_sender.buildForSelectedCandidate(
                 now_us,
                 m_held_candidate_ids[index],
                 m_latest_state,
                 m_latest_covariance,
                 packets[index],
-                m_selection_epoch)) {
+                m_selection_epoch);
+        if (!built) {
             m_ownship_candidates_complete = false;
             m_ownship_candidate_count = 0;
             return false;
@@ -1175,6 +1196,24 @@ bool ManeuverSelectionWorker::buildCurrentIntentSet(
     output.generated_timestamp_us = now_us;
     output.selection_epoch = m_selection_epoch;
     return true;
+}
+
+bool ManeuverSelectionWorker::currentExecutedInput(
+    std::uint64_t now_us,
+    estimation::PredictInput & input) const noexcept
+{
+    const ManeuverActivationStatus activation =
+        m_activation_controller.status();
+    if (activation.active) {
+        input = activation.latched_input;
+        return true;
+    }
+    return m_has_latest_nominal
+        && nominalPredictInput(
+            m_latest_nominal,
+            now_us,
+            m_params.maximum_belief_delay_us,
+            input);
 }
 
 bool ManeuverSelectionWorker::buildV4IntentSet(
