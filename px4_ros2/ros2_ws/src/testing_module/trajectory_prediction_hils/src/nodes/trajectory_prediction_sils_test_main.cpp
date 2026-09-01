@@ -51,6 +51,7 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("height_rate_max_climb", 8.0);
     node->declare_parameter<double>("height_rate_min_sink", 2.7);
     node->declare_parameter<double>("max_roll_deg", 50.0);
+    node->declare_parameter<double>("max_roll_rate_deg_per_s", 70.0);
     node->declare_parameter<double>("gravity", 9.80665);
     node->declare_parameter<double>("tc_tas", 5.0);
     node->declare_parameter<double>("tc_alt", 5.0);
@@ -85,6 +86,8 @@ int main(int argc, char * argv[])
     predict_params.tau_V = node->get_parameter("tc_tas").as_double();
     predict_params.tau_hdot = node->get_parameter("tc_alt").as_double();
     predict_params.tau_phi = node->get_parameter("tc_roll").as_double();
+    predict_params.phi_rate_max = node->get_parameter(
+        "max_roll_rate_deg_per_s").as_double() * std::acos(-1.0) / 180.0;
     predict_params.b_h = node->get_parameter("b_h").as_double();
     predict_params.V_min = node->get_parameter("airspeed_min").as_double();
     predict_params.V_max = node->get_parameter("airspeed_max").as_double();

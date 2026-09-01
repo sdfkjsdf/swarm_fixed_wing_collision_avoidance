@@ -55,6 +55,7 @@ struct PredictParams {
     double tau_V       = 4.0;     /* FW_T_TAS_TC */
     double tau_hdot    = 2.0;     /* FW_T_ALT_TC (rate term inner loop) */
     double tau_phi     = 0.5;     /* FW_R_TC (default 0.5s) — roll loop 직접 매핑 */
+    double phi_rate_max = 1.2217304763960306; /* FW_R_RMAX = 70 deg/s [rad/s] */
 
     /* ★ 신규 — 종 채널 PD 의 altitude P 게인 [1/s].
        collision_avoidance::FlockingGuidance 의 alt_hold_p_gain 과 등가.

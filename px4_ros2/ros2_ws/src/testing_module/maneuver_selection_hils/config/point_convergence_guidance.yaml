@@ -19,6 +19,7 @@
     height_rate_min_sink: 2.7
     height_rate_max_sink: 2.7
     max_roll_deg: 50.0
+    max_roll_rate_deg_per_s: 70.0
     max_pitch_deg: 30.0
     max_pitch_rate_deg_per_sec: 60.0
     energy_fraction: 0.5

@@ -33,6 +33,7 @@
     gravity: 9.80665                # 중력가속도 [m/s^2]
 
     max_roll_deg: 50.0              # PX4 FW_R_LIM (coordinated turn 계산용)
+    max_roll_rate_deg_per_s: 70.0   # PX4 FW_R_RMAX (predictor roll-rate clamp)
     max_yaw_rate_deg_per_s: 50.0    # PX4 FW_Y_RMAX (V4 conservative cap)
 
     # V4 safe-control Step-3 shadow configuration

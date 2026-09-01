@@ -80,6 +80,7 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("height_rate_max_climb",    8.0);
     node->declare_parameter<double>("height_rate_min_sink",     2.7);
     node->declare_parameter<double>("max_roll_deg",            50.0);
+    node->declare_parameter<double>("max_roll_rate_deg_per_s", 70.0);
     node->declare_parameter<double>("gravity",                  9.80665);
     node->declare_parameter<double>("tc_tas",                   4.0);   /* FW_T_TAS_TC */
     node->declare_parameter<double>("tc_alt",                   2.0);   /* FW_T_ALT_TC */
@@ -169,6 +170,8 @@ int main(int argc, char * argv[])
     pp.tau_V       = node->get_parameter("tc_tas").as_double();
     pp.tau_hdot    = node->get_parameter("tc_alt").as_double();
     pp.tau_phi     = node->get_parameter("tc_roll").as_double();   /* ★ PATCH: tau_a → tau_phi */
+    pp.phi_rate_max = node->get_parameter(
+        "max_roll_rate_deg_per_s").as_double() * std::acos(-1.0) / 180.0;
     pp.b_h         = node->get_parameter("b_h").as_double();       /* ★ 본 작업: altitude P 게인 */
     /* ★ 본 작업: h_cmd 의 baseline 위 offset. predict 람다가 capture 해서 사용. */
     const double alt_offset = node->get_parameter("alt_offset").as_double();

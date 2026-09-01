@@ -193,7 +193,14 @@ PredictState TrajectoryPredict::evaluateODE(const PredictState & x,
     d.h_dot = (u.h_dot_cmd - x.h_dot) / m_params.tau_hdot
             +  m_params.b_h * (u.h_cmd - x.h);
 
-    d.phi   = (u.phi_cmd   - x.phi  ) / m_params.tau_phi;     /* ★ PATCH: roll loop 1차 지연 */
+    /* PX4 FixedwingAttitudeControl converts roll-attitude error to a body-rate
+       setpoint and constrains it with FW_R_RMAX.  Apply the same limit here so
+       large commands and roll reversals cannot imply an unattainable initial
+       roll rate while preserving the identified first-order response for
+       small attitude errors. */
+    const double phi_rate_raw = (u.phi_cmd - x.phi) / m_params.tau_phi;
+    d.phi = clampFM(
+        phi_rate_raw, -m_params.phi_rate_max, m_params.phi_rate_max);
     return d;
 }
 

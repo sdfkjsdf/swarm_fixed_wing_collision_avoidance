@@ -21,6 +21,7 @@
 
     gravity: 9.80665
     max_roll_deg: 50.0
+    max_roll_rate_deg_per_s: 70.0  # FW_R_RMAX (SITL live/default)
 
     # ── 호환 차원 (SetpointSequencer 가 직접 사용 안 함) ──
     max_pitch_deg: 30.0
@@ -81,4 +82,3 @@
     # ★ alt_envelope: 모델 유효 동작 영역 [m]. baseline ± 이 값 안에서 PD 식 유효.
     # 범위 밖 시 모델 정확도 보장 안 함 (현재 코드에서 검증 안 함, 향후 graceful degradation 트리거용).
     alt_envelope: 30.0
-

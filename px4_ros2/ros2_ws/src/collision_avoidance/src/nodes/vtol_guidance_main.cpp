@@ -48,6 +48,7 @@ int main(int argc, char * argv[])
     node->declare_parameter<std::string>(
         "v4_control_architecture", "legacy_safe_control_set");
     node->declare_parameter<double>("airspeed_cruise", 15.0);
+    node->declare_parameter<double>("max_roll_rate_deg_per_s", 70.0);
     node->declare_parameter<double>("max_yaw_rate_deg_per_s", 50.0);
     node->declare_parameter<double>("v4_margin_time_constant_s", 5.0);
     node->declare_parameter<double>("v4_candidate_guard_deg_per_s", 0.5);
@@ -154,6 +155,9 @@ int main(int argc, char * argv[])
             * std::acos(-1.0) / 180.0;
         params.predictor_params.a_lat_max =
             params.gravity_mps2 * std::tan(maximum_roll_radians);
+        params.predictor_params.phi_rate_max =
+            node->get_parameter("max_roll_rate_deg_per_s").as_double()
+            * std::acos(-1.0) / 180.0;
         params.evaluator_params.desired_separation_distance_m =
             node->get_parameter("desired_separation_distance").as_double();
         params.evaluator_params.positive_margin_filter_enabled =

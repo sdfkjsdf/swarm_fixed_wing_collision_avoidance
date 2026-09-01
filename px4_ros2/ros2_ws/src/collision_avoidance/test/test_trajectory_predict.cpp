@@ -138,6 +138,52 @@ TEST(Accuracy, FirstOrderResponseAtTau)
     EXPECT_NEAR(V_at_tau, expected, 0.05 * (Vsp - V0));   /* 5% of step magnitude */
 }
 
+/* Large roll reversals must respect PX4 FW_R_RMAX.  At -13 deg with a
+   +50 deg command and tau_phi=0.5 s, the unconstrained model requests
+   126 deg/s.  The configured 70 deg/s limit permits exactly 7 deg of roll
+   change during this 0.1 s interval because every RK4 stage remains
+   saturated. */
+TEST(Accuracy, RollRateSaturationMatchesPx4Limit)
+{
+    auto params = defaultParams();
+    TrajectoryPredict pred(params);
+
+    constexpr double deg_to_rad = M_PI / 180.0;
+    auto x = calmInit(20.0);
+    x.phi = -13.0 * deg_to_rad;
+    PredictInput u{
+        20.0,
+        std::nan(""),
+        0.0,
+        kG * std::tan(50.0 * deg_to_rad),
+    };
+
+    const auto next = pred.stepRK4(x, u, 0.1);
+    EXPECT_NEAR(next.phi, -6.0 * deg_to_rad, 1.0e-12);
+}
+
+/* The rate clamp must not alter a small roll response whose first-order rate
+   remains below FW_R_RMAX. */
+TEST(Accuracy, RollRateLimitLeavesSmallSignalResponseUnchanged)
+{
+    auto params = defaultParams();
+    TrajectoryPredict pred(params);
+
+    constexpr double deg_to_rad = M_PI / 180.0;
+    auto x = calmInit(20.0);
+    const double phi_command = 15.0 * deg_to_rad;
+    PredictInput u{
+        20.0,
+        std::nan(""),
+        0.0,
+        kG * std::tan(phi_command),
+    };
+
+    const auto next = pred.stepRK4(x, u, 0.1);
+    const double expected = phi_command * (1.0 - std::exp(-0.1 / params.tau_phi));
+    EXPECT_NEAR(next.phi, expected, 2.0e-6);
+}
+
 /* 3. 조정선회 원궤도 — 정상상태에서 R = V² / (g·tan(phi))  (5%)
    ★ PATCH: a_lat 직접 → g·tan(phi) 사용. 정상상태 phi = atan(a_lat_cmd/g). */
 TEST(Accuracy, CoordinatedTurnRadius)
