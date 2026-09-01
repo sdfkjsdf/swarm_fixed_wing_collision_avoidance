@@ -37,6 +37,52 @@ TEST(ManeuverExecutionPolicy, SeparatesAmacActivationFromContinuousV4)
         cs::ManeuverExecutionPolicy::ContinuousV4, decision));
 }
 
+TEST(FormationActivationGate, RequiresTargetAndCurrentSpacingAboveHardBudget)
+{
+    EXPECT_TRUE(cs::formationSpacingCompatible(30.0, 25.0, 20.0));
+    EXPECT_FALSE(cs::formationSpacingCompatible(20.0, 25.0, 20.0));
+    EXPECT_FALSE(cs::formationSpacingCompatible(30.0, 20.0, 20.0));
+    EXPECT_FALSE(cs::formationSpacingCompatible(19.0, 25.0, 20.0));
+    EXPECT_FALSE(cs::formationSpacingCompatible(30.0, 19.0, 20.0));
+    EXPECT_FALSE(cs::formationSpacingCompatible(
+        std::numeric_limits<double>::quiet_NaN(), 25.0, 20.0));
+    EXPECT_FALSE(cs::formationSpacingCompatible(
+        30.0, std::numeric_limits<double>::infinity(), 20.0));
+}
+
+TEST(ManeuverExecutionPolicy,
+    ContinuousV4TreatsOnlyCandidateRoleChangesAsSwitches)
+{
+    std::array<std::uint8_t, cs::kMaximumSelectionAircraft> selected{};
+    std::array<std::uint8_t, cs::kMaximumSelectionAircraft> proposed{};
+    selected[0] = 1;
+    proposed[0] = 1;
+
+    EXPECT_FALSE(cs::continuousV4RoleChanged(
+        cs::ManeuverExecutionPolicy::ContinuousV4,
+        true,
+        true,
+        selected,
+        proposed,
+        2));
+
+    proposed[1] = 2;
+    EXPECT_TRUE(cs::continuousV4RoleChanged(
+        cs::ManeuverExecutionPolicy::ContinuousV4,
+        true,
+        true,
+        selected,
+        proposed,
+        2));
+    EXPECT_FALSE(cs::continuousV4RoleChanged(
+        cs::ManeuverExecutionPolicy::AmacAdThreshold,
+        true,
+        true,
+        selected,
+        proposed,
+        2));
+}
+
 TEST(ManeuverExecutionPolicy, HorizonGateUsesWorstClearanceThreshold)
 {
     EXPECT_FALSE(cs::updateV4HorizonGateState(
@@ -467,6 +513,150 @@ TEST(ManeuverSelectionWorker, ModeBShadowUsesAlignedIntentAndRealInterpolator)
         ce::CandidateSetKind::LegacyRoll);
 }
 
+TEST(ManeuverSelectionWorker,
+    ModeBDistributedBootstrapCommitsAndRequestsContinuousExecution)
+{
+    const auto mode_b_params = [](const int vehicle_id) {
+        auto value = params(vehicle_id);
+        value.v4_safe_control_enabled = true;
+        value.v4_shadow_only = false;
+        value.v4_control_architecture =
+            cs::V4ControlArchitecture::ClosedFormBackupModeB;
+        value.execution_policy = cs::ManeuverExecutionPolicy::ContinuousV4;
+        value.active_switching_enabled = true;
+        value.active_switch_cost_margin = 1.0e-9;
+        value.active_switch_minimum_ad_margin_m = 1.0e-9;
+        value.mode_b_interpolator_params.certifier.reference_margin_m =
+            value.evaluator_params.desired_separation_distance_m;
+        value.mode_b_intent_adapter_params.predictor = value.predictor_params;
+        return value;
+    };
+
+    cs::ManeuverSelectionWorker first(mode_b_params(0));
+    cs::ManeuverSelectionWorker second(mode_b_params(1));
+    constexpr std::uint64_t start = 1'000'000ULL;
+
+    cs::ManeuverSelectionWorkerOutput first_output;
+    cs::ManeuverSelectionWorkerOutput second_output;
+    for (const std::uint64_t offset : {
+             0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        pushV4Inputs(first, start + offset);
+        pushV4Inputs(second, start + offset);
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                start + offset,
+                20.0 * static_cast<double>(offset) * 1.0e-6,
+                0.0,
+                20.0,
+                0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                start + offset,
+                20.0 * static_cast<double>(offset) * 1.0e-6,
+                200.0,
+                20.0,
+                0.0));
+        exchangePackets(first, second, first_output, second_output);
+    }
+
+    constexpr std::uint64_t bootstrap_offset = 250'000ULL;
+    pushV4Inputs(first, start + bootstrap_offset);
+    pushV4Inputs(second, start + bootstrap_offset);
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(start + bootstrap_offset, 5.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second,
+        beliefSnapshot(start + bootstrap_offset, 5.0, 200.0, 20.0, 0.0));
+    const auto bootstrap = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    ASSERT_TRUE(bootstrap[0].decision.coordination_qualified);
+    ASSERT_TRUE(bootstrap[1].decision.coordination_qualified);
+    ASSERT_FALSE(bootstrap[0].decision.selected_v4_cutover);
+    ASSERT_FALSE(bootstrap[1].decision.selected_v4_cutover);
+    ASSERT_TRUE(first.pushRemoteDecision(
+        1, peerDecision(bootstrap[1].decision)));
+    ASSERT_TRUE(second.pushRemoteDecision(
+        0, peerDecision(bootstrap[0].decision)));
+
+    constexpr std::uint64_t readiness_offset = 300'000ULL;
+    pushV4Inputs(first, start + readiness_offset);
+    pushV4Inputs(second, start + readiness_offset);
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(start + readiness_offset, 6.0, 0.0, 20.0, 0.0));
+    second_output = pushBeliefAndProcess(
+        second,
+        beliefSnapshot(start + readiness_offset, 6.0, 200.0, 20.0, 0.0));
+    ASSERT_TRUE(cs::v4CutoverCandidateReady(first_output.decision));
+    ASSERT_TRUE(cs::v4CutoverCandidateReady(second_output.decision));
+    exchangePackets(first, second, first_output, second_output);
+    ASSERT_TRUE(first.pushRemoteDecision(
+        1, peerDecision(second_output.decision)));
+    ASSERT_TRUE(second.pushRemoteDecision(
+        0, peerDecision(first_output.decision)));
+    ASSERT_TRUE(first.processPendingForTest());
+    ASSERT_TRUE(second.processPendingForTest());
+
+    for (const std::uint64_t offset : {
+             350'000ULL, 400'000ULL, 450'000ULL}) {
+        pushV4Inputs(first, start + offset);
+        pushV4Inputs(second, start + offset);
+        first_output = pushBeliefAndProcess(
+            first,
+            beliefSnapshot(
+                start + offset,
+                20.0 * static_cast<double>(offset) * 1.0e-6,
+                0.0,
+                20.0,
+                0.0));
+        second_output = pushBeliefAndProcess(
+            second,
+            beliefSnapshot(
+                start + offset,
+                20.0 * static_cast<double>(offset) * 1.0e-6,
+                200.0,
+                20.0,
+                0.0));
+        ASSERT_GT(first_output.intent_packet_count, 0U);
+        ASSERT_GT(second_output.intent_packet_count, 0U);
+        EXPECT_EQ(
+            first_output.intent_packets[0].candidate_set_kind,
+            ce::CandidateSetKind::V4SafeControl);
+        EXPECT_EQ(
+            second_output.intent_packets[0].candidate_set_kind,
+            ce::CandidateSetKind::V4SafeControl);
+        exchangePackets(first, second, first_output, second_output);
+    }
+
+    constexpr std::uint64_t selection_offset = 500'000ULL;
+    pushV4Inputs(first, start + selection_offset);
+    pushV4Inputs(second, start + selection_offset);
+    second_output = pushBeliefAndProcess(
+        second,
+        beliefSnapshot(start + selection_offset, 10.0, 200.0, 20.0, 0.0));
+    exchangePackets(first, second, first_output, second_output);
+    first_output = pushBeliefAndProcess(
+        first,
+        beliefSnapshot(start + selection_offset, 10.0, 0.0, 20.0, 0.0));
+    exchangePackets(first, second, first_output, second_output);
+    ASSERT_TRUE(first_output.decision.proposal_valid);
+    ASSERT_TRUE(second_output.decision.proposal_valid);
+    ASSERT_TRUE(first_output.decision.proposed_v4_cutover);
+    ASSERT_TRUE(second_output.decision.proposed_v4_cutover);
+
+    const auto committed = confirmTwoAircraftProposal(
+        first, second, first_output, second_output);
+    for (const auto & output : committed) {
+        ASSERT_TRUE(output.decision.selected_v4_cutover);
+        EXPECT_FALSE(output.decision.activation_requested);
+        EXPECT_TRUE(output.decision.command_execution_requested);
+    }
+
+}
+
 TEST(ManeuverSelectionWorker, V4ShadowUsesTrimAndOmitsStaleNominal)
 {
     constexpr std::uint64_t source_timestamp_us = 1'000'000ULL;
@@ -721,6 +911,15 @@ TEST(ManeuverSelectionWorker,
         1, peerDecision(second_output.decision)));
     ASSERT_TRUE(second.pushRemoteDecision(
         0, peerDecision(first_output.decision)));
+    // A later 20 Hz diagnostic can be temporarily unready while the peer has
+    // already demonstrated V4 bootstrap capability. Consuming both updates in
+    // one worker cycle must not erase the readiness event.
+    auto second_transient_not_ready = peerDecision(second_output.decision);
+    second_transient_not_ready.v4_cutover_candidate_ready = false;
+    auto first_transient_not_ready = peerDecision(first_output.decision);
+    first_transient_not_ready.v4_cutover_candidate_ready = false;
+    ASSERT_TRUE(first.pushRemoteDecision(1, second_transient_not_ready));
+    ASSERT_TRUE(second.pushRemoteDecision(0, first_transient_not_ready));
     EXPECT_TRUE(first.processPendingForTest());
     EXPECT_TRUE(second.processPendingForTest());
 
@@ -1164,6 +1363,7 @@ TEST(ManeuverSelectionWorker, FormationGateSuppressesOnlyNewAmacActivation)
     const auto formation_params = [](const int vehicle_id) {
         auto value = params(vehicle_id);
         value.formation_discrimination_enabled = true;
+        value.formation_target_separation_m = 1000.0;
         value.formation_aggregation_policy = collision_avoidance::formation::
             FormationAggregationPolicy::PerThreatExemptionOnly;
         auto & config = value.formation_boundary_config;
@@ -1223,6 +1423,34 @@ TEST(ManeuverSelectionWorker, FormationGateSuppressesOnlyNewAmacActivation)
         EXPECT_NE(output.decision.formation_inhibited_threat_mask, 0U);
         EXPECT_FALSE(output.decision.activation_requested);
     }
+}
+
+TEST(ManeuverSelectionWorker,
+    RejectsFormationTargetInsideBaseHardSafetyBudget)
+{
+    auto value = params();
+    value.formation_discrimination_enabled = true;
+    value.formation_target_separation_m = 12.0;
+    auto & config = value.formation_boundary_config;
+    config.profile_name = "incompatible_test_profile";
+    config.representative_wingspan_m = 2.0;
+    config.range0_wingspan_scale = 1.0;
+    config.uncertainty_margin_m = 0.0;
+    config.range1_offset_m = 1.0;
+    config.closure_upper_entry_table = {{0.0, 1.0}, {20.0, 1.0}};
+    config.closure_upper_exit_table = {{0.0, 2.0}, {20.0, 2.0}};
+    config.closure_lower_entry_mps = -1.0;
+    config.closure_lower_exit_mps = -2.0;
+    config.fdz_entry_limit_m = 0.0;
+    config.fdz_exit_limit_m = 0.0;
+    config.max_range_entry_m = 20.0;
+    config.max_range_exit_m = 20.0;
+    config.maximum_state_age_s = 0.1;
+    config.maximum_future_skew_s = 0.0;
+    config.maximum_timestamp_skew_s = 0.0;
+
+    cs::ManeuverSelectionWorker worker(value);
+    EXPECT_FALSE(worker.start());
 }
 
 TEST(ManeuverSelectionWorker, DoesNotActivateWhileCurrentPlanIsSafe)

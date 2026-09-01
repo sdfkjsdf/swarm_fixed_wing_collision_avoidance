@@ -59,10 +59,17 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
         || params.maximum_belief_delay_us == 0
         || !finitePositive(
             params.activation_params
-                .relative_speed_squared_epsilon_m2ps2)
+                .relative_speed_epsilon_mps)
+        || !finitePositive(params.activation_params.cpa_horizon_s)
         || (params.formation_discrimination_enabled
             && (params.execution_policy
                     != ManeuverExecutionPolicy::AmacAdThreshold
+                || !finitePositive(params.formation_target_separation_m)
+                || params.formation_target_separation_m
+                    <= params.evaluator_params
+                            .desired_separation_distance_m
+                        + params.evaluator_params.ownship_half_wingspan_m
+                        + params.evaluator_params.threat_half_wingspan_m
                 || !formation::FormationDiscriminator::validConfig(
                     params.formation_boundary_config)))
         || (params.active_switching_enabled
@@ -870,7 +877,20 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
         && decision.proposal_epoch < cache.decision.proposal_epoch) {
         return false;
     }
+    const bool retain_bootstrap_readiness = cache.valid
+        && cache.decision.v4_cutover_candidate_ready
+        && !cache.decision.selected_v4_cutover
+        && !decision.selected_v4_cutover
+        && cache.decision.v4_control_architecture
+            == decision.v4_control_architecture;
     cache.decision = decision;
+    // Readiness advertises that this peer has demonstrated the selected V4
+    // architecture, not that its latest 20 Hz diagnostic sample is a command.
+    // Retain that capability across transient missing/stale intent samples.
+    // The local candidate must still be valid at the instant the barrier opens,
+    // and normal proposal consensus still gates actual command execution.
+    cache.decision.v4_cutover_candidate_ready =
+        decision.v4_cutover_candidate_ready || retain_bootstrap_readiness;
     cache.valid = true;
     if (m_params.execution_policy
         == ManeuverExecutionPolicy::HorizonGatedV4) {
@@ -1920,24 +1940,35 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                     proposed_candidate_ids,
                     proposed_candidate_input_revisions);
             JointCombinationEvaluation current_evaluation{};
-            const bool superiority_evaluated = active_command_change
+            const bool current_evaluation_valid = active_command_change
                 && evaluateSelectedTuple(
                     now_us,
                     candidate_sets,
                     candidate_counts,
                     current_evaluation);
+            const bool mode_b_role_recertification = active_command_change
+                && m_selected_v4_cutover
+                && m_params.execution_policy
+                    == ManeuverExecutionPolicy::ContinuousV4;
+            const bool superiority_evaluated = active_command_change
+                && (current_evaluation_valid
+                    || mode_b_role_recertification);
             const bool clearly_superior = superiority_evaluated
                 && m_params.active_switching_enabled
-                && clearlySuperior(current_evaluation, best);
+                && ((!current_evaluation_valid
+                        && mode_b_role_recertification)
+                    || clearlySuperior(current_evaluation, best));
             decision.switch_superiority_evaluated = superiority_evaluated;
             decision.switch_clearly_superior = clearly_superior;
             if (superiority_evaluated) {
-                decision.switch_current_cost =
-                    current_evaluation.reciprocal_cost_sum;
                 decision.switch_proposed_cost = best.reciprocal_cost_sum;
-                decision.switch_current_minimum_ad_m =
-                    current_evaluation.minimum_ad_m;
                 decision.switch_proposed_minimum_ad_m = best.minimum_ad_m;
+                if (current_evaluation_valid) {
+                    decision.switch_current_cost =
+                        current_evaluation.reciprocal_cost_sum;
+                    decision.switch_current_minimum_ad_m =
+                        current_evaluation.minimum_ad_m;
+                }
             }
             if (active_command_change && !clearly_superior) {
                 m_pending_proposal = PendingSelectionProposal{};
@@ -2263,6 +2294,24 @@ bool ManeuverSelectionWorker::proposalChangesActiveCommand(
     const std::array<std::uint64_t, kMaximumSelectionAircraft>
         & candidate_input_revisions) const noexcept
 {
+    if (continuousV4RoleChanged(
+            m_params.execution_policy,
+            m_has_selected_combination,
+            m_selected_v4_cutover,
+            m_selected_candidate_ids,
+            candidate_ids,
+            static_cast<std::size_t>(m_params.total_agent_count))) {
+        // Mode B continuously recomputes the safe rate for the incumbent role.
+        // A new revision of the same role is a receding-control refresh, while
+        // changing NearNominal/LEFT/RIGHT is a maneuver switch that must pass
+        // superiority and distributed proposal coordination.
+        return true;
+    }
+    if (m_params.execution_policy == ManeuverExecutionPolicy::ContinuousV4
+        && m_has_selected_combination && m_selected_v4_cutover) {
+        return false;
+    }
+
     for (int aircraft = 0; aircraft < m_params.total_agent_count; ++aircraft) {
         const std::size_t aircraft_index = static_cast<std::size_t>(aircraft);
         bool active = false;
@@ -2614,13 +2663,29 @@ bool ManeuverSelectionWorker::buildActivationSample(
             m_ownship_candidate_count,
             ownship_candidate_id,
             ownship_candidate_input_revision);
-    IntentKinematics ownship_kinematics;
-    if (ownship_intent == nullptr
-        || interpolateIntentKinematics(
-            *ownship_intent, now_us, ownship_kinematics)
-            != IntentKinematicsStatus::Valid) {
+    if (ownship_intent == nullptr || !m_has_latest_state
+        || m_latest_state_timestamp_us != now_us) {
         return false;
     }
+
+    // The alternate-termination study uses the aircraft's current flight
+    // vector.  The selected intent remains the source of AD/PMR/MASD below,
+    // but it must not replace the measured ownship state in the CPA test.
+    const double horizontal_speed_squared_m2ps2 =
+        m_latest_state.V * m_latest_state.V
+        - m_latest_state.h_dot * m_latest_state.h_dot;
+    if (!std::isfinite(horizontal_speed_squared_m2ps2)) {
+        return false;
+    }
+    IntentKinematics ownship_kinematics;
+    const double horizontal_speed_mps = std::sqrt(std::max(
+        0.0, horizontal_speed_squared_m2ps2));
+    ownship_kinematics.position_ned = {
+        m_latest_state.p_n, m_latest_state.p_e, -m_latest_state.h};
+    ownship_kinematics.velocity_ned = {
+        horizontal_speed_mps * std::cos(m_latest_state.psi),
+        horizontal_speed_mps * std::sin(m_latest_state.psi),
+        -m_latest_state.h_dot};
 
     sample.selected_candidate_id = ownship_candidate_id;
     sample.selected_candidate_input_revision =
@@ -2718,6 +2783,9 @@ bool ManeuverSelectionWorker::buildActivationSample(
         }
 
         IntentKinematics remote_kinematics;
+        // A cooperating peer has no local estimator state in this worker. Its
+        // timestamped intent is therefore propagated to the current ownship
+        // time before forming the peer's current flight vector.
         if (interpolateIntentKinematics(
                 *remote_intent, now_us, remote_kinematics)
                 != IntentKinematicsStatus::Valid) {
@@ -2812,8 +2880,21 @@ void ManeuverSelectionWorker::applyFormationActivationGate(
         }
         collision_relevant_threat_ids.push_back(
             static_cast<std::uint32_t>(remote_id));
+        const double hard_safety_budget_m =
+            sample.activation_criteria_m[remote_index];
+        double current_separation_squared_m2 = 0.0;
+        for (const double component :
+             sample.relative_positions_ned_m[remote_index]) {
+            current_separation_squared_m2 += component * component;
+        }
+        const double current_separation_m = std::sqrt(
+            current_separation_squared_m2);
         if (result.formation_inhibit && result.timestamp_valid
-            && result.geometry_valid) {
+            && result.geometry_valid
+            && formationSpacingCompatible(
+                m_params.formation_target_separation_m,
+                current_separation_m,
+                hard_safety_budget_m)) {
             decision.formation_inhibited_threat_mask |= threat_bit;
         }
     }

@@ -9,14 +9,18 @@ BASE_RUN_ID=${BASE_RUN_ID:-execution_policy_$(date +%Y%m%d_%H%M%S)}
 
 echo "[compare] A: baseline AMAC, AD < 0 m"
 RUN_ID="${BASE_RUN_ID}_amac_ad_0m" \
+MANEUVER_SEARCH_MODE=exhaustive \
 V4_MODE=shadow \
+V4_CONTROL_ARCHITECTURE=legacy_safe_control_set \
 AVOIDANCE_EXECUTION_POLICY=amac_ad_threshold \
     "${SCRIPT_DIR}/run_point_convergence_case.sh" avoidance
 
-echo "[compare] B: horizon-gated V4 cone-barrier control"
-RUN_ID="${BASE_RUN_ID}_horizon_gated_v4" \
+echo "[compare] B: continuous closed-form Mode-B control"
+RUN_ID="${BASE_RUN_ID}_mode_b_cbf" \
+MANEUVER_SEARCH_MODE=heuristic \
 V4_MODE=cutover \
-AVOIDANCE_EXECUTION_POLICY=horizon_gated_v4 \
+V4_CONTROL_ARCHITECTURE=closed_form_backup_mode_b \
+AVOIDANCE_EXECUTION_POLICY=continuous_v4 \
     "${SCRIPT_DIR}/run_point_convergence_case.sh" avoidance
 
 echo "[compare] completed: ${BASE_RUN_ID}"

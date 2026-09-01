@@ -43,6 +43,11 @@ as five color-matched stars in the PNG and MP4.
 The flocking case reuses `testing_module/formation_hils/config/spawn_config.yaml`,
 production `collision_avoidance/config/flocking_params.yaml`, and
 `test_guidance_mode=flocking`. It does not add a test-only flocking controller.
+The avoidance form explicitly selects the provisional
+`config/amac_flocking_formation.yaml` v2 profile. This profile is limited to
+Flocking HILS: it is not a production or flight-qualified default. A threat is
+exempted only from a new activation, and only when both the 30 m target spacing
+and its current 3-D spacing exceed that pair's hard activation criterion.
 The first smoke case starts the five vehicles in a 35 m-spaced line with a
 common northbound course and checks whether the normal 30 m flocking spacing
 causes any unnecessary V4 override.
@@ -59,12 +64,12 @@ the 10 m DSD remains inside MASD and is not added again as an AD threshold.
 scripts/run_execution_policy_comparison.sh
 ```
 
-The generated run IDs end in `_amac_ad_0m` and `_horizon_gated_v4`.
+The generated run IDs end in `_amac_ad_0m` and `_mode_b_cbf`.
 The first case uses legacy AMAC selection with `AD < 0`; the second
-opens the coordinated V4 command gate only when the minimum 95% robust
-near-nominal cone clearance over the aligned 4.5 s horizon reaches the 10 m
-DSD threshold. Candidate combinations must first pass the same-time robust
-positive-margin cone filter; AD cost ranks only the remaining combinations.
+selects `closed_form_backup_mode_b` under `continuous_v4`. Its independent
+Left/Right backup certificates and scalar interpolation define the primary
+safety path; it is not combined with the legacy-only `horizon_gated_v4`
+supervisor.
 An empty V4 safe set remains an explicit infeasible diagnostic and is not
 reported as a safety guarantee.
 
@@ -138,3 +143,11 @@ Use `AMAC_POLICY_CONFIG=/absolute/path/to/another.yaml` to run a separately
 recorded calibration. The public sources do not disclose those two numerical
 margins, so every override remains a project parameter rather than a Lockheed
 Martin value.
+
+The analyzer now includes `formation_gate_diagnostics`. The invariant
+`inhibited_while_command_active_count == 0` verifies that formation never ends
+an active episode. The v2 hard-gate smoke improved the line-flocking minimum
+separation to 9.502 m, but did not meet the 10 m DSD, and a point-collision
+stress run reached 2.684 m. These are recorded failures, not evidence for
+profile promotion; see
+`md_file/LOCKHEED_FLOCKING_THREATWISE_INTEGRATION_PLAN.md`.

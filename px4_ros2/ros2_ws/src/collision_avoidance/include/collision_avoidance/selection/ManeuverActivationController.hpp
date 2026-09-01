@@ -18,9 +18,14 @@ enum class ManeuverDeactivationReason : std::uint8_t
 struct ManeuverActivationControllerParams
 {
     // Project reconstruction for the unpublished Lockheed CPA special case.
-    // Below this squared relative speed, future relative position is treated
-    // as constant instead of dividing by a near-zero denominator.
-    double relative_speed_squared_epsilon_m2ps2{1.0e-12};
+    // Below this relative speed, current separation is used instead of
+    // dividing by a near-zero denominator. Runtime profiles must calibrate
+    // this threshold from their synchronized velocity noise.
+    double relative_speed_epsilon_mps{1.0e-6};
+    // CPA projection is trusted only over the same finite interval as the
+    // trajectory predictor. An approaching CPA beyond this horizon cannot
+    // terminate an active episode.
+    double cpa_horizon_s{4.5};
 };
 
 struct ManeuverActivationSample

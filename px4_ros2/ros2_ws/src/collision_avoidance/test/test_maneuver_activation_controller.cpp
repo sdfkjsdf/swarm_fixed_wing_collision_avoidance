@@ -140,16 +140,64 @@ TEST(ManeuverActivationController, ZeroRelativeSpeedUsesCurrentDistance)
     EXPECT_FALSE(still_inside.just_deactivated);
 }
 
+TEST(ManeuverActivationController,
+    CalibratedNearZeroRelativeSpeedUsesCurrentDistance)
+{
+    cs::ManeuverActivationControllerParams params;
+    params.relative_speed_epsilon_mps = 0.21;
+    cs::ManeuverActivationController controller(params);
+    ASSERT_TRUE(controller.update(sample(3'150'000, -1.0, 5.0, -1.0)).active);
+
+    // The unconstrained CPA would be 200 s away. Because 0.1 m/s is below
+    // the calibrated near-zero threshold, current separation is used.
+    const auto clear = controller.update(
+        sample(3'160'000, 1.0, 20.0, -0.1));
+    EXPECT_FALSE(clear.active);
+    EXPECT_TRUE(clear.just_deactivated);
+}
+
+TEST(ManeuverActivationController,
+    ApproachingCpaBeyondPredictionHorizonCannotTerminate)
+{
+    cs::ManeuverActivationControllerParams params;
+    params.cpa_horizon_s = 4.5;
+    cs::ManeuverActivationController controller(params);
+    ASSERT_TRUE(controller.update(sample(3'170'000, -1.0, 5.0, -1.0)).active);
+
+    auto beyond_horizon = sample(3'180'000, 1.0, 20.0, -1.0);
+    beyond_horizon.relative_positions_ned_m[1] = {20.0, 15.0, 0.0};
+    beyond_horizon.relative_velocities_ned_mps[1] = {-1.0, 0.0, 0.0};
+    const auto status = controller.update(beyond_horizon);
+    EXPECT_TRUE(status.active);
+    EXPECT_FALSE(status.just_deactivated);
+}
+
+TEST(ManeuverActivationController,
+    CpaExactlyOnPredictionHorizonUsesCpaDistance)
+{
+    cs::ManeuverActivationControllerParams params;
+    params.cpa_horizon_s = 4.5;
+    cs::ManeuverActivationController controller(params);
+    ASSERT_TRUE(controller.update(sample(3'190'000, -1.0, 5.0, -1.0)).active);
+
+    auto at_horizon = sample(3'200'000, 1.0, 4.5, -1.0);
+    at_horizon.relative_positions_ned_m[1] = {4.5, 15.0, 0.0};
+    at_horizon.relative_velocities_ned_mps[1] = {-1.0, 0.0, 0.0};
+    const auto status = controller.update(at_horizon);
+    EXPECT_FALSE(status.active);
+    EXPECT_TRUE(status.just_deactivated);
+}
+
 TEST(ManeuverActivationController, UsesThreeDimensionalFutureCpaDistance)
 {
     cs::ManeuverActivationController controller;
     auto activation = sample(3'200'000, -1.0, 5.0, -1.0);
-    activation.relative_positions_ned_m[1] = {20.0, 15.0, 0.0};
+    activation.relative_positions_ned_m[1] = {8.0, 15.0, 0.0};
     activation.relative_velocities_ned_mps[1] = {-2.0, 0.0, 0.0};
     ASSERT_TRUE(controller.update(activation).active);
 
-    auto future_cpa_clear = sample(3'300'000, 1.0, 20.0, -2.0);
-    future_cpa_clear.relative_positions_ned_m[1] = {20.0, 15.0, 0.0};
+    auto future_cpa_clear = sample(3'300'000, 1.0, 8.0, -2.0);
+    future_cpa_clear.relative_positions_ned_m[1] = {8.0, 15.0, 0.0};
     future_cpa_clear.relative_velocities_ned_mps[1] = {-2.0, 0.0, 0.0};
     const auto status = controller.update(future_cpa_clear);
     EXPECT_FALSE(status.active);
@@ -208,7 +256,7 @@ TEST(ManeuverActivationController, InvalidUpdatesCannotInterruptActiveCommand)
 }
 
 TEST(ManeuverActivationController,
-    ReactivatesOnNextEvaluationWhenConflictPersists)
+    ProjectReconstructionImmediatelyRearmsWhenConflictPersists)
 {
     cs::ManeuverActivationController controller;
     ASSERT_TRUE(controller.update(sample(5'000'000, -1.0, 5.0, -1.0)).active);

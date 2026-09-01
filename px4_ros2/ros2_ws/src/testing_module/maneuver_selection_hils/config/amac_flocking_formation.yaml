@@ -1,0 +1,40 @@
+"/**":
+  ros__parameters:
+    # Existing AMAC candidate-management policy. Numerical superiority margins
+    # are project HILS values because the public source does not disclose them.
+    amac_active_switching_enabled: true
+    amac_active_switch_cost_margin: 0.01
+    amac_active_switch_minimum_ad_margin_m: 1.0
+
+    # Bounded CPA project reconstruction. The relative-speed threshold is the
+    # rounded 3-sigma first-difference noise estimate from the final half of
+    # flocking_only_baseline_20260831_01 at 10 Hz.
+    amac_relative_speed_epsilon_mps: 0.21
+    amac_cpa_horizon_s: 4.5
+
+    # Provisional UAV/HILS formation profile. Entry bounds cover all five
+    # labelled line-rejoin aircraft (not only adjacent pairs) while the wider
+    # exit bounds provide explicit hysteresis. These are neither
+    # Lockheed values nor flight-qualified values.
+    formation_discrimination_enabled: true
+    formation_aggregation_policy: per_threat_exemption_only
+    formation_profile_name: line_flocking_sils_20260831_v2
+    formation_profile_kind: uav_calibrated
+    formation_representative_wingspan_m: 2.144
+    formation_range0_wingspan_scale: 1.0
+    formation_uncertainty_margin_m: 0.5
+    formation_range1_offset_m: 27.856
+    formation_closure_upper_entry_table: [0.0, 16.0, 160.0, 16.0]
+    formation_closure_upper_exit_table: [0.0, 18.0, 180.0, 18.0]
+    formation_closure_lower_entry_mps: -9.0
+    formation_closure_lower_exit_mps: -10.0
+    # FDZ is deliberately disabled for this provisional UAV profile. An
+    # unconditional close-range inhibit would conflict with the 10 m DSD.
+    formation_fdz_entry_limit_m: 0.0
+    formation_fdz_exit_limit_m: 0.0
+    formation_max_range_entry_m: 160.0
+    formation_max_range_exit_m: 180.0
+    formation_maximum_state_age_s: 0.1
+    formation_maximum_future_skew_s: 0.0
+    formation_maximum_timestamp_skew_s: 0.0
+    formation_lookup_policy: reject_outside_table

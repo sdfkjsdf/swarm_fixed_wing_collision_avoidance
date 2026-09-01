@@ -20,6 +20,7 @@ MODE=${1:-avoidance}
 SEARCH_MODE=${MANEUVER_SEARCH_MODE:-exhaustive}
 V4_MODE=${V4_MODE:-shadow}
 EXECUTION_POLICY=${AVOIDANCE_EXECUTION_POLICY:-amac_ad_threshold}
+V4_CONTROL_ARCHITECTURE=${V4_CONTROL_ARCHITECTURE:-legacy_safe_control_set}
 AMAC_POLICY_CONFIG=${AMAC_POLICY_CONFIG:-${HILS_ROOT}/config/amac_dynamic_best.yaml}
 TRAFFIC_PATTERN=${TRAFFIC_PATTERN:-point_convergence}
 
@@ -33,6 +34,11 @@ if [[ "${SEARCH_MODE}" != "heuristic" && "${SEARCH_MODE}" != "exhaustive" ]]; th
 fi
 if [[ "${V4_MODE}" != "shadow" && "${V4_MODE}" != "cutover" ]]; then
     echo "V4_MODE must be shadow or cutover"
+    exit 2
+fi
+if [[ "${V4_CONTROL_ARCHITECTURE}" != "legacy_safe_control_set" \
+        && "${V4_CONTROL_ARCHITECTURE}" != "closed_form_backup_mode_b" ]]; then
+    echo "V4_CONTROL_ARCHITECTURE must be legacy_safe_control_set or closed_form_backup_mode_b"
     exit 2
 fi
 if [[ "${EXECUTION_POLICY}" != "amac_ad_threshold" \
@@ -195,7 +201,7 @@ if [[ -e "${BAG_DIR}" ]]; then
     exit 2
 fi
 
-echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} policy=${EXECUTION_POLICY} ad_threshold=0m active_switch_config=${AMAC_POLICY_CONFIG} run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
+echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} v4_architecture=${V4_CONTROL_ARCHITECTURE} policy=${EXECUTION_POLICY} ad_threshold=0m active_switch_config=${AMAC_POLICY_CONFIG} run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
 for vehicle in 0 1 2 3 4; do
     port=$((8888 + vehicle))
     pkill -KILL -f "MicroXRCEAgent udp4 -p ${port}" 2>/dev/null || true
@@ -263,6 +269,7 @@ for vehicle in 0 1 2 3 4; do
         -p "maneuver_selection_exhaustive_test_mode:=${EXHAUSTIVE_TEST_MODE}" \
         -p v4_safe_control_enabled:=true \
         -p "v4_shadow_only:=${V4_SHADOW_ONLY}" \
+        -p "v4_control_architecture:=${V4_CONTROL_ARCHITECTURE}" \
         -p "positive_margin_filter_enabled:=${POSITIVE_MARGIN_FILTER_ENABLED}" \
         > "${LOG_DIR}/guidance_${vehicle}.log" 2>&1 &
     GUIDANCE_PIDS+=($!)

@@ -62,8 +62,6 @@
     formation_range0_wingspan_scale: 0.0
     formation_uncertainty_margin_m: 0.0
     formation_range1_offset_m: 0.0
-    formation_closure_upper_entry_table: []
-    formation_closure_upper_exit_table: []
     formation_closure_lower_entry_mps: 0.0
     formation_closure_lower_exit_mps: 0.0
     formation_fdz_entry_limit_m: 0.0

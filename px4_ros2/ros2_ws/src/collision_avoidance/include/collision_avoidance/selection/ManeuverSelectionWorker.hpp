@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -109,6 +110,9 @@ struct ManeuverSelectionWorkerParams
     formation::FormationBoundaryConfig formation_boundary_config{};
     formation::FormationAggregationPolicy formation_aggregation_policy{
         formation::FormationAggregationPolicy::PerThreatExemptionOnly};
+    // Nominal formation spacing. A formation result may exempt a threat only
+    // when this spacing exceeds that pair's current hard-safety budget.
+    double formation_target_separation_m{0.0};
     // Robust cone clearance h excludes DSD. V4 commands are applied when the
     // worst aligned near-nominal horizon clearance reaches this threshold.
     double v4_horizon_trigger_m{10.0};
@@ -332,6 +336,28 @@ inline bool v4CutoverCandidateReady(
             <= kMaximumSafeControlCandidates;
 }
 
+inline bool continuousV4RoleChanged(
+    ManeuverExecutionPolicy policy,
+    bool has_selected_combination,
+    bool selected_v4_cutover,
+    const std::array<std::uint8_t, kMaximumSelectionAircraft>
+        & selected_candidate_ids,
+    const std::array<std::uint8_t, kMaximumSelectionAircraft>
+        & proposed_candidate_ids,
+    std::size_t aircraft_count) noexcept
+{
+    if (policy != ManeuverExecutionPolicy::ContinuousV4
+        || !has_selected_combination || !selected_v4_cutover
+        || aircraft_count > kMaximumSelectionAircraft) {
+        return false;
+    }
+    return !std::equal(
+        selected_candidate_ids.begin(),
+        selected_candidate_ids.begin()
+            + static_cast<std::ptrdiff_t>(aircraft_count),
+        proposed_candidate_ids.begin());
+}
+
 inline bool maneuverCommandExecutionRequested(
     ManeuverExecutionPolicy policy,
     const ManeuverSelectionDecision & decision) noexcept
@@ -347,6 +373,18 @@ inline bool maneuverCommandExecutionRequested(
             && decision.v4_horizon_gate_active;
     }
     return decision.activation_requested;
+}
+
+inline bool formationSpacingCompatible(
+    const double target_separation_m,
+    const double current_separation_m,
+    const double hard_safety_budget_m) noexcept
+{
+    return std::isfinite(target_separation_m)
+        && std::isfinite(current_separation_m)
+        && std::isfinite(hard_safety_budget_m)
+        && target_separation_m > hard_safety_budget_m
+        && current_separation_m > hard_safety_budget_m;
 }
 
 inline bool updateV4HorizonGateState(

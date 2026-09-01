@@ -60,6 +60,9 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("mode_b_terminal_alpha_gain_per_s", 0.5);
     node->declare_parameter<double>("mode_b_certification_tolerance_m", 1.0e-6);
     node->declare_parameter<double>("mode_b_maximum_intent_age_s", 1.0);
+    node->declare_parameter<double>(
+        "amac_relative_speed_epsilon_mps", 1.0e-6);
+    node->declare_parameter<double>("amac_cpa_horizon_s", 4.5);
     node->declare_parameter<bool>("formation_discrimination_enabled", false);
     node->declare_parameter<std::string>(
         "formation_aggregation_policy", "per_threat_exemption_only");
@@ -138,6 +141,11 @@ int main(int argc, char * argv[])
             "amac_active_switch_cost_margin").as_double();
         params.active_switch_minimum_ad_margin_m = node->get_parameter(
             "amac_active_switch_minimum_ad_margin_m").as_double();
+        params.activation_params.relative_speed_epsilon_mps =
+            node->get_parameter(
+                "amac_relative_speed_epsilon_mps").as_double();
+        params.activation_params.cpa_horizon_s = node->get_parameter(
+            "amac_cpa_horizon_s").as_double();
         params.gravity_mps2 = node->get_parameter("gravity").as_double();
         const double maximum_roll_radians =
             node->get_parameter("max_roll_deg").as_double()
@@ -265,6 +273,8 @@ int main(int argc, char * argv[])
 
         params.formation_discrimination_enabled = node->get_parameter(
             "formation_discrimination_enabled").as_bool();
+        params.formation_target_separation_m = node->get_parameter(
+            "flocking_desired_distance").as_double();
         auto & formation_config = params.formation_boundary_config;
         formation_config.profile_name = node->get_parameter(
             "formation_profile_name").as_string();
@@ -324,36 +334,43 @@ int main(int argc, char * argv[])
             "formation_maximum_future_skew_s").as_double();
         formation_config.maximum_timestamp_skew_s = node->get_parameter(
             "formation_maximum_timestamp_skew_s").as_double();
-        const auto parse_boundary_table = [](
-            const std::vector<double> & flat_values) {
-            if (flat_values.size() % 2U != 0U) {
-                throw std::invalid_argument(
-                    "formation closure tables require [range, closure] pairs");
+        if (params.formation_discrimination_enabled) {
+            const auto parse_boundary_table = [](
+                const std::vector<double> & flat_values) {
+                if (flat_values.size() % 2U != 0U) {
+                    throw std::invalid_argument(
+                        "formation closure tables require [range, closure] pairs");
+                }
+                std::vector<
+                    collision_avoidance::formation::FormationBoundaryNode>
+                    table;
+                table.reserve(flat_values.size() / 2U);
+                for (std::size_t index = 0; index < flat_values.size();
+                     index += 2U) {
+                    table.push_back(
+                        {flat_values[index], flat_values[index + 1U]});
+                }
+                return table;
+            };
+            formation_config.closure_upper_entry_table = parse_boundary_table(
+                node->get_parameter(
+                    "formation_closure_upper_entry_table").as_double_array());
+            formation_config.closure_upper_exit_table = parse_boundary_table(
+                node->get_parameter(
+                    "formation_closure_upper_exit_table").as_double_array());
+            const std::string formation_lookup_policy = node->get_parameter(
+                "formation_lookup_policy").as_string();
+            if (formation_lookup_policy == "reject_outside_table") {
+                formation_config.lookup_policy =
+                    collision_avoidance::formation::FormationLookupPolicy::
+                        RejectOutsideTable;
+            } else if (formation_lookup_policy == "clamp_to_endpoint") {
+                formation_config.lookup_policy =
+                    collision_avoidance::formation::FormationLookupPolicy::
+                        ClampToEndpoint;
+            } else {
+                throw std::invalid_argument("invalid formation_lookup_policy");
             }
-            std::vector<collision_avoidance::formation::FormationBoundaryNode>
-                table;
-            table.reserve(flat_values.size() / 2U);
-            for (std::size_t index = 0; index < flat_values.size(); index += 2U) {
-                table.push_back({flat_values[index], flat_values[index + 1U]});
-            }
-            return table;
-        };
-        formation_config.closure_upper_entry_table = parse_boundary_table(
-            node->get_parameter(
-                "formation_closure_upper_entry_table").as_double_array());
-        formation_config.closure_upper_exit_table = parse_boundary_table(
-            node->get_parameter(
-                "formation_closure_upper_exit_table").as_double_array());
-        const std::string formation_lookup_policy = node->get_parameter(
-            "formation_lookup_policy").as_string();
-        if (formation_lookup_policy == "reject_outside_table") {
-            formation_config.lookup_policy = collision_avoidance::formation::
-                FormationLookupPolicy::RejectOutsideTable;
-        } else if (formation_lookup_policy == "clamp_to_endpoint") {
-            formation_config.lookup_policy = collision_avoidance::formation::
-                FormationLookupPolicy::ClampToEndpoint;
-        } else {
-            throw std::invalid_argument("invalid formation_lookup_policy");
         }
         maneuver_selection_runtime = std::make_shared<
             collision_avoidance::communication::DistributedManeuverSelectionRuntime>(

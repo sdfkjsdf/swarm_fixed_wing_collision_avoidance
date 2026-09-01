@@ -38,6 +38,9 @@ ManeuverActivationStatus ManeuverActivationController::update(
         return m_status;
     }
 
+    // The public alternate-termination study does not publish its post-CPA
+    // re-arm state machine. Immediate eligibility here is an explicit project
+    // reconstruction and is intentionally kept separate from futureCpaClear().
     if (!sample.allow_new_activation
         || !sample.valid || !std::isfinite(sample.minimum_ad_m)
         || sample.minimum_ad_m >= 0.0
@@ -158,11 +161,24 @@ bool ManeuverActivationController::futureCpaDistance(
         return false;
     }
 
+    const double relative_speed_epsilon_squared_m2ps2 =
+        m_params.relative_speed_epsilon_mps
+        * m_params.relative_speed_epsilon_mps;
     double cpa_time_s = 0.0;
     if (relative_speed_squared_m2ps2
-        > m_params.relative_speed_squared_epsilon_m2ps2) {
-        cpa_time_s = std::max(
-            0.0, -radial_product_m2ps / relative_speed_squared_m2ps2);
+        > relative_speed_epsilon_squared_m2ps2) {
+        const double unconstrained_cpa_time_s =
+            -radial_product_m2ps / relative_speed_squared_m2ps2;
+        if (!std::isfinite(unconstrained_cpa_time_s)) {
+            return false;
+        }
+        if (unconstrained_cpa_time_s > m_params.cpa_horizon_s) {
+            // Project reconstruction: do not extrapolate an approaching pair
+            // beyond the validated predictor horizon merely to release the
+            // avoidance command.
+            return false;
+        }
+        cpa_time_s = std::max(0.0, unconstrained_cpa_time_s);
     }
 
     double distance_squared_m2 = 0.0;

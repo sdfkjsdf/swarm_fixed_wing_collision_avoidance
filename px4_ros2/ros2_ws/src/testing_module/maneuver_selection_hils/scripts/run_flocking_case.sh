@@ -5,6 +5,10 @@
 set -o pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Keep the provisional formation profile confined to the explicitly selected
+# flocking HILS case. Point-convergence/crossing runs keep their own policy.
+AMAC_POLICY_CONFIG=${AMAC_POLICY_CONFIG:-${SCRIPT_DIR}/../config/amac_flocking_formation.yaml}
+export AMAC_POLICY_CONFIG
 FLOCKING_LAYOUT=${FLOCKING_LAYOUT:-line}
 if [[ "${FLOCKING_LAYOUT}" == "line" ]]; then
     export TRAFFIC_PATTERN=flocking

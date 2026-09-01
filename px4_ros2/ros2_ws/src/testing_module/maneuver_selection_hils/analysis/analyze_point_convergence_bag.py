@@ -223,6 +223,8 @@ def decision_summary(decisions):
             for _, message in records)
         selected_v4 = sum(
             bool(message.selected_v4_cutover) for _, message in records)
+        command_execution_requests = sum(
+            command_execution_requested(message) for _, message in records)
         proposed_v4 = sum(
             bool(message.proposal_valid and message.proposed_v4_cutover)
             for _, message in records)
@@ -250,6 +252,7 @@ def decision_summary(decisions):
             "clearly_superior_proposal_count": clearly_superior,
             "accepted_active_switch_count": accepted_switches,
             "selected_v4_cutover_count": selected_v4,
+            "command_execution_requested_count": command_execution_requests,
             "proposed_v4_cutover_count": proposed_v4,
             "decision_publish_rate_hz": observed_rate_hz(bag_timestamps_us),
             "unique_full_evaluation_count": len(full_evaluations),
@@ -267,9 +270,22 @@ def v4_shadow_summary(decisions):
         enabled = [message for _, message in records if message.v4_enabled]
         evaluated = [
             message for message in enabled if message.v4_shadow_evaluated]
+        legacy_evaluated = [
+            message for message in evaluated
+            if int(message.v4_control_architecture) == 0]
+        mode_b_evaluated = [
+            message for message in evaluated
+            if int(message.v4_control_architecture) == 1]
+
+        def finite_range(messages, attribute):
+            values = [
+                float(getattr(message, attribute)) for message in messages
+                if math.isfinite(float(getattr(message, attribute)))]
+            return [min(values), max(values)] if values else None
+
         effective_rates = [
             float(message.v4_effective_max_heading_rate_radps)
-            for message in evaluated
+            for message in legacy_evaluated
             if math.isfinite(message.v4_effective_max_heading_rate_radps)]
         result.append({
             "vehicle_id": vehicle,
@@ -298,9 +314,9 @@ def v4_shadow_summary(decisions):
                 int(message.v4_candidate_count)
                 for message in evaluated).items())),
             "left_infeasible_count": sum(
-                not message.v4_left_feasible for message in evaluated),
+                not message.v4_left_feasible for message in legacy_evaluated),
             "right_infeasible_count": sum(
-                not message.v4_right_feasible for message in evaluated),
+                not message.v4_right_feasible for message in legacy_evaluated),
             "maximum_airspeed_age_us": max(
                 (int(message.v4_airspeed_age_us) for message in enabled),
                 default=None),
@@ -310,6 +326,49 @@ def v4_shadow_summary(decisions):
             "effective_max_heading_rate_radps_range": (
                 [min(effective_rates), max(effective_rates)]
                 if effective_rates else None),
+            "mode_b_evaluated_record_count": len(mode_b_evaluated),
+            "mode_b_candidate_ready_count": sum(
+                int(message.v4_shadow_status) == 6
+                and int(message.v4_candidate_status) == 0
+                and 0 < int(message.v4_candidate_count) <= 3
+                for message in mode_b_evaluated),
+            "mode_b_threat_status_counts": dict(sorted(Counter(
+                int(message.mode_b_threat_status)
+                for message in mode_b_evaluated).items())),
+            "mode_b_interpolation_status_counts": dict(sorted(Counter(
+                int(message.mode_b_interpolation_status)
+                for message in mode_b_evaluated).items())),
+            "mode_b_branch_classification_counts": dict(sorted(Counter(
+                int(message.mode_b_branch_classification)
+                for message in mode_b_evaluated).items())),
+            "mode_b_left_certified_count": sum(
+                bool(message.mode_b_left_certified)
+                for message in mode_b_evaluated),
+            "mode_b_right_certified_count": sum(
+                bool(message.mode_b_right_certified)
+                for message in mode_b_evaluated),
+            "mode_b_left_interpolation_status_counts": dict(sorted(Counter(
+                int(message.mode_b_left_interpolation_status)
+                for message in mode_b_evaluated).items())),
+            "mode_b_right_interpolation_status_counts": dict(sorted(Counter(
+                int(message.mode_b_right_interpolation_status)
+                for message in mode_b_evaluated).items())),
+            "mode_b_left_mu_star_range": finite_range(
+                mode_b_evaluated, "mode_b_left_mu_star"),
+            "mode_b_right_mu_star_range": finite_range(
+                mode_b_evaluated, "mode_b_right_mu_star"),
+            "mode_b_left_safe_rate_radps_range": finite_range(
+                mode_b_evaluated, "mode_b_left_safe_rate_radps"),
+            "mode_b_right_safe_rate_radps_range": finite_range(
+                mode_b_evaluated, "mode_b_right_safe_rate_radps"),
+            "mode_b_left_path_margin_m_range": finite_range(
+                mode_b_evaluated, "mode_b_left_minimum_path_margin_m"),
+            "mode_b_right_path_margin_m_range": finite_range(
+                mode_b_evaluated, "mode_b_right_minimum_path_margin_m"),
+            "mode_b_left_terminal_margin_m_range": finite_range(
+                mode_b_evaluated, "mode_b_left_terminal_turn_margin_m"),
+            "mode_b_right_terminal_margin_m_range": finite_range(
+                mode_b_evaluated, "mode_b_right_terminal_turn_margin_m"),
         })
     return result
 
@@ -406,6 +465,41 @@ def activation_state_summary(decisions):
             "repeated_end_flag_count": repeated_end_flag_count,
             "starts": starts,
             "ends": ends,
+        })
+    return result
+
+
+def formation_gate_summary(decisions):
+    result = []
+    for vehicle, records in enumerate(decisions):
+        evaluated = 0
+        inhibited = 0
+        inhibited_while_active = 0
+        nonzero_masks = 0
+        mask_histogram = Counter()
+        for _, message in records:
+            active = command_execution_requested(message)
+            if bool(getattr(message, "formation_evaluated", False)):
+                evaluated += 1
+            if bool(getattr(message, "formation_inhibit", False)):
+                inhibited += 1
+                if active:
+                    inhibited_while_active += 1
+            mask = int(getattr(
+                message, "formation_inhibited_threat_mask", 0))
+            if mask != 0:
+                nonzero_masks += 1
+                mask_histogram[mask] += 1
+        result.append({
+            "vehicle_id": vehicle,
+            "formation_evaluated_count": evaluated,
+            "new_activation_inhibited_count": inhibited,
+            "inhibited_while_command_active_count": inhibited_while_active,
+            "nonzero_inhibited_threat_mask_count": nonzero_masks,
+            "inhibited_threat_mask_histogram": {
+                str(mask): count
+                for mask, count in sorted(mask_histogram.items())
+            },
         })
     return result
 
@@ -1110,6 +1204,7 @@ def analyze(args):
         "v4_shadow_diagnostics": v4_shadow_summary(decisions),
         "v4_horizon_gate_diagnostics": v4_horizon_gate_summary(decisions),
         "activation_state_diagnostics": activation_state_summary(decisions),
+        "formation_gate_diagnostics": formation_gate_summary(decisions),
         "trajectory_intent_diagnostics": trajectory_intent_summary(
             intents, decisions, int(grid_ns[0])),
         "formation_override_diagnostics": formation_override_summary(

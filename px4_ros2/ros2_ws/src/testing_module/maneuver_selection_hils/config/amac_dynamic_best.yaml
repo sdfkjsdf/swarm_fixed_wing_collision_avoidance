@@ -5,3 +5,8 @@
     amac_active_switching_enabled: true
     amac_active_switch_cost_margin: 0.01
     amac_active_switch_minimum_ad_margin_m: 1.0
+    # Project CPA reconstruction. The 0.21 m/s value is the rounded 3-sigma
+    # first-difference noise measured in the normal line-flocking SILS bag;
+    # it is not a Lockheed Martin value.
+    amac_relative_speed_epsilon_mps: 0.21
+    amac_cpa_horizon_s: 4.5
