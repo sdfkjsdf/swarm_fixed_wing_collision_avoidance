@@ -39,16 +39,6 @@ public:
         double dt,
         TrajectoryCone & cone) const;
 
-    bool propagateAlongMeanWithCommandDelay(
-        const TrajectoryPredict & predictor,
-        const PredictionMeanTrajectory & mean_trajectory,
-        const PredictStateCovariance & initial_covariance,
-        const PredictInput & current_input,
-        const PredictInput & candidate_input,
-        double command_delay_s,
-        double dt,
-        TrajectoryCone & cone) const;
-
     static bool covarianceIsFiniteAndPsd(
         const PredictStateCovariance & covariance,
         double tolerance = 1.0e-8);

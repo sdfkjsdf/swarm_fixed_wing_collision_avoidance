@@ -80,7 +80,9 @@ if [[ "${SEARCH_MODE}" == "exhaustive" ]]; then
     EXHAUSTIVE_TEST_MODE=true
 fi
 V4_SHADOW_ONLY=true
-POSITIVE_MARGIN_FILTER_ENABLED=${POSITIVE_MARGIN_FILTER_ENABLED:-true}
+# Keep the Lockheed/AMAC comparison free of the project TC-CBF candidate
+# gate.  TC-CBF experiments must opt in explicitly through the environment.
+POSITIVE_MARGIN_FILTER_ENABLED=${POSITIVE_MARGIN_FILTER_ENABLED:-false}
 if [[ "${V4_MODE}" == "cutover" ]]; then
     V4_SHADOW_ONLY=false
     POSITIVE_MARGIN_FILTER_ENABLED=false

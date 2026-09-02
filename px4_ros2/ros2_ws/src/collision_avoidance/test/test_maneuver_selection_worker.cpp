@@ -365,45 +365,6 @@ confirmAllAircraftProposals(
 
 }  // namespace
 
-TEST(ManeuverSelectionWorker, LegacyIntentsRepresentCandidateApplicationDelay)
-{
-    auto worker_params = params();
-    worker_params.candidate_application_delay_s = 0.25;
-    cs::ManeuverSelectionWorker worker(worker_params);
-    constexpr std::uint64_t timestamp_us = 400'000ULL;
-    ASSERT_TRUE(worker.pushNominalSetpoint(
-        nominalSnapshot(timestamp_us, 19.5, 3.0)));
-
-    const auto output = pushBeliefAndProcess(
-        worker,
-        beliefSnapshot(timestamp_us, 0.0, 0.0, 20.0, 0.0));
-
-    ASSERT_GT(output.intent_packet_count, 0U);
-    for (std::size_t index = 0; index < output.intent_packet_count; ++index) {
-        const auto & packet = output.intent_packets[index];
-        // Epoch 1 began at 0.25 s, so the packet at 0.40 s carries only the
-        // remaining 0.10 s to the fixed 0.50 s application time.
-        EXPECT_NEAR(packet.command_delay_s, 0.10F, 1.0e-6F);
-        EXPECT_FLOAT_EQ(packet.current_input[0], 19.5F);
-        EXPECT_FLOAT_EQ(packet.current_input[2], 0.0F);
-        EXPECT_FLOAT_EQ(packet.current_input[3], 3.0F);
-    }
-
-    const auto refreshed = pushBeliefAndProcess(
-        worker,
-        beliefSnapshot(450'000ULL, 1.0, 0.0, 20.0, 0.0));
-    ASSERT_GT(refreshed.intent_packet_count, 0U);
-    for (std::size_t index = 0;
-         index < refreshed.intent_packet_count; ++index) {
-        // A 20 Hz refresh advances the same absolute switch schedule; it does
-        // not restart a fresh 0.25 s packet-relative delay.
-        EXPECT_NEAR(
-            refreshed.intent_packets[index].command_delay_s,
-            0.05F,
-            1.0e-6F);
-    }
-}
-
 TEST(ManeuverSelectionWorker, V4ShadowReportsMissingPeerWithoutChangingIntents)
 {
     auto worker_params = params();

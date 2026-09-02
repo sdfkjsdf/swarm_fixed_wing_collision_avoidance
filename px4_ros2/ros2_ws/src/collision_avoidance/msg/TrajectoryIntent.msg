@@ -10,11 +10,6 @@ uint8 candidate_set_kind
 float32[4] candidate_input
 uint64 candidate_input_revision
 
-# Input that remains in effect before the candidate can be applied, followed
-# by the project-configured application delay represented in this rollout.
-float32[4] current_input
-float32 command_delay_s
-
 # Predictor state order: [p_n, p_e, h, V_ground, course, h_dot, roll].
 float32[7] initial_state
 

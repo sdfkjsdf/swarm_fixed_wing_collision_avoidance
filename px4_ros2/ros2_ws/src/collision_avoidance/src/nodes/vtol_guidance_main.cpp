@@ -37,8 +37,6 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>(
         "amac_active_switch_minimum_ad_margin_m", 0.0);
     node->declare_parameter<double>(
-        "amac_candidate_application_delay_s", 0.25);
-    node->declare_parameter<double>(
         "amac_communication_delay_margin_m", 0.0);
     node->declare_parameter<double>("aircraft_half_wingspan", 1.072);
     // AMAC/Lockheed selection is AD-ranked. The positive-margin filter is a
@@ -148,8 +146,6 @@ int main(int argc, char * argv[])
             "amac_active_switch_cost_margin").as_double();
         params.active_switch_minimum_ad_margin_m = node->get_parameter(
             "amac_active_switch_minimum_ad_margin_m").as_double();
-        params.candidate_application_delay_s = node->get_parameter(
-            "amac_candidate_application_delay_s").as_double();
         params.activation_params.relative_speed_epsilon_mps =
             node->get_parameter(
                 "amac_relative_speed_epsilon_mps").as_double();
@@ -407,8 +403,7 @@ int main(int argc, char * argv[])
                     runtime->setActivationEnabled(enabled);
                 }
             });
-        if (params.v4_safe_control_enabled
-            || params.candidate_application_delay_s > 0.0) {
+        if (params.v4_safe_control_enabled) {
             formation->setNominalSetpointCallback(
                 [weak_runtime](
                     const collision_avoidance::selection::
@@ -424,7 +419,6 @@ int main(int argc, char * argv[])
             "[main] distributed maneuver selection: enabled=%d shadow_only=%d "
             "execution_policy=%s exhaustive_test=%d active_switch=%d "
             "switch_cost_margin=%.6f switch_ad_margin=%.3f "
-            "candidate_application_delay_s=%.3f "
             "communication_delay_margin_m=%.3f "
             "v4_enabled=%d v4_shadow_only=%d v4_architecture=%s",
             maneuver_selection_runtime->enabled() ? 1 : 0,
@@ -434,7 +428,6 @@ int main(int argc, char * argv[])
             params.active_switching_enabled ? 1 : 0,
             params.active_switch_cost_margin,
             params.active_switch_minimum_ad_margin_m,
-            params.candidate_application_delay_s,
             params.evaluator_params.communication_delay_margin_m,
             params.v4_safe_control_enabled ? 1 : 0,
             params.v4_shadow_only ? 1 : 0,

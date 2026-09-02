@@ -67,9 +67,6 @@ struct TrajectoryIntentPacket
     std::array<float, kTrajectoryIntentInputDimension> candidate_input{};
     // Deterministic identity of candidate_id + transmitted float32 input.
     std::uint64_t candidate_input_revision{0};
-    // Dynamic input actually executing before the candidate can take effect.
-    std::array<float, kTrajectoryIntentInputDimension> current_input{};
-    float command_delay_s{0.0F};
 };
 
 static_assert(std::is_trivially_copyable_v<TrajectoryIntentPacket>);
@@ -83,8 +80,6 @@ struct ReceivedTrajectoryIntent
     CandidateSetKind candidate_set_kind{CandidateSetKind::LegacyRoll};
     PredictInput candidate_input{};
     std::uint64_t candidate_input_revision{0};
-    PredictInput current_input{};
-    double command_delay_s{0.0};
     PredictionMeanTrajectory reconstructed_mean{};
     TrajectoryCone cone{};
 };
@@ -111,27 +106,6 @@ public:
         std::uint64_t source_timestamp_us,
         std::uint8_t candidate_id,
         const PredictInput & candidate_input,
-        const PredictState & initial_state,
-        const PredictStateCovariance & initial_covariance,
-        TrajectoryIntentPacket & packet,
-        std::uint64_t selection_epoch = 0) const;
-
-    bool buildForSelectedCandidateWithCommandDelay(
-        std::uint64_t source_timestamp_us,
-        std::uint8_t candidate_id,
-        const PredictInput & current_input,
-        double command_delay_s,
-        const PredictState & initial_state,
-        const PredictStateCovariance & initial_covariance,
-        TrajectoryIntentPacket & packet,
-        std::uint64_t selection_epoch = 0) const;
-
-    bool buildForCandidateInputWithCommandDelay(
-        std::uint64_t source_timestamp_us,
-        std::uint8_t candidate_id,
-        const PredictInput & candidate_input,
-        const PredictInput & current_input,
-        double command_delay_s,
         const PredictState & initial_state,
         const PredictStateCovariance & initial_covariance,
         TrajectoryIntentPacket & packet,

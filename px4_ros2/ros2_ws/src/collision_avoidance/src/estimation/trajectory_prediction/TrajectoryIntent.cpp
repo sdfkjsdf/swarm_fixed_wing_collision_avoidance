@@ -197,82 +197,23 @@ bool TrajectoryIntentSender::buildForCandidateInput(
     TrajectoryIntentPacket & packet,
     std::uint64_t selection_epoch) const
 {
-    return buildForCandidateInputWithCommandDelay(
-        source_timestamp_us,
-        candidate_id,
-        candidate_input,
-        candidate_input,
-        0.0,
-        initial_state,
-        initial_covariance,
-        packet,
-        selection_epoch);
-}
-
-bool TrajectoryIntentSender::buildForSelectedCandidateWithCommandDelay(
-    std::uint64_t source_timestamp_us,
-    std::uint8_t candidate_id,
-    const PredictInput & current_input,
-    double command_delay_s,
-    const PredictState & initial_state,
-    const PredictStateCovariance & initial_covariance,
-    TrajectoryIntentPacket & packet,
-    std::uint64_t selection_epoch) const
-{
-    const PredictInput * candidate_input = m_candidates.find(candidate_id);
-    if (candidate_input == nullptr) {
-        return false;
-    }
-    return buildForCandidateInputWithCommandDelay(
-        source_timestamp_us,
-        candidate_id,
-        *candidate_input,
-        current_input,
-        command_delay_s,
-        initial_state,
-        initial_covariance,
-        packet,
-        selection_epoch);
-}
-
-bool TrajectoryIntentSender::buildForCandidateInputWithCommandDelay(
-    std::uint64_t source_timestamp_us,
-    std::uint8_t candidate_id,
-    const PredictInput & candidate_input,
-    const PredictInput & current_input,
-    double command_delay_s,
-    const PredictState & initial_state,
-    const PredictStateCovariance & initial_covariance,
-    TrajectoryIntentPacket & packet,
-    std::uint64_t selection_epoch) const
-{
     if (candidate_id >= kManeuverCandidateCount
-        || !usableInput(candidate_input) || !usableInput(current_input)
-        || !std::isfinite(command_delay_s) || command_delay_s < 0.0
-        || command_delay_s > kTrajectoryIntentHorizonSeconds
+        || !usableInput(candidate_input)
         || !finiteState(initial_state)
         || !TrajectoryUncertainty::covarianceIsFiniteAndPsd(initial_covariance)) {
         return false;
     }
 
     const auto encoded_input = encodeInput(candidate_input);
-    const auto encoded_current_input = encodeInput(current_input);
     const PredictInput transmitted_input = decodeInput(encoded_input);
-    const PredictInput transmitted_current_input = decodeInput(
-        encoded_current_input);
-    const float encoded_delay_s = static_cast<float>(command_delay_s);
-    if (!usableInput(transmitted_input)
-        || !usableInput(transmitted_current_input)
-        || !std::isfinite(encoded_delay_s)) {
+    if (!usableInput(transmitted_input)) {
         return false;
     }
 
     PredictionMeanTrajectory predicted_mean{};
-    m_predictor.predictWithCommandDelay(
+    m_predictor.predict(
         initial_state,
-        transmitted_current_input,
         transmitted_input,
-        static_cast<double>(encoded_delay_s),
         kTrajectoryIntentStepSeconds,
         predicted_mean);
     const TrajectorySample compressed_mean =
@@ -288,8 +229,6 @@ bool TrajectoryIntentSender::buildForCandidateInputWithCommandDelay(
     candidate_packet.candidate_input = encoded_input;
     candidate_packet.candidate_input_revision = inputRevision(
         candidate_id, encoded_input);
-    candidate_packet.current_input = encoded_current_input;
-    candidate_packet.command_delay_s = encoded_delay_s;
     candidate_packet.initial_state = encodeState(initial_state);
     std::transform(
         initial_covariance.begin(),
@@ -314,8 +253,6 @@ bool TrajectoryIntentReceiver::receive(
     ReceivedTrajectoryIntent & received)
 {
     const PredictInput input = decodeInput(packet.candidate_input);
-    const PredictInput current_input = decodeInput(packet.current_input);
-    const double command_delay_s = static_cast<double>(packet.command_delay_s);
     const PredictState initial_state = decodeState(packet.initial_state);
     const PredictStateCovariance initial_covariance =
         decodeCovariance(packet.initial_covariance);
@@ -326,9 +263,6 @@ bool TrajectoryIntentReceiver::receive(
             && packet.candidate_set_kind
                 != CandidateSetKind::V4SafeControl)
         || !usableInput(input)
-        || !usableInput(current_input)
-        || !std::isfinite(command_delay_s) || command_delay_s < 0.0
-        || command_delay_s > kTrajectoryIntentHorizonSeconds
         || packet.candidate_input_revision != inputRevision(
             packet.candidate_id, packet.candidate_input)
         || !finiteState(initial_state)
@@ -349,13 +283,8 @@ bool TrajectoryIntentReceiver::receive(
             return false;
         }
         if (point + 1 < kTrajectoryPointCount) {
-            roll_state = m_predictor.stepWithCommandDelay(
-                roll_state,
-                current_input,
-                input,
-                static_cast<double>(point) * kTrajectoryIntentStepSeconds,
-                command_delay_s,
-                kTrajectoryIntentStepSeconds);
+            roll_state = m_predictor.stepRK4(
+                roll_state, input, kTrajectoryIntentStepSeconds);
         }
     }
 
@@ -368,16 +297,14 @@ bool TrajectoryIntentReceiver::receive(
     candidate_received.candidate_input = input;
     candidate_received.candidate_input_revision =
         packet.candidate_input_revision;
-    candidate_received.current_input = current_input;
-    candidate_received.command_delay_s = command_delay_s;
     candidate_received.reconstructed_mean = reconstructed_mean;
-    if (!m_uncertainty.propagateAlongMeanWithCommandDelay(
+    PredictionInputTrajectory inputs{};
+    inputs.fill(input);
+    if (!m_uncertainty.propagateAlongMean(
             m_predictor,
             reconstructed_mean,
             initial_covariance,
-            current_input,
-            input,
-            command_delay_s,
+            inputs,
             kTrajectoryIntentStepSeconds,
             candidate_received.cone)) {
         return false;

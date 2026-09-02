@@ -88,53 +88,6 @@ public:
         }
     }
 
-    /* Propagate one interval with the command that is actually executing
-       until command_delay_s, then with the candidate command.  An interval
-       that crosses the switch instant is split so a non-grid-aligned delay
-       remains exact on the intent integration grid. */
-    PredictState stepWithCommandDelay(
-        const PredictState & x,
-        const PredictInput & current_input,
-        const PredictInput & candidate_input,
-        double interval_start_s,
-        double command_delay_s,
-        double dt) const
-    {
-        if (!std::isfinite(command_delay_s) || command_delay_s <= interval_start_s) {
-            return stepRK4(x, candidate_input, dt);
-        }
-        const double current_dt = std::min(
-            dt, command_delay_s - interval_start_s);
-        PredictState next = stepRK4(x, current_input, current_dt);
-        const double candidate_dt = dt - current_dt;
-        if (candidate_dt > 0.0) {
-            next = stepRK4(next, candidate_input, candidate_dt);
-        }
-        return next;
-    }
-
-    template <std::size_t N_STEPS>
-    void predictWithCommandDelay(
-        const PredictState & x0,
-        const PredictInput & current_input,
-        const PredictInput & candidate_input,
-        double command_delay_s,
-        double dt,
-        std::array<PredictState, N_STEPS> & out_traj) const
-    {
-        static_assert(N_STEPS >= 1, "N_STEPS must be >= 1");
-        out_traj[0] = x0;
-        for (std::size_t k = 0; k + 1 < N_STEPS; ++k) {
-            out_traj[k + 1] = stepWithCommandDelay(
-                out_traj[k],
-                current_input,
-                candidate_input,
-                static_cast<double>(k) * dt,
-                command_delay_s,
-                dt);
-        }
-    }
-
     /* ── 파라미터 갱신 (initialization-time only) ────────────────────
        rt_thread 가 도는 도중에 호출하면 race. 명세 §2.4 / §4.3. */
     void setParams(const PredictParams & params);
