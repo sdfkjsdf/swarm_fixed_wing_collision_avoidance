@@ -296,6 +296,90 @@ def decision_summary(decisions):
     return result
 
 
+def communication_delay_summary(decisions):
+    """Measure proposal-observation to distributed-commit observation.
+
+    Bag record time is intentionally used because the current decision message
+    stores the proposal timestamp in both proposal_timestamp_us and
+    selection_timestamp_us. The result therefore does not claim to measure
+    the later PX4 setpoint application event.
+    """
+    aggregate_latency_s = []
+    missing_proposal_count = 0
+    per_vehicle = []
+    configured_margins_m = set()
+    for vehicle, records in enumerate(decisions):
+        first_proposal_time = {}
+        for bag_time_s, decision in records:
+            configured_margins_m.add(round(float(getattr(
+                decision, "communication_delay_margin_m", 0.0)), 9))
+            if not decision.proposal_valid:
+                continue
+            key = (
+                int(decision.proposal_epoch),
+                int(decision.proposal_timestamp_us),
+                tuple(int(value) for value in
+                      decision.proposed_candidate_ids[:AIRCRAFT_COUNT]),
+            )
+            first_proposal_time.setdefault(key, float(bag_time_s))
+
+        committed_keys = set()
+        vehicle_latency_s = []
+        vehicle_missing = 0
+        for bag_time_s, decision in records:
+            if not decision.new_best_accepted:
+                continue
+            key = (
+                int(decision.local_selection_epoch),
+                int(decision.selection_timestamp_us),
+                tuple(int(value) for value in
+                      decision.selected_candidate_ids[:AIRCRAFT_COUNT]),
+            )
+            if key in committed_keys:
+                continue
+            committed_keys.add(key)
+            proposal_time = first_proposal_time.get(key)
+            if proposal_time is None:
+                vehicle_missing += 1
+                continue
+            vehicle_latency_s.append(float(bag_time_s) - proposal_time)
+
+        missing_proposal_count += vehicle_missing
+        aggregate_latency_s.extend(vehicle_latency_s)
+        per_vehicle.append({
+            "vehicle_id": vehicle,
+            "matched_commit_count": len(vehicle_latency_s),
+            "commit_without_matching_proposal_count": vehicle_missing,
+            "median_s": (float(np.median(vehicle_latency_s))
+                         if vehicle_latency_s else None),
+            "p95_s": (float(np.percentile(vehicle_latency_s, 95.0))
+                      if vehicle_latency_s else None),
+            "maximum_s": (float(np.max(vehicle_latency_s))
+                          if vehicle_latency_s else None),
+        })
+
+    return {
+        "measurement_definition": (
+            "rosbag first local valid-proposal observation to first "
+            "new-best commit observation for the same epoch, proposal "
+            "timestamp, and candidate-ID tuple"),
+        "timing_reference": "local_valid_proposal_first_bag_record",
+        "command_publication_instrumented": False,
+        "usable_as_px4_application_latency": False,
+        "sample_count": len(aggregate_latency_s),
+        "commit_without_matching_proposal_count": missing_proposal_count,
+        "median_s": (float(np.median(aggregate_latency_s))
+                     if aggregate_latency_s else None),
+        "p95_s": (float(np.percentile(aggregate_latency_s, 95.0))
+                  if aggregate_latency_s else None),
+        "maximum_s": (float(np.max(aggregate_latency_s))
+                      if aggregate_latency_s else None),
+        "configured_communication_delay_margins_m": sorted(
+            configured_margins_m),
+        "per_vehicle": per_vehicle,
+    }
+
+
 def v4_shadow_summary(decisions):
     result = []
     for vehicle, records in enumerate(decisions):
@@ -1296,6 +1380,8 @@ def analyze(args):
         "final_position_standard_deviation_m": float(position_sigma[-1]),
         "final_velocity_standard_deviation_mps": float(velocity_sigma[-1]),
         "decision_diagnostics": decision_summary(decisions),
+        "communication_delay_diagnostics": communication_delay_summary(
+            decisions),
         "v4_shadow_diagnostics": v4_shadow_summary(decisions),
         "v4_horizon_gate_diagnostics": v4_horizon_gate_summary(decisions),
         "activation_state_diagnostics": activation_state_summary(decisions),

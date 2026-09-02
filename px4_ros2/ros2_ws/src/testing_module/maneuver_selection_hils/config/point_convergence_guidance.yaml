@@ -20,7 +20,8 @@
     height_rate_max_sink: 2.7
     max_roll_deg: 50.0
     max_roll_rate_deg_per_s: 70.0
-    amac_candidate_application_delay_s: 0.25 # initial budget; calibrate from command-latency bags
+    amac_candidate_application_delay_s: 0.25 # epoch-to-selection delay; 20 Hz refresh uses remaining time
+    amac_communication_delay_margin_m: 0.0 # residual-only MASD term; calibrate before enabling
     max_pitch_deg: 30.0
     max_pitch_rate_deg_per_sec: 60.0
     energy_fraction: 0.5

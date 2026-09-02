@@ -56,6 +56,10 @@ struct ManeuverCombinationEvaluatorParams
     double desired_separation_distance_m{10.0};
     double ownship_half_wingspan_m{0.0};
     double threat_half_wingspan_m{0.0};
+    // Pairwise deterministic residual-latency budget. This is independent of
+    // the covariance-derived 95% uncertainty support and is added once to
+    // MASD, not once per aircraft.
+    double communication_delay_margin_m{0.0};
     double confidence_chi_squared{7.814727903251179};
     double stale_timeout_s{3.0};
     bool positive_margin_filter_enabled{false};
@@ -126,6 +130,8 @@ struct CombinationEvaluation
     double desired_separation_distance_m{
         std::numeric_limits<double>::quiet_NaN()};
     double uncertainty_margin_95_m{std::numeric_limits<double>::quiet_NaN()};
+    double communication_delay_margin_m{
+        std::numeric_limits<double>::quiet_NaN()};
     double masd_m{std::numeric_limits<double>::quiet_NaN()};
     double ad_m{std::numeric_limits<double>::quiet_NaN()};
     bool feasible{false};

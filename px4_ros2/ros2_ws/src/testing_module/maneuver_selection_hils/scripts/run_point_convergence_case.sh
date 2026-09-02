@@ -22,6 +22,7 @@ V4_MODE=${V4_MODE:-shadow}
 EXECUTION_POLICY=${AVOIDANCE_EXECUTION_POLICY:-amac_ad_threshold}
 V4_CONTROL_ARCHITECTURE=${V4_CONTROL_ARCHITECTURE:-legacy_safe_control_set}
 AMAC_POLICY_CONFIG=${AMAC_POLICY_CONFIG:-${HILS_ROOT}/config/amac_dynamic_best.yaml}
+AMAC_COMMUNICATION_DELAY_MARGIN_M=${AMAC_COMMUNICATION_DELAY_MARGIN_M:-0.0}
 TRAFFIC_PATTERN=${TRAFFIC_PATTERN:-point_convergence}
 
 if [[ "${MODE}" != "avoidance" && "${MODE}" != "baseline" ]]; then
@@ -201,7 +202,7 @@ if [[ -e "${BAG_DIR}" ]]; then
     exit 2
 fi
 
-echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} v4_architecture=${V4_CONTROL_ARCHITECTURE} policy=${EXECUTION_POLICY} ad_threshold=0m active_switch_config=${AMAC_POLICY_CONFIG} run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
+echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} v4_architecture=${V4_CONTROL_ARCHITECTURE} policy=${EXECUTION_POLICY} ad_threshold=0m communication_delay_margin=${AMAC_COMMUNICATION_DELAY_MARGIN_M}m active_switch_config=${AMAC_POLICY_CONFIG} run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
 for vehicle in 0 1 2 3 4; do
     port=$((8888 + vehicle))
     pkill -KILL -f "MicroXRCEAgent udp4 -p ${port}" 2>/dev/null || true
@@ -266,6 +267,7 @@ for vehicle in 0 1 2 3 4; do
         -p preflight_desired_ground_speed_mps:=20.0 \
         -p "collision_avoidance_shadow_only:=${SHADOW_ONLY}" \
         -p "avoidance_execution_policy:=${EXECUTION_POLICY}" \
+        -p "amac_communication_delay_margin_m:=${AMAC_COMMUNICATION_DELAY_MARGIN_M}" \
         -p "maneuver_selection_exhaustive_test_mode:=${EXHAUSTIVE_TEST_MODE}" \
         -p v4_safe_control_enabled:=true \
         -p "v4_shadow_only:=${V4_SHADOW_ONLY}" \

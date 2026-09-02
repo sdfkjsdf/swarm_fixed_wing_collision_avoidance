@@ -81,6 +81,8 @@ struct ManeuverSelectionWorkerParams
     std::uint64_t coordination_delay_us{250'000};
     // Project delay budget represented inside each legacy candidate rollout.
     // Zero preserves the immediate-command baseline for unit/offline callers.
+    // Known candidate-generation-to-expected-application interval. Intent
+    // refreshes carry only the remaining delay to that absolute epoch time.
     double candidate_application_delay_s{0.0};
     std::uint64_t maximum_belief_delay_us{1'000'000};
     ManeuverActivationControllerParams activation_params{};
@@ -225,6 +227,7 @@ struct ManeuverSelectionDecision
     estimation::PredictInput ownship_input{};
     double pmr_m{0.0};
     double masd_m{0.0};
+    double communication_delay_margin_m{0.0};
     double ad_m{0.0};
     double reciprocal_cost_sum{0.0};
     std::uint64_t activation_timestamp_us{0};
@@ -599,6 +602,8 @@ private:
     bool buildCurrentIntentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
+    double remainingCandidateApplicationDelaySeconds(
+        std::uint64_t now_us) const noexcept;
     bool currentExecutedInput(
         std::uint64_t now_us,
         estimation::PredictInput & input) const noexcept;

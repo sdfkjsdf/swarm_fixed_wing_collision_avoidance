@@ -38,6 +38,8 @@ int main(int argc, char * argv[])
         "amac_active_switch_minimum_ad_margin_m", 0.0);
     node->declare_parameter<double>(
         "amac_candidate_application_delay_s", 0.25);
+    node->declare_parameter<double>(
+        "amac_communication_delay_margin_m", 0.0);
     node->declare_parameter<double>("aircraft_half_wingspan", 1.072);
     // AMAC/Lockheed selection is AD-ranked. The positive-margin filter is a
     // separate CBF experiment and must be explicitly enabled by its profile.
@@ -164,6 +166,9 @@ int main(int argc, char * argv[])
             * std::acos(-1.0) / 180.0;
         params.evaluator_params.desired_separation_distance_m =
             node->get_parameter("desired_separation_distance").as_double();
+        params.evaluator_params.communication_delay_margin_m =
+            node->get_parameter(
+                "amac_communication_delay_margin_m").as_double();
         params.evaluator_params.positive_margin_filter_enabled =
             node->get_parameter("positive_margin_filter_enabled").as_bool();
         params.evaluator_params.positive_margin_gamma =
@@ -420,6 +425,7 @@ int main(int argc, char * argv[])
             "execution_policy=%s exhaustive_test=%d active_switch=%d "
             "switch_cost_margin=%.6f switch_ad_margin=%.3f "
             "candidate_application_delay_s=%.3f "
+            "communication_delay_margin_m=%.3f "
             "v4_enabled=%d v4_shadow_only=%d v4_architecture=%s",
             maneuver_selection_runtime->enabled() ? 1 : 0,
             shadow_only ? 1 : 0,
@@ -429,6 +435,7 @@ int main(int argc, char * argv[])
             params.active_switch_cost_margin,
             params.active_switch_minimum_ad_margin_m,
             params.candidate_application_delay_s,
+            params.evaluator_params.communication_delay_margin_m,
             params.v4_safe_control_enabled ? 1 : 0,
             params.v4_shadow_only ? 1 : 0,
             v4_architecture.c_str());

@@ -1136,20 +1136,22 @@ bool ManeuverSelectionWorker::buildCurrentIntentSet(
         estimation::TrajectoryIntentPacket,
         kExhaustiveCandidatesPerAircraft> packets{};
     const std::size_t candidate_count = activeCandidateCount();
+    const double remaining_application_delay_s =
+        remainingCandidateApplicationDelaySeconds(now_us);
     estimation::PredictInput current_input{};
-    if (m_params.candidate_application_delay_s > 0.0
+    if (remaining_application_delay_s > 0.0
         && !currentExecutedInput(now_us, current_input)) {
         m_ownship_candidates_complete = false;
         m_ownship_candidate_count = 0;
         return false;
     }
     for (std::size_t index = 0; index < candidate_count; ++index) {
-        const bool built = m_params.candidate_application_delay_s > 0.0
+        const bool built = remaining_application_delay_s > 0.0
             ? m_sender.buildForSelectedCandidateWithCommandDelay(
                 now_us,
                 m_held_candidate_ids[index],
                 current_input,
-                m_params.candidate_application_delay_s,
+                remaining_application_delay_s,
                 m_latest_state,
                 m_latest_covariance,
                 packets[index],
@@ -1196,6 +1198,23 @@ bool ManeuverSelectionWorker::buildCurrentIntentSet(
     output.generated_timestamp_us = now_us;
     output.selection_epoch = m_selection_epoch;
     return true;
+}
+
+double ManeuverSelectionWorker::remainingCandidateApplicationDelaySeconds(
+    std::uint64_t now_us) const noexcept
+{
+    if (m_params.candidate_application_delay_s <= 0.0) {
+        return 0.0;
+    }
+    const auto configured_delay_us = static_cast<std::uint64_t>(std::llround(
+        m_params.candidate_application_delay_s * 1.0e6));
+    const std::uint64_t expected_application_timestamp_us =
+        m_epoch_generation_timestamp_us + configured_delay_us;
+    if (now_us >= expected_application_timestamp_us) {
+        return 0.0;
+    }
+    return static_cast<double>(expected_application_timestamp_us - now_us)
+        * 1.0e-6;
 }
 
 bool ManeuverSelectionWorker::currentExecutedInput(
@@ -1825,6 +1844,8 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
     decision.proposal_valid = false;
     decision.proposed_v4_cutover = false;
     decision.proposal_consensus_confirmed = false;
+    decision.communication_delay_margin_m =
+        m_params.evaluator_params.communication_delay_margin_m;
     decision.switch_superiority_evaluated = false;
     decision.switch_clearly_superior = false;
     decision.switch_current_cost =
@@ -2852,6 +2873,8 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
     decision.ownship_candidate_id = m_current_best_id;
     decision.pmr_m = m_pending_proposal.evaluation.minimum_pmr_m;
     decision.masd_m = m_pending_proposal.evaluation.minimum_masd_m;
+    decision.communication_delay_margin_m =
+        m_params.evaluator_params.communication_delay_margin_m;
     decision.ad_m = m_pending_proposal.evaluation.minimum_ad_m;
     decision.reciprocal_cost_sum =
         m_pending_proposal.evaluation.reciprocal_cost_sum;
@@ -3030,6 +3053,8 @@ bool ManeuverSelectionWorker::buildActivationSample(
             minimum_ad = pair.ad_m;
             decision.pmr_m = pair.pmr_m;
             decision.masd_m = pair.masd_m;
+            decision.communication_delay_margin_m =
+                pair.communication_delay_margin_m;
             decision.threat_candidate_id = remote_candidate_id;
         }
         if (pair.ad_m < 0.0) {

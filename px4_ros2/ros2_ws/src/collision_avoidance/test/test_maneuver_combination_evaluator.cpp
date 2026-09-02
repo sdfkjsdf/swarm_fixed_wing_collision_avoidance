@@ -497,6 +497,39 @@ TEST(ManeuverCombinationEvaluator, IncludesAircraftDsdAndRelativeUncertainty)
     EXPECT_NEAR(row.ad_m, 20.0 - row.masd_m, 1.0e-12);
 }
 
+TEST(ManeuverCombinationEvaluator, AddsCommunicationMarginExactlyOnceToMasd)
+{
+    constexpr std::uint64_t timestamp_us = 2'500'000ULL;
+    const auto ownship = parallelCandidates(
+        timestamp_us, {0.0, 0.0, 0.0}, 1.0);
+    const auto threat = parallelCandidates(
+        timestamp_us, {20.0, 20.0, 20.0}, 1.0);
+
+    cs::ManeuverCombinationEvaluatorParams baseline_params;
+    baseline_params.desired_separation_distance_m = 10.0;
+    cs::StaticCombinationEvaluation baseline;
+    ASSERT_TRUE(cs::ManeuverCombinationEvaluator(baseline_params).evaluate(
+        timestamp_us, ownship, threat, baseline));
+
+    auto margin_params = baseline_params;
+    margin_params.communication_delay_margin_m = 2.5;
+    cs::StaticCombinationEvaluation with_margin;
+    ASSERT_TRUE(cs::ManeuverCombinationEvaluator(margin_params).evaluate(
+        timestamp_us, ownship, threat, with_margin));
+
+    const auto & zero = baseline.combinations[0];
+    const auto & bounded = with_margin.combinations[0];
+    EXPECT_NEAR(zero.communication_delay_margin_m, 0.0, 1.0e-12);
+    EXPECT_NEAR(bounded.communication_delay_margin_m, 2.5, 1.0e-12);
+    EXPECT_NEAR(bounded.pmr_m, zero.pmr_m, 1.0e-12);
+    EXPECT_NEAR(
+        bounded.uncertainty_margin_95_m,
+        zero.uncertainty_margin_95_m,
+        1.0e-12);
+    EXPECT_NEAR(bounded.masd_m, zero.masd_m + 2.5, 1.0e-12);
+    EXPECT_NEAR(bounded.ad_m, zero.ad_m - 2.5, 1.0e-12);
+}
+
 TEST(ManeuverCombinationEvaluator, SelectsLargestAdWhenEveryCombinationIsUnsafe)
 {
     constexpr std::uint64_t timestamp_us = 3'000'000ULL;

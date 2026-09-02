@@ -454,6 +454,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.switch_proposed_minimum_ad_m);
                 message.pmr_m = static_cast<float>(decision.pmr_m);
                 message.masd_m = static_cast<float>(decision.masd_m);
+                message.communication_delay_margin_m = static_cast<float>(
+                    decision.communication_delay_margin_m);
                 message.ad_m = static_cast<float>(decision.ad_m);
                 message.reciprocal_cost_sum = static_cast<float>(
                     decision.reciprocal_cost_sum);

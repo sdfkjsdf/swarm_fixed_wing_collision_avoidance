@@ -1,6 +1,6 @@
 # Draft: AMAC Known-Delay Rollout and Residual Communication Margin
 
-Status: **DESIGN DOCUMENT ONLY — NOT IMPLEMENTED**
+Status: **PHASE 1 IMPLEMENTED — NUMERICAL `B_comm` CALIBRATION PENDING**
 
 Date: 2026-09-02
 
@@ -18,8 +18,10 @@ historical 200 s SILS result:
 - common qualified-epoch candidate-tuple agreement: `605 / 605`;
 - unit and integration tests at the anchor: `211 / 211` passed.
 
-This document records the next design question. It does not authorize code,
-parameter, activation-threshold, candidate-set, or HILS changes.
+This document first recorded the design boundary. Implementation was later
+authorized in the 2026-09-02 task and the implemented scope is recorded in
+Section 12. A nonzero communication margin remains deliberately disabled until
+the actual command-publication timing boundary is measured.
 
 ## 1. Problem Statement
 
@@ -169,14 +171,14 @@ The source-aligned remaining known delay at `t = 0.20 s` is `0.05 s`, not a
 new `0.25 s`. Restarting a full delay would instead predict candidate
 application at `t = 0.45 s`.
 
-This is a semantic concern, not yet an implemented correction. Before any code
-change, the project must decide whether the existing parameter means:
+This was the anchor's semantic concern. The approved Phase 1 implementation
+resolved it by assigning the existing parameter the first meaning below:
 
 1. the fixed candidate-generation-to-selection wait; or
 2. a separate estimated packet-time-to-command-application latency.
 
-Those meanings cannot share the same parameter without an explicit timing
-reference.
+The packet-time-to-command-publication residual remains separate and is not
+encoded by this parameter.
 
 Relevant anchor locations:
 
@@ -195,7 +197,7 @@ TrajectoryUncertainty.cpp
 
 ## 5. Minimal Project Design
 
-The first implementation, if later approved, should keep the existing
+The approved first implementation keeps the existing
 covariance term and add one separately named bounded communication term:
 
 \[
@@ -330,7 +332,7 @@ No implementation is complete until all of the following are demonstrated:
    violation duration, activation count, proposal/commit latency, and nuisance
    activation changes against anchor `289e9a5`.
 
-## 10. Five-Axis Checklist for a Later Implementation
+## 10. Five-Axis Checklist for the Implementation
 
 | Axis | Pass condition |
 |---|---|
@@ -355,3 +357,195 @@ The following values are intentionally not selected in this document:
 
 These are calibration and design decisions. Guessing them in the first code
 change would erase the distinction this document is intended to preserve.
+
+## 12. Implemented Phase 1 and Measured Boundary
+
+The approved first implementation makes two minimal changes.
+
+### 12.1 Absolute known-delay schedule
+
+The existing parameter remains named
+`amac_candidate_application_delay_s`, but its implemented meaning is now:
+
+```text
+candidate epoch generation
+    + configured known delay
+    = one absolute expected application time
+```
+
+Every 20 Hz packet carries only the remaining delay to that absolute time.
+For example, a packet refreshed `0.20 s` after an epoch that uses a `0.25 s`
+known delay carries `0.05 s`; it does not start a new `0.25 s` delay.
+
+Sender mean generation, transmitted `command_delay_s`, receiver mean
+reconstruction, roll-rate-limited propagation, and covariance propagation all
+continue to use the same transmitted switch schedule.
+
+### 12.2 Independent residual margin path
+
+The evaluator now exposes:
+
+```text
+amac_communication_delay_margin_m
+```
+
+and computes:
+
+\[
+MASD=D_{aircraft}+DSD+U_{95,PQ}+B_{comm}.
+\]
+
+The value is validated as finite and nonnegative, added exactly once per pair,
+published in `ManeuverSelectionDecision`, and reported by the offline analyzer.
+Its configuration default is `0.0 m`, so this phase does not claim that a
+numerical communication bound has already been calibrated.
+
+### 12.3 Existing-bag measurement
+
+The historical anchor bag was measured using the following available event
+definition:
+
+```text
+first local rosbag record containing a valid proposal
+    -> first local rosbag record containing new_best_accepted
+       for the same epoch, proposal timestamp, and candidate-ID tuple
+```
+
+Results over `1,675` matched commits were:
+
+| Statistic | Measured value |
+|---|---:|
+| median | `0.029754793 s` |
+| p95 | `0.049835249 s` |
+| maximum | `0.060342894 s` |
+| commit without matching proposal | `0` |
+
+This is a proposal-observation-to-commit-observation metric. It is **not** yet
+the required expected-selection-to-PX4-command-publication residual, because
+the historical message did not record the latter event. Consequently these
+numbers were not converted into a nonzero `B_comm` value.
+
+### 12.4 Verification completed
+
+- package build: passed;
+- all `19` CTest targets: passed;
+- `193` reported test cases: `0` failures;
+- 20 Hz refresh regression: `0.10 s -> 0.05 s` remaining delay for the same
+  absolute `0.50 s` switch time;
+- zero-margin behavior: retained by the existing zero default;
+- nonzero-margin unit regression: adding `2.5 m` changes only
+  `MASD += 2.5 m` and `AD -= 2.5 m`, while PMR and `U95_PQ` remain unchanged.
+
+### 12.5 Still required before enabling a nonzero value
+
+1. instrument or otherwise identify actual ownship PX4 command publication;
+2. measure residual latency from the selected expected timing reference;
+3. choose and document p95 versus hard-bound policy and the relative-motion
+   bounds;
+4. configure a nonzero `B_comm` only after that calibration; and
+5. repeat the five-aircraft 200 s SILS comparison against anchor `289e9a5`.
+
+### 12.6 Zero-margin 200 s SILS result
+
+The first valid five-aircraft pentagon run kept
+`amac_communication_delay_margin_m = 0.0` and therefore isolated the absolute
+known-delay correction:
+
+| Metric | Anchor packet-relative 0.25 s | Absolute remaining-delay schedule |
+|---|---:|---:|
+| minimum 3-D separation | `8.566393698 m` | `9.270009854 m` |
+| estimated time below 10 m DSD | `1.0 s` | `0.2 s` |
+| activation starts | `30` | `13` |
+| starts with a safe combination available | `20` | `9` |
+| common qualified-epoch tuple agreement | `100%` | `100%` |
+
+The timing correction improved this sample but did not satisfy the 10 m DSD;
+the safety-performance result therefore remains a fail.
+
+The new bag measured `1,450` matched proposal-to-commit observations:
+
+| Statistic | Value |
+|---|---:|
+| median | `0.029705306 s` |
+| p95 | `0.049772330 s` |
+| maximum | `0.060591934 s` |
+
+For the next HILS-only sensitivity run, a provisional hard-bound experiment
+uses:
+
+\[
+\Delta\tau_{design}=0.10\,s,
+\quad v_{rel,design}=2V_{max}=50\,m/s,
+\quad a_{rel,design}=2a_{lat,max}=23.374\,m/s^2,
+\]
+
+which gives:
+
+\[
+B_{comm}=50(0.10)+\frac12(23.374)(0.10)^2
+=5.11687\,m.
+\]
+
+The test value is rounded upward to `5.2 m`. The `0.10 s` budget combines the
+observed `0.0606 s` proposal-to-commit maximum with one nominal 30 Hz
+Formation setpoint-update period and rounding. This is a project sensitivity
+bound, not a source-recovered Lockheed value and not yet a flight-qualified
+hard latency bound. Production configuration remains at `0.0 m`.
+
+### 12.7 Rejected 5.2 m sensitivity result
+
+The 200 s pentagon run with the HILS-only `5.2 m` override did not improve
+closed-loop safety or flocking:
+
+| Metric | `B_comm = 0.0 m` | `B_comm = 5.2 m` |
+|---|---:|---:|
+| minimum 3-D separation | `9.270009854 m` | `8.823756289 m` |
+| estimated time below 10 m DSD | `0.2 s` | `0.3 s` |
+| final position standard deviation | `43.6255 m` | `159.0386 m` |
+| final velocity standard deviation | `0.2380 m/s` | `18.0015 m/s` |
+| common qualified-epoch tuple agreement | `100%` | `100%` |
+
+The large scalar margin caused substantially more activation and switching,
+and the resulting closed-loop geometry was worse despite the more conservative
+instantaneous AD value. Therefore `5.2 m` is rejected as a configured value.
+This also demonstrates that scalar-margin magnitude is not monotonically
+related to multi-agent closed-loop safety and must be calibrated by SILS rather
+than enabled directly from the kinematic upper-bound calculation.
+
+### 12.8 Rejected 1.0 m sensitivity result
+
+A smaller `1.0 m` HILS-only override was also rejected:
+
+| Metric | `B_comm = 0.0 m` | `B_comm = 1.0 m` |
+|---|---:|---:|
+| minimum 3-D separation | `9.270009854 m` | `1.038924862 m` |
+| estimated time below 10 m DSD | `0.2 s` | `3.7 s` |
+| final position standard deviation | `43.6255 m` | `37.5327 m` |
+| final velocity standard deviation | `0.2380 m/s` | `0.3813 m/s` |
+| activation starts | `13` | `27` |
+| active candidate switches | `7` | `26` |
+| common qualified-epoch tuple agreement | `100%` | `100%` |
+
+This run shows that selecting a scalar from the observed `0.73 m` DSD
+shortfall is invalid: the margin changes the distributed closed-loop maneuver
+sequence, not only the instantaneous separation number. No tested nonzero
+value is accepted. Production and default HILS configuration therefore remain
+at `0.0 m`.
+
+## 13. Five-Axis Audit After Implementation
+
+| Axis | Status | Finding |
+|---|---|---|
+| Source accuracy | PASS | The 4 Hz generation, 0.25 s post-generation selection, 20 Hz state refresh, and MASD delay-uncertainty statements are directly present in the 2013 source. |
+| Interpretation fidelity | PASS | Absolute remaining delay and all `B_comm` equations and numbers are explicitly identified as project design, not disclosed Lockheed mathematics. |
+| Complexity proportionality | PASS | The implementation adds one scalar evaluator parameter, one diagnostic field, timing correction, analyzer summary, and focused tests; it does not add predictor states or a second uncertainty model. |
+| Implementation correctness | PASS for wiring; calibration INDETERMINATE | Unit tests prove one-time MASD accounting and zero-margin behavior, and all package tests pass. Actual PX4 command-publication timing is not directly instrumented, and both nonzero SILS values failed. |
+| Directional alignment | PASS | Known motion remains in the mean rollout, estimator/model uncertainty remains in `P/Q`, and only residual latency is allocated to the separate MASD term. |
+
+Overall verdict:
+
+```text
+implementation infrastructure: PASS
+nonzero B_comm calibration: INDETERMINATE / not accepted
+closed-loop 10 m DSD performance: FAIL for every tested run
+```

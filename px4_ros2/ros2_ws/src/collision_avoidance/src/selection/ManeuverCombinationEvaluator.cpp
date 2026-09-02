@@ -68,6 +68,8 @@ bool finiteParams(const ManeuverCombinationEvaluatorParams & params) noexcept
         && params.ownship_half_wingspan_m >= 0.0
         && std::isfinite(params.threat_half_wingspan_m)
         && params.threat_half_wingspan_m >= 0.0
+        && std::isfinite(params.communication_delay_margin_m)
+        && params.communication_delay_margin_m >= 0.0
         && std::isfinite(params.confidence_chi_squared)
         && params.confidence_chi_squared > 0.0
         && std::isfinite(params.stale_timeout_s)
@@ -682,9 +684,12 @@ CombinationValidity evaluatePairImpl(
         params.ownship_half_wingspan_m + params.threat_half_wingspan_m;
     result.desired_separation_distance_m =
         params.desired_separation_distance_m;
+    result.communication_delay_margin_m =
+        params.communication_delay_margin_m;
     result.masd_m = result.aircraft_size_margin_m
         + result.desired_separation_distance_m
-        + result.uncertainty_margin_95_m;
+        + result.uncertainty_margin_95_m
+        + result.communication_delay_margin_m;
     result.ad_m = result.pmr_m - result.masd_m;
     result.feasible = result.ad_m > 0.0;
     result.reciprocal_cost_defined = result.feasible;

@@ -49,6 +49,7 @@ float32 switch_proposed_minimum_ad_m
 
 float32 pmr_m
 float32 masd_m
+float32 communication_delay_margin_m
 float32 ad_m
 float32 reciprocal_cost_sum
 uint64 activation_timestamp_us
