@@ -136,7 +136,7 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
     m_flocking = std::make_unique<FlockingGuidance>(flocking_params, airframe_limits);
 
     if (!_node.has_parameter("test_guidance_mode")) {
-        _node.declare_parameter<std::string>("test_guidance_mode", "flocking");
+        _node.declare_parameter<std::string>("test_guidance_mode", "formation");
     }
     m_point_convergence_test_mode =
         _node.get_parameter("test_guidance_mode").as_string()

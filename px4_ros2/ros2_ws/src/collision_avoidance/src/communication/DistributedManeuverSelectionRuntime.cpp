@@ -71,6 +71,13 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
         "/common/px4_" + std::to_string(m_vehicle_id)
             + "/maneuver_selection_decision",
         rclcpp::SensorDataQoS());
+    if (worker_params.interaction_graph_params.enabled) {
+        m_interaction_graph_diagnostics_publisher = m_node.create_publisher<
+            collision_avoidance::msg::InteractionGraphDiagnostics>(
+            "/common/px4_" + std::to_string(m_vehicle_id)
+                + "/interaction_graph_diagnostics",
+            rclcpp::SensorDataQoS());
+    }
     m_intent_subscriptions.reserve(
         static_cast<std::size_t>(total_agent_count - 1));
     m_decision_subscriptions.reserve(
@@ -118,6 +125,8 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->selected_candidate_ids.begin(),
                         message->selected_candidate_ids.end(),
                         decision.selected_candidate_ids.begin());
+                    decision.selected_candidate_valid_mask =
+                        message->selected_candidate_valid_mask;
                     std::copy(
                         message->selected_candidate_input_revisions.begin(),
                         message->selected_candidate_input_revisions.end(),
@@ -130,6 +139,8 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->selected_v4_cutover;
                     decision.ownship_candidate_id =
                         message->ownship_candidate_id;
+                    decision.ownship_candidate_valid =
+                        message->ownship_candidate_valid;
                     decision.proposal_timestamp_us =
                         message->proposal_timestamp_us;
                     decision.proposal_epoch = message->proposal_epoch;
@@ -137,6 +148,8 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->proposed_candidate_ids.begin(),
                         message->proposed_candidate_ids.end(),
                         decision.proposed_candidate_ids.begin());
+                    decision.proposed_candidate_valid_mask =
+                        message->proposed_candidate_valid_mask;
                     std::copy(
                         message->proposed_candidate_input_revisions.begin(),
                         message->proposed_candidate_input_revisions.end(),
@@ -147,6 +160,16 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         decision.proposed_candidate_source_timestamps_us.begin());
                     decision.proposed_v4_cutover =
                         message->proposed_v4_cutover;
+                    decision.proposed_component_graph =
+                        message->proposed_component_graph;
+                    decision.proposed_candidate_library_hash =
+                        message->proposed_candidate_library_hash;
+                    decision.proposed_graph_hash =
+                        message->proposed_graph_hash;
+                    decision.proposed_component_hash =
+                        message->proposed_component_hash;
+                    decision.proposed_component_solution_hash =
+                        message->proposed_component_solution_hash;
                     decision.proposal_valid = message->proposal_valid;
                     decision.proposal_consensus_confirmed =
                         message->proposal_consensus_confirmed;
@@ -348,6 +371,115 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 m_intent_publisher->publish(output->intent_packets[index]);
             }
         }
+        if (m_interaction_graph_diagnostics_publisher) {
+            const auto pending_diagnostics =
+                m_worker.tryPopInteractionGraphDiagnostics();
+            if (pending_diagnostics.has_value()
+                && pending_diagnostics.value()) {
+            const auto & diagnostics = *pending_diagnostics.value();
+            const auto & graph = diagnostics.graph;
+            collision_avoidance::msg::InteractionGraphDiagnostics message;
+            message.evaluation_timestamp_us = graph.evaluation_timestamp_us;
+            message.selection_epoch = graph.selection_epoch;
+            message.vehicle_id = diagnostics.vehicle_id;
+            message.aircraft_count = static_cast<std::uint8_t>(
+                graph.aircraft_count);
+            message.graph_status = static_cast<std::uint8_t>(graph.status);
+            message.shadow_enabled = diagnostics.shadow_enabled;
+            message.component_cutover_enabled =
+                diagnostics.component_cutover_enabled;
+            message.component_proposal_used =
+                diagnostics.component_proposal_used;
+            message.ad_screen_m = static_cast<float>(
+                m_worker.interactionGraphParamsForDiagnostics().ad_screen_m);
+            message.trajectory_library_version =
+                graph.trajectory_library_version;
+            message.ad_masd_config_version = graph.ad_masd_config_version;
+            message.graph_config_version =
+                m_worker.interactionGraphParamsForDiagnostics().config_version;
+            message.candidate_library_hash = graph.candidate_library_hash;
+            std::copy(
+                graph.participant_vehicle_ids.begin(),
+                graph.participant_vehicle_ids.end(),
+                message.participant_vehicle_ids.begin());
+            std::copy(
+                graph.source_timestamps_us.begin(),
+                graph.source_timestamps_us.end(),
+                message.source_timestamps_us.begin());
+            std::transform(
+                graph.pair_minimum_ad_m.begin(),
+                graph.pair_minimum_ad_m.end(),
+                message.pair_minimum_ad_m.begin(),
+                [](double value) { return static_cast<float>(value); });
+            std::copy(
+                graph.pair_minimum_first_candidate_id.begin(),
+                graph.pair_minimum_first_candidate_id.end(),
+                message.pair_minimum_first_candidate_id.begin());
+            std::copy(
+                graph.pair_minimum_second_candidate_id.begin(),
+                graph.pair_minimum_second_candidate_id.end(),
+                message.pair_minimum_second_candidate_id.begin());
+            std::copy(
+                graph.pair_edge_required.begin(),
+                graph.pair_edge_required.end(),
+                message.pair_edge_required.begin());
+            message.adjacency_bitmask = graph.adjacency_bitmask;
+            std::copy(
+                graph.component_ids.begin(),
+                graph.component_ids.end(),
+                message.component_ids.begin());
+            std::copy(
+                graph.component_sizes.begin(),
+                graph.component_sizes.end(),
+                message.component_sizes.begin());
+            message.component_count = graph.component_count;
+            message.edge_count = graph.edge_count;
+            message.naive_evaluation_count = graph.naive_evaluation_count;
+            message.component_evaluation_count =
+                graph.component_evaluation_count;
+            message.trajectory_generation_count =
+                graph.trajectory_generation_count;
+            message.pairwise_ad_evaluation_count =
+                graph.pairwise_ad_evaluation_count;
+            message.certification_hash = graph.certification_hash;
+            message.graph_hash = graph.graph_hash;
+            message.component_hash = graph.component_hash;
+            message.shadow_status = static_cast<std::uint8_t>(
+                diagnostics.shadow_status);
+            message.shadow_search_evaluated =
+                diagnostics.shadow_search_evaluated;
+            std::copy(
+                diagnostics.assembled_candidate_ids.begin(),
+                diagnostics.assembled_candidate_ids.end(),
+                message.assembled_candidate_ids.begin());
+            message.assembled_candidate_valid_mask =
+                diagnostics.assembled_candidate_valid_mask;
+            message.assembled_candidate_hash =
+                diagnostics.assembled_candidate_hash;
+            message.component_solution_hash =
+                diagnostics.component_solution_hash;
+            message.global_crosscheck_evaluated =
+                diagnostics.global_crosscheck_evaluated;
+            message.global_crosscheck_pass =
+                diagnostics.global_crosscheck_pass;
+            message.global_crosscheck_minimum_ad_m = static_cast<float>(
+                diagnostics.global_crosscheck_minimum_ad_m);
+            message.legacy_proposal_valid = diagnostics.legacy_proposal_valid;
+            std::copy(
+                diagnostics.legacy_proposed_candidate_ids.begin(),
+                diagnostics.legacy_proposed_candidate_ids.end(),
+                message.legacy_proposed_candidate_ids.begin());
+            message.certification_compute_time_ns =
+                graph.certification_compute_time_ns;
+            message.graph_compute_time_ns = graph.graph_compute_time_ns;
+            message.component_search_time_ns =
+                diagnostics.component_search_time_ns;
+            message.global_crosscheck_time_ns =
+                diagnostics.global_crosscheck_time_ns;
+            message.total_shadow_time_ns = diagnostics.total_shadow_time_ns;
+            m_interaction_graph_diagnostics_publisher->publish(message);
+            }
+        }
         if (output->has_decision) {
             if (m_decision_publisher) {
                 collision_avoidance::msg::ManeuverSelectionDecision message;
@@ -409,6 +541,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.selected_candidate_ids.begin(),
                     decision.selected_candidate_ids.end(),
                     message.selected_candidate_ids.begin());
+                message.selected_candidate_valid_mask =
+                    decision.selected_candidate_valid_mask;
                 std::copy(
                     decision.selected_candidate_input_revisions.begin(),
                     decision.selected_candidate_input_revisions.end(),
@@ -420,6 +554,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 message.selected_v4_cutover =
                     decision.selected_v4_cutover;
                 message.ownship_candidate_id = decision.ownship_candidate_id;
+                message.ownship_candidate_valid =
+                    decision.ownship_candidate_valid;
                 message.proposal_timestamp_us =
                     decision.proposal_timestamp_us;
                 message.proposal_epoch = decision.proposal_epoch;
@@ -427,6 +563,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.proposed_candidate_ids.begin(),
                     decision.proposed_candidate_ids.end(),
                     message.proposed_candidate_ids.begin());
+                message.proposed_candidate_valid_mask =
+                    decision.proposed_candidate_valid_mask;
                 std::copy(
                     decision.proposed_candidate_input_revisions.begin(),
                     decision.proposed_candidate_input_revisions.end(),
@@ -437,6 +575,16 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     message.proposed_candidate_source_timestamps_us.begin());
                 message.proposed_v4_cutover =
                     decision.proposed_v4_cutover;
+                message.proposed_component_graph =
+                    decision.proposed_component_graph;
+                message.proposed_candidate_library_hash =
+                    decision.proposed_candidate_library_hash;
+                message.proposed_graph_hash =
+                    decision.proposed_graph_hash;
+                message.proposed_component_hash =
+                    decision.proposed_component_hash;
+                message.proposed_component_solution_hash =
+                    decision.proposed_component_solution_hash;
                 message.proposal_valid = decision.proposal_valid;
                 message.proposal_consensus_confirmed =
                     decision.proposal_consensus_confirmed;

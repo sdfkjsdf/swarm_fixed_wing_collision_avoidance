@@ -45,6 +45,18 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("positive_margin_gamma", 0.02);
     node->declare_parameter<bool>(
         "maneuver_selection_exhaustive_test_mode", false);
+    node->declare_parameter<bool>(
+        "amac_interaction_graph_shadow_enabled", false);
+    node->declare_parameter<bool>(
+        "amac_interaction_graph_component_cutover_enabled", false);
+    node->declare_parameter<double>(
+        "amac_interaction_graph_ad_screen_m", 0.0);
+    node->declare_parameter<int>(
+        "amac_trajectory_library_version", 1);
+    node->declare_parameter<int>(
+        "amac_ad_masd_config_version", 1);
+    node->declare_parameter<int>(
+        "amac_interaction_graph_config_version", 1);
     node->declare_parameter<bool>("v4_safe_control_enabled", true);
     node->declare_parameter<bool>("v4_shadow_only", true);
     node->declare_parameter<std::string>(
@@ -187,6 +199,31 @@ int main(int argc, char * argv[])
         params.evaluator_params.threat_half_wingspan_m = half_wingspan;
         params.exhaustive_test_mode = node->get_parameter(
             "maneuver_selection_exhaustive_test_mode").as_bool();
+        params.interaction_graph_params.enabled = node->get_parameter(
+            "amac_interaction_graph_shadow_enabled").as_bool();
+        params.interaction_graph_component_cutover_enabled =
+            node->get_parameter(
+                "amac_interaction_graph_component_cutover_enabled").as_bool();
+        params.interaction_graph_params.ad_screen_m =
+            node->get_parameter(
+                "amac_interaction_graph_ad_screen_m").as_double();
+        const int trajectory_library_version = node->get_parameter(
+            "amac_trajectory_library_version").as_int();
+        const int ad_masd_config_version = node->get_parameter(
+            "amac_ad_masd_config_version").as_int();
+        const int graph_config_version = node->get_parameter(
+            "amac_interaction_graph_config_version").as_int();
+        if (trajectory_library_version <= 0 || ad_masd_config_version <= 0
+            || graph_config_version <= 0) {
+            throw std::invalid_argument(
+                "interaction graph version identifiers must be positive");
+        }
+        params.interaction_graph_params.trajectory_library_version =
+            static_cast<std::uint64_t>(trajectory_library_version);
+        params.interaction_graph_params.ad_masd_config_version =
+            static_cast<std::uint64_t>(ad_masd_config_version);
+        params.interaction_graph_params.config_version =
+            static_cast<std::uint64_t>(graph_config_version);
         params.v4_safe_control_enabled = node->get_parameter(
             "v4_safe_control_enabled").as_bool();
         params.v4_shadow_only = node->get_parameter(
@@ -418,6 +455,8 @@ int main(int argc, char * argv[])
             node->get_logger(),
             "[main] distributed maneuver selection: enabled=%d shadow_only=%d "
             "execution_policy=%s exhaustive_test=%d active_switch=%d "
+            "interaction_graph_shadow=%d graph_component_cutover=%d "
+            "AD_screen=%.3f "
             "switch_cost_margin=%.6f switch_ad_margin=%.3f "
             "communication_delay_margin_m=%.3f "
             "v4_enabled=%d v4_shadow_only=%d v4_architecture=%s",
@@ -426,6 +465,9 @@ int main(int argc, char * argv[])
             execution_policy.c_str(),
             params.exhaustive_test_mode ? 1 : 0,
             params.active_switching_enabled ? 1 : 0,
+            params.interaction_graph_params.enabled ? 1 : 0,
+            params.interaction_graph_component_cutover_enabled ? 1 : 0,
+            params.interaction_graph_params.ad_screen_m,
             params.active_switch_cost_margin,
             params.active_switch_minimum_ad_margin_m,
             params.evaluator_params.communication_delay_margin_m,

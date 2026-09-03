@@ -46,7 +46,7 @@ struct ManeuverActivationSample
     // terminates or resets an already active avoidance episode.
     bool allow_new_activation{true};
     // CPA clear is necessary but not sufficient for release.  The worker
-    // sets this only after the actual nominal/Flocking rollout is safe.
+    // sets this only after the actual Formation rollout is safe.
     bool allow_deactivation{true};
 };
 

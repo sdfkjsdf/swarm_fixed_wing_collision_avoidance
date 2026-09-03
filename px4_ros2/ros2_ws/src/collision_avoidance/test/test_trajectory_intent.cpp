@@ -178,6 +178,8 @@ TEST(TrajectoryIntent, DynamicInputIsTransportedInsteadOfReconstructedFromId)
         covariance,
         packet,
         4ULL));
+    packet.nominal_lateral_acceleration_mps2 = -1.25F;
+    packet.safe_rejoin_requested = true;
     ce::ReceivedTrajectoryIntent received;
     ASSERT_TRUE(receiver.receive(packet, received));
 
@@ -187,6 +189,8 @@ TEST(TrajectoryIntent, DynamicInputIsTransportedInsteadOfReconstructedFromId)
     EXPECT_TRUE(std::isnan(received.candidate_input.h_cmd));
     EXPECT_DOUBLE_EQ(received.candidate_input.h_dot_cmd, 0.0);
     EXPECT_NEAR(received.candidate_input.a_lat_cmd, 4.2, 1.0e-6);
+    EXPECT_DOUBLE_EQ(received.nominal_lateral_acceleration_mps2, -1.25);
+    EXPECT_TRUE(received.safe_rejoin_requested);
     EXPECT_GT(std::abs(received.reconstructed_mean.back().p_e), 1.0);
 
     ce::TrajectoryIntentPacket different_packet;

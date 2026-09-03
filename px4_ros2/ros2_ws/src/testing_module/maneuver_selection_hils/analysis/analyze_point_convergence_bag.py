@@ -45,12 +45,203 @@ def command_execution_requested(message):
         message, "command_execution_requested", message.activation_requested))
 
 
+def masked_candidate_tuple(message, ids_field, mask_field):
+    """Return semantic candidates; ignore storage bytes for invalid slots."""
+    candidate_ids = getattr(message, ids_field)
+    valid_mask = int(getattr(message, mask_field, (1 << AIRCRAFT_COUNT) - 1))
+    return tuple(
+        int(candidate_ids[aircraft]) if valid_mask & (1 << aircraft) else None
+        for aircraft in range(AIRCRAFT_COUNT))
+
+
 def observed_rate_hz(timestamps):
     """Return the event rate over the first-to-last observed timestamp."""
     ordered = sorted(set(int(timestamp) for timestamp in timestamps))
     if len(ordered) < 2 or ordered[-1] <= ordered[0]:
         return None
     return (len(ordered) - 1) * 1.0e6 / (ordered[-1] - ordered[0])
+
+
+def interaction_graph_summary(messages, start_ns):
+    """Summarize Phase-1/2 graph telemetry without changing control data."""
+    records = []
+    by_epoch = {}
+    for vehicle in range(AIRCRAFT_COUNT):
+        topic = f"/common/px4_{vehicle}/interaction_graph_diagnostics"
+        for bag_time_ns, message in messages.get(topic, []):
+            if bag_time_ns < start_ns:
+                continue
+            records.append(message)
+            by_epoch.setdefault(int(message.selection_epoch), {})[vehicle] = (
+                message)
+    if not records:
+        return {"available": False}
+
+    valid = [message for message in records if int(message.graph_status) == 1]
+    evaluated = [
+        message for message in records if bool(message.shadow_search_evaluated)]
+    timing_ms = np.asarray(
+        [float(message.total_shadow_time_ns) * 1.0e-6 for message in evaluated],
+        dtype=np.float64)
+    certification_timing_ms = np.asarray(
+        [float(message.certification_compute_time_ns) * 1.0e-6
+         for message in valid],
+        dtype=np.float64)
+    graph_timing_ms = np.asarray(
+        [float(message.graph_compute_time_ns) * 1.0e-6 for message in valid],
+        dtype=np.float64)
+    common_epochs = 0
+    common_valid_epochs = 0
+    matching_library_epochs = 0
+    matching_certification_epochs = 0
+    matching_graph_epochs = 0
+    matching_component_epochs = 0
+    matching_adjacency_epochs = 0
+    matching_component_membership_epochs = 0
+    matching_shadow_tuple_epochs = 0
+    matching_solution_hash_epochs = 0
+    common_matching_library_shadow_epochs = 0
+    matching_solution_given_library_epochs = 0
+    common_shadow_tuple_epochs = 0
+    for epoch_records in by_epoch.values():
+        if len(epoch_records) != AIRCRAFT_COUNT:
+            continue
+        common_epochs += 1
+        if not all(int(item.graph_status) == 1
+                   for item in epoch_records.values()):
+            continue
+        common_valid_epochs += 1
+        if len({int(item.candidate_library_hash)
+                for item in epoch_records.values()}) == 1:
+            matching_library_epochs += 1
+        if len({int(item.certification_hash)
+                for item in epoch_records.values()}) == 1:
+            matching_certification_epochs += 1
+        if len({int(item.graph_hash) for item in epoch_records.values()}) == 1:
+            matching_graph_epochs += 1
+        if len({
+                int(item.component_hash)
+                for item in epoch_records.values()}) == 1:
+            matching_component_epochs += 1
+        if len({
+                (tuple(int(value) for value in item.participant_vehicle_ids),
+                 int(item.adjacency_bitmask))
+                for item in epoch_records.values()}) == 1:
+            matching_adjacency_epochs += 1
+        if len({
+                (tuple(int(value) for value in item.participant_vehicle_ids),
+                 int(item.component_count),
+                 tuple(int(value) for value in item.component_ids),
+                 tuple(int(value) for value in item.component_sizes))
+                for item in epoch_records.values()}) == 1:
+            matching_component_membership_epochs += 1
+        evaluated_records = [
+            item for item in epoch_records.values()
+            if bool(item.shadow_search_evaluated)]
+        if len(evaluated_records) == AIRCRAFT_COUNT:
+            common_shadow_tuple_epochs += 1
+            if len({
+                    (int(getattr(item, "assembled_candidate_valid_mask", 31)),
+                     masked_candidate_tuple(
+                         item,
+                         "assembled_candidate_ids",
+                         "assembled_candidate_valid_mask"))
+                    for item in evaluated_records}) == 1:
+                matching_shadow_tuple_epochs += 1
+            if len({int(item.component_solution_hash)
+                    for item in evaluated_records}) == 1:
+                matching_solution_hash_epochs += 1
+            if len({int(item.candidate_library_hash)
+                    for item in evaluated_records}) == 1:
+                common_matching_library_shadow_epochs += 1
+                if len({int(item.component_solution_hash)
+                        for item in evaluated_records}) == 1:
+                    matching_solution_given_library_epochs += 1
+
+    component_size_histogram = Counter()
+    for message in valid:
+        for index in range(int(message.component_count)):
+            component_size_histogram[int(message.component_sizes[index])] += 1
+    return {
+        "available": True,
+        "record_count": len(records),
+        "valid_graph_count": len(valid),
+        "shadow_evaluated_count": len(evaluated),
+        "shadow_status_counts": {
+            str(status): count
+            for status, count in sorted(Counter(
+                int(message.shadow_status) for message in records).items())},
+        "global_crosscheck_pass_count": sum(
+            bool(message.global_crosscheck_pass) for message in records),
+        "global_crosscheck_failure_count": sum(
+            bool(message.global_crosscheck_evaluated)
+            and not bool(message.global_crosscheck_pass)
+            for message in records),
+        "common_five_node_epoch_count": common_epochs,
+        "common_valid_five_node_epoch_count": common_valid_epochs,
+        "matching_candidate_library_hash_epoch_count": matching_library_epochs,
+        "matching_certification_hash_epoch_count": matching_certification_epochs,
+        "matching_graph_hash_epoch_count": matching_graph_epochs,
+        "matching_component_hash_epoch_count": matching_component_epochs,
+        "matching_adjacency_epoch_count": matching_adjacency_epochs,
+        "matching_component_membership_epoch_count": (
+            matching_component_membership_epochs),
+        "common_shadow_tuple_epoch_count": common_shadow_tuple_epochs,
+        "matching_shadow_tuple_epoch_count": matching_shadow_tuple_epochs,
+        "matching_component_solution_hash_epoch_count": (
+            matching_solution_hash_epochs),
+        "common_matching_library_shadow_epoch_count": (
+            common_matching_library_shadow_epochs),
+        "matching_solution_given_library_epoch_count": (
+            matching_solution_given_library_epochs),
+        "candidate_library_hash_match_rate": (
+            matching_library_epochs / common_valid_epochs
+            if common_valid_epochs else None),
+        "certification_hash_match_rate": (
+            matching_certification_epochs / common_valid_epochs
+            if common_valid_epochs else None),
+        "graph_hash_match_rate": (
+            matching_graph_epochs / common_valid_epochs
+            if common_valid_epochs else None),
+        "component_hash_match_rate": (
+            matching_component_epochs / common_valid_epochs
+            if common_valid_epochs else None),
+        "adjacency_match_rate": (
+            matching_adjacency_epochs / common_valid_epochs
+            if common_valid_epochs else None),
+        "component_membership_match_rate": (
+            matching_component_membership_epochs / common_valid_epochs
+            if common_valid_epochs else None),
+        "shadow_tuple_match_rate": (
+            matching_shadow_tuple_epochs / common_shadow_tuple_epochs
+            if common_shadow_tuple_epochs else None),
+        "component_solution_hash_match_rate": (
+            matching_solution_hash_epochs / common_shadow_tuple_epochs
+            if common_shadow_tuple_epochs else None),
+        "component_solution_hash_match_rate_given_library": (
+            matching_solution_given_library_epochs
+            / common_matching_library_shadow_epochs
+            if common_matching_library_shadow_epochs else None),
+        "component_size_histogram": {
+            str(size): count
+            for size, count in sorted(component_size_histogram.items())},
+        "naive_evaluation_count_values": sorted({
+            int(message.naive_evaluation_count) for message in valid}),
+        "component_evaluation_count_values": sorted({
+            int(message.component_evaluation_count) for message in valid}),
+        "total_shadow_time_ms_p50": (
+            float(np.percentile(timing_ms, 50)) if timing_ms.size else None),
+        "total_shadow_time_ms_p95": (
+            float(np.percentile(timing_ms, 95)) if timing_ms.size else None),
+        "total_shadow_time_ms_max": (
+            float(np.max(timing_ms)) if timing_ms.size else None),
+        "pairwise_ad_certification_time_ms_p95": (
+            float(np.percentile(certification_timing_ms, 95))
+            if certification_timing_ms.size else None),
+        "graph_compute_time_ms_p95": (
+            float(np.percentile(graph_timing_ms, 95))
+            if graph_timing_ms.size else None),
+    }
 
 
 def read_bag(bag: Path):
@@ -60,6 +251,8 @@ def read_bag(bag: Path):
             f"/common/px4_{vehicle}/trans_vehicle_odometry")
         selected_topics.add(
             f"/common/px4_{vehicle}/maneuver_selection_decision")
+        selected_topics.add(
+            f"/common/px4_{vehicle}/interaction_graph_diagnostics")
         selected_topics.add(
             f"/common/px4_{vehicle}/trajectory_intent")
 
@@ -219,7 +412,9 @@ def decision_summary(decisions):
             for _, message in records)
         accepted_switches = sum(
             bool(message.new_best_accepted
-                 and getattr(message, "switch_clearly_superior", False))
+                 and (getattr(message, "proposed_component_graph", False)
+                      or getattr(
+                          message, "switch_clearly_superior", False)))
             for _, message in records)
         selected_v4 = sum(
             bool(message.selected_v4_cutover) for _, message in records)
@@ -318,8 +513,11 @@ def communication_delay_summary(decisions):
             key = (
                 int(decision.proposal_epoch),
                 int(decision.proposal_timestamp_us),
-                tuple(int(value) for value in
-                      decision.proposed_candidate_ids[:AIRCRAFT_COUNT]),
+                int(getattr(decision, "proposed_candidate_valid_mask", 31)),
+                masked_candidate_tuple(
+                    decision,
+                    "proposed_candidate_ids",
+                    "proposed_candidate_valid_mask"),
             )
             first_proposal_time.setdefault(key, float(bag_time_s))
 
@@ -332,8 +530,11 @@ def communication_delay_summary(decisions):
             key = (
                 int(decision.local_selection_epoch),
                 int(decision.selection_timestamp_us),
-                tuple(int(value) for value in
-                      decision.selected_candidate_ids[:AIRCRAFT_COUNT]),
+                int(getattr(decision, "selected_candidate_valid_mask", 31)),
+                masked_candidate_tuple(
+                    decision,
+                    "selected_candidate_ids",
+                    "selected_candidate_valid_mask"),
             )
             if key in committed_keys:
                 continue
@@ -693,15 +894,8 @@ def trajectory_intent_summary(intents, decisions, start_ns):
              int(message.candidate_set_kind))
             for _, message in all_records
         }
-        command_signatures = {
-            (int(message.candidate_id),
-             int(message.candidate_input_revision),
-             int(message.candidate_set_kind))
-            for _, message in all_records
-        }
         selected_reference_count = 0
         missing_exact_reference_count = 0
-        missing_command_reference_count = 0
         for _, decision in decisions[vehicle]:
             if not decision.coordination_qualified:
                 continue
@@ -712,11 +906,8 @@ def trajectory_intent_summary(intents, decisions, start_ns):
                 int(decision.selected_candidate_ids[vehicle]),
                 int(decision.selected_candidate_input_revisions[vehicle]),
                 kind)
-            command = (exact[1], exact[2], exact[3])
             if exact not in exact_signatures:
                 missing_exact_reference_count += 1
-            if command not in command_signatures:
-                missing_command_reference_count += 1
         invalid_v4_metadata_count = sum(
             int(message.candidate_set_size) < 1
             or int(message.candidate_set_size) > 3
@@ -749,8 +940,6 @@ def trajectory_intent_summary(intents, decisions, start_ns):
             "selected_reference_count": selected_reference_count,
             "missing_exact_selected_intent_count": (
                 missing_exact_reference_count),
-            "missing_selected_command_count": (
-                missing_command_reference_count),
             "unique_trajectory_refresh_count": len(set(source_timestamps)),
             "trajectory_refresh_rate_hz": observed_rate_hz(
                 source_timestamps),
@@ -833,7 +1022,7 @@ def formation_override_summary(log_dir, messages, intents):
 
 def runtime_policy_summary(log_dir):
     pattern = re.compile(
-        r"execution_policy=(\S+).*active_switch=(\d+) "
+        r"execution_policy=(\S+).*active_switch=(\d+).*"
         r"switch_cost_margin=([-+0-9.eE]+) "
         r"switch_ad_margin=([-+0-9.eE]+)")
     by_vehicle = []
@@ -956,17 +1145,29 @@ def coordination_invariant_summary(decisions):
                     and selected_epoch == proposal_epoch
                     and not decision.proposal_consensus_confirmed):
                 unconfirmed_current_epoch_qualified_count += 1
-            if (command_execution_requested(decision)
-                    and int(decision.selected_candidate_ids[vehicle])
-                    != int(decision.ownship_candidate_id)):
-                active_selected_slot_mismatch_count += 1
+            if command_execution_requested(decision):
+                ownship_valid = bool(getattr(
+                    decision, "ownship_candidate_valid", True))
+                selected_mask = int(getattr(
+                    decision, "selected_candidate_valid_mask", 31))
+                selected_slot_valid = bool(selected_mask & (1 << vehicle))
+                if (not ownship_valid
+                        or (selected_slot_valid
+                            and int(decision.selected_candidate_ids[vehicle])
+                            != int(decision.ownship_candidate_id))):
+                    active_selected_slot_mismatch_count += 1
             if (command_execution_requested(decision)
                     and decision.proposal_valid
+                    and int(getattr(
+                        decision, "proposed_candidate_valid_mask", 31))
+                        & (1 << vehicle)
                     and int(decision.proposed_candidate_ids[vehicle])
-                    != int(decision.ownship_candidate_id)):
+                        != int(decision.ownship_candidate_id)):
                 pending_active_proposal_count += 1
-                if not (decision.switch_superiority_evaluated
-                        and decision.switch_clearly_superior):
+                if not (bool(getattr(
+                                decision, "proposed_component_graph", False))
+                        or (decision.switch_superiority_evaluated
+                            and decision.switch_clearly_superior)):
                     unauthorized_active_proposal_count += 1
         per_vehicle_by_selected_epoch.append(selected_by_epoch)
         per_vehicle_by_proposal_epoch.append(proposal_by_epoch)
@@ -984,11 +1185,19 @@ def coordination_invariant_summary(decisions):
         decisions_at_epoch = [
             by_epoch[epoch] for by_epoch in per_vehicle_by_selected_epoch]
         for observer in range(AIRCRAFT_COUNT):
-            observer_tuple = decisions_at_epoch[
-                observer].selected_candidate_ids
+            observer_decision = decisions_at_epoch[observer]
+            observer_tuple = observer_decision.selected_candidate_ids
+            observer_mask = int(getattr(
+                observer_decision, "selected_candidate_valid_mask", 31))
             for peer in range(AIRCRAFT_COUNT):
-                if int(observer_tuple[peer]) != int(
-                        decisions_at_epoch[peer].ownship_candidate_id):
+                peer_valid = bool(getattr(
+                    decisions_at_epoch[peer],
+                    "ownship_candidate_valid", True))
+                observer_valid = bool(observer_mask & (1 << peer))
+                if (observer_valid and (not peer_valid
+                        or int(observer_tuple[peer]) != int(
+                            decisions_at_epoch[peer]
+                            .ownship_candidate_id))):
                     peer_ownship_assumption_mismatch_count += 1
                     if first_peer_ownship_mismatch_epoch is None:
                         first_peer_ownship_mismatch_epoch = epoch
@@ -1056,7 +1265,11 @@ def latest_decision(records, elapsed_s):
 def selected_identity(decision):
     return (
         bool(decision.selected_v4_cutover),
-        tuple(decision.selected_candidate_ids[:AIRCRAFT_COUNT]),
+        int(getattr(decision, "selected_candidate_valid_mask", 31)),
+        masked_candidate_tuple(
+            decision,
+            "selected_candidate_ids",
+            "selected_candidate_valid_mask"),
         tuple(decision.selected_candidate_input_revisions[:AIRCRAFT_COUNT]),
         tuple(
             decision.selected_candidate_source_timestamps_us[
@@ -1066,7 +1279,11 @@ def selected_identity(decision):
 def proposal_identity(decision):
     return (
         bool(decision.proposed_v4_cutover),
-        tuple(decision.proposed_candidate_ids[:AIRCRAFT_COUNT]),
+        int(getattr(decision, "proposed_candidate_valid_mask", 31)),
+        masked_candidate_tuple(
+            decision,
+            "proposed_candidate_ids",
+            "proposed_candidate_valid_mask"),
         tuple(decision.proposed_candidate_input_revisions[:AIRCRAFT_COUNT]),
         tuple(
             decision.proposed_candidate_source_timestamps_us[
@@ -1076,7 +1293,11 @@ def proposal_identity(decision):
 def proposal_command_identity(decision):
     return (
         bool(decision.proposed_v4_cutover),
-        tuple(decision.proposed_candidate_ids[:AIRCRAFT_COUNT]),
+        int(getattr(decision, "proposed_candidate_valid_mask", 31)),
+        masked_candidate_tuple(
+            decision,
+            "proposed_candidate_ids",
+            "proposed_candidate_valid_mask"),
         tuple(decision.proposed_candidate_input_revisions[:AIRCRAFT_COUNT]))
 
 
@@ -1084,7 +1305,12 @@ def tuple_label(decision):
     if decision is None or not decision.coordination_qualified:
         return "selection: waiting"
     labels = []
-    for candidate_id in decision.selected_candidate_ids[:AIRCRAFT_COUNT]:
+    valid_mask = int(getattr(decision, "selected_candidate_valid_mask", 31))
+    for aircraft, candidate_id in enumerate(
+            decision.selected_candidate_ids[:AIRCRAFT_COUNT]):
+        if not (valid_mask & (1 << aircraft)):
+            labels.append("Formation")
+            continue
         if (decision.selected_v4_cutover
                 and candidate_id < len(V4_CANDIDATE_ROLES)):
             labels.append(V4_CANDIDATE_ROLES[candidate_id])
@@ -1395,6 +1621,8 @@ def analyze(args):
         "distributed_decision_consensus": decision_consensus_summary(
             decisions, elapsed_s),
         "coordination_invariants": coordination_invariant_summary(decisions),
+        "interaction_graph_shadow_diagnostics": interaction_graph_summary(
+            messages, int(grid_ns[0])),
     }
     with (args.summary_dir / "summary.json").open("w", encoding="utf-8") as stream:
         json.dump(summary, stream, indent=2)

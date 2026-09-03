@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 
 #include <collision_avoidance/estimation/reconstruction/ReconstructTrajectory.hpp>
@@ -67,6 +68,12 @@ struct TrajectoryIntentPacket
     std::array<float, kTrajectoryIntentInputDimension> candidate_input{};
     // Deterministic identity of candidate_id + transmitted float32 input.
     std::uint64_t candidate_input_revision{0};
+    // Formation command and rejoin request captured with this candidate
+    // library revision. They make the component-selection objective part of
+    // the same frozen, distributed snapshot as the seven trajectories.
+    float nominal_lateral_acceleration_mps2{
+        std::numeric_limits<float>::quiet_NaN()};
+    bool safe_rejoin_requested{false};
 };
 
 static_assert(std::is_trivially_copyable_v<TrajectoryIntentPacket>);
@@ -80,6 +87,9 @@ struct ReceivedTrajectoryIntent
     CandidateSetKind candidate_set_kind{CandidateSetKind::LegacyRoll};
     PredictInput candidate_input{};
     std::uint64_t candidate_input_revision{0};
+    double nominal_lateral_acceleration_mps2{
+        std::numeric_limits<double>::quiet_NaN()};
+    bool safe_rejoin_requested{false};
     PredictionMeanTrajectory reconstructed_mean{};
     TrajectoryCone cone{};
 };

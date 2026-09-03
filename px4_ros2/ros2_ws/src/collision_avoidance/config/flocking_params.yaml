@@ -41,6 +41,13 @@
     max_roll_rate_deg_per_s: 70.0   # PX4 FW_R_RMAX (predictor roll-rate clamp)
     max_yaw_rate_deg_per_s: 50.0    # PX4 FW_Y_RMAX (V4 conservative cap)
     amac_communication_delay_margin_m: 0.0 # residual-only MASD term; calibrate before enabling
+    # Project-defined swarm interaction graph; active cutover is opt-in.
+    amac_interaction_graph_shadow_enabled: false
+    amac_interaction_graph_component_cutover_enabled: false
+    amac_interaction_graph_ad_screen_m: 0.0
+    amac_trajectory_library_version: 1
+    amac_ad_masd_config_version: 1
+    amac_interaction_graph_config_version: 1
 
     # V4 safe-control Step-3 shadow configuration
     v4_safe_control_enabled: true

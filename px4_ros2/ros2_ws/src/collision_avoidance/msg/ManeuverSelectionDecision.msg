@@ -25,19 +25,27 @@ bool safe_rejoin_active
 bool safe_rejoin_objective_applied
 float32 selected_nominal_rejoin_cost
 uint8[5] selected_candidate_ids
+uint32 selected_candidate_valid_mask
 uint64[5] selected_candidate_input_revisions
 uint64[5] selected_candidate_source_timestamps_us
 bool selected_v4_cutover
 uint8 ownship_candidate_id
+bool ownship_candidate_valid
 
 # Locally evaluated tuple awaiting the distributed cross-check.  The selected
 # fields above describe only the last tuple confirmed by every participant.
 uint64 proposal_timestamp_us
 uint64 proposal_epoch
 uint8[5] proposed_candidate_ids
+uint32 proposed_candidate_valid_mask
 uint64[5] proposed_candidate_input_revisions
 uint64[5] proposed_candidate_source_timestamps_us
 bool proposed_v4_cutover
+bool proposed_component_graph
+uint64 proposed_candidate_library_hash
+uint64 proposed_graph_hash
+uint64 proposed_component_hash
+uint64 proposed_component_solution_hash
 bool proposal_valid
 bool proposal_consensus_confirmed
 bool switch_superiority_evaluated

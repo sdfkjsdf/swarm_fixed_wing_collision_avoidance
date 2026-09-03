@@ -18,6 +18,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "msg/TrajectoryCone.msg"
     "msg/TrajectoryIntent.msg"
     "msg/ManeuverSelectionDecision.msg"
+    "msg/InteractionGraphDiagnostics.msg"
 )
 rosidl_get_typesupport_target(collision_avoidance_typesupport_target
     ${PROJECT_NAME} rosidl_typesupport_cpp)
@@ -215,6 +216,35 @@ target_link_libraries(maneuver_combination_evaluator PUBLIC
     trajectory_intent
 )
 
+add_library(pairwise_ad_certification STATIC
+    src/selection/PairwiseAdCertification.cpp
+)
+add_library(collision_avoidance::pairwise_ad_certification ALIAS
+    pairwise_ad_certification
+)
+target_include_directories(pairwise_ad_certification PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(pairwise_ad_certification PUBLIC
+    maneuver_combination_evaluator
+)
+
+# ROS-independent Lockheed-inspired swarm interaction graph.  This is a
+# project adaptation of threat isolation, not a graph algorithm published by
+# Lockheed Martin.
+add_library(interaction_graph STATIC
+    src/selection/InteractionGraph.cpp
+)
+add_library(collision_avoidance::interaction_graph ALIAS interaction_graph)
+target_include_directories(interaction_graph PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(interaction_graph PUBLIC
+    pairwise_ad_certification
+)
+
 # Per-aircraft five-stage runtime worker. ROS callbacks remain in the onboard
 # node; this target owns only deterministic prediction/selection state and one
 # SPSC-fed computation thread.
@@ -232,6 +262,8 @@ target_include_directories(maneuver_selection_worker PUBLIC
 )
 target_link_libraries(maneuver_selection_worker PUBLIC
     maneuver_combination_evaluator
+    pairwise_ad_certification
+    interaction_graph
     safe_control_candidate_adapter
     backup_threat_intent_adapter_v4
     formation_discrimination
@@ -285,6 +317,8 @@ install(TARGETS
     trajectory_reconstruction
     trajectory_intent
     maneuver_combination_evaluator
+    pairwise_ad_certification
+    interaction_graph
     maneuver_selection_worker
     trajectory_intent_transport
     distributed_maneuver_selection_runtime
@@ -405,6 +439,23 @@ if(BUILD_TESTING)
         maneuver_selection_worker
     )
     target_include_directories(test_maneuver_selection_worker PRIVATE include)
+
+    ament_add_gtest(test_interaction_graph
+        test/test_interaction_graph.cpp
+    )
+    target_link_libraries(test_interaction_graph
+        interaction_graph
+    )
+    target_include_directories(test_interaction_graph PRIVATE include)
+
+    ament_add_gtest(test_pairwise_ad_certification
+        test/test_pairwise_ad_certification.cpp
+    )
+    target_link_libraries(test_pairwise_ad_certification
+        pairwise_ad_certification
+    )
+    target_include_directories(
+        test_pairwise_ad_certification PRIVATE include)
 
     ament_add_gtest(test_maneuver_activation_controller
         test/test_maneuver_activation_controller.cpp

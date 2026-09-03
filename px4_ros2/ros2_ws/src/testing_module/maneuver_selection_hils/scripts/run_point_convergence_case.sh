@@ -23,7 +23,19 @@ EXECUTION_POLICY=${AVOIDANCE_EXECUTION_POLICY:-amac_ad_threshold}
 V4_CONTROL_ARCHITECTURE=${V4_CONTROL_ARCHITECTURE:-legacy_safe_control_set}
 AMAC_POLICY_CONFIG=${AMAC_POLICY_CONFIG:-${HILS_ROOT}/config/amac_dynamic_best.yaml}
 AMAC_COMMUNICATION_DELAY_MARGIN_M=${AMAC_COMMUNICATION_DELAY_MARGIN_M:-0.0}
+AMAC_INTERACTION_GRAPH_SHADOW_ENABLED=${AMAC_INTERACTION_GRAPH_SHADOW_ENABLED:-false}
+AMAC_INTERACTION_GRAPH_COMPONENT_CUTOVER_ENABLED=${AMAC_INTERACTION_GRAPH_COMPONENT_CUTOVER_ENABLED:-false}
+AMAC_INTERACTION_GRAPH_AD_SCREEN_M=${AMAC_INTERACTION_GRAPH_AD_SCREEN_M:-0.0}
+AMAC_TRAJECTORY_LIBRARY_VERSION=${AMAC_TRAJECTORY_LIBRARY_VERSION:-1}
+AMAC_AD_MASD_CONFIG_VERSION=${AMAC_AD_MASD_CONFIG_VERSION:-1}
 TRAFFIC_PATTERN=${TRAFFIC_PATTERN:-point_convergence}
+# Keep the old names as input aliases only. User-facing scenario/result
+# semantics use Formation consistently.
+if [[ "${TRAFFIC_PATTERN}" == "flocking" ]]; then
+    TRAFFIC_PATTERN=formation
+elif [[ "${TRAFFIC_PATTERN}" == "flocking_pentagon" ]]; then
+    TRAFFIC_PATTERN=formation_pentagon
+fi
 
 if [[ "${MODE}" != "avoidance" && "${MODE}" != "baseline" ]]; then
     echo "Usage: run_point_convergence_case.sh [avoidance|baseline]"
@@ -53,6 +65,13 @@ if [[ "${EXECUTION_POLICY}" == "amac_ad_threshold" \
     echo "amac_ad_threshold comparison requires V4_MODE=shadow"
     exit 2
 fi
+if [[ "${AMAC_INTERACTION_GRAPH_COMPONENT_CUTOVER_ENABLED}" == "true" \
+        && ("${AMAC_INTERACTION_GRAPH_SHADOW_ENABLED}" != "true" \
+            || "${SEARCH_MODE}" != "exhaustive" \
+            || "${EXECUTION_POLICY}" != "amac_ad_threshold") ]]; then
+    echo "interaction-graph component cutover requires graph enabled, exhaustive search, and amac_ad_threshold"
+    exit 2
+fi
 if [[ ("${EXECUTION_POLICY}" == "continuous_v4" \
         || "${EXECUTION_POLICY}" == "horizon_gated_v4") \
         && "${V4_MODE}" != "cutover" ]]; then
@@ -65,9 +84,9 @@ if [[ "${V4_MODE}" == "cutover" && "${SEARCH_MODE}" == "exhaustive" ]]; then
 fi
 if [[ "${TRAFFIC_PATTERN}" != "point_convergence" \
         && "${TRAFFIC_PATTERN}" != "opposite_edge_crossing" \
-        && "${TRAFFIC_PATTERN}" != "flocking" \
-        && "${TRAFFIC_PATTERN}" != "flocking_pentagon" ]]; then
-    echo "TRAFFIC_PATTERN must be point_convergence, opposite_edge_crossing, flocking, or flocking_pentagon"
+        && "${TRAFFIC_PATTERN}" != "formation" \
+        && "${TRAFFIC_PATTERN}" != "formation_pentagon" ]]; then
+    echo "TRAFFIC_PATTERN must be point_convergence, opposite_edge_crossing, formation, or formation_pentagon"
     exit 2
 fi
 
@@ -101,20 +120,20 @@ if [[ "${TRAFFIC_PATTERN}" == "opposite_edge_crossing" ]]; then
     TARGET_NORTHS=(97.746 237.500 463.627 463.627 237.500)
     TARGET_EASTS=(300.000 107.645 181.118 418.882 492.355)
     COURSES=(3.141592654 -1.884955309 -0.628318340 0.628318340 1.884955309)
-elif [[ "${TRAFFIC_PATTERN}" == "flocking" ]]; then
+elif [[ "${TRAFFIC_PATTERN}" == "formation" ]]; then
     SPAWN_CONFIG=${FORMATION_HILS}/config/spawn_config.yaml
     COORDINATE_CONFIG=${COLLISION_WS}/src/collision_avoidance/config/ros_params.yaml
     GUIDANCE_CONFIG=${COLLISION_WS}/src/collision_avoidance/config/flocking_params.yaml
-    GUIDANCE_MODE=flocking
+    GUIDANCE_MODE=formation
     SHOW_ASSIGNED_TARGETS=false
     TARGET_NORTHS=(0.0 0.0 0.0 0.0 0.0)
     TARGET_EASTS=(0.0 0.0 0.0 0.0 0.0)
     COURSES=(0.0 0.0 0.0 0.0 0.0)
-elif [[ "${TRAFFIC_PATTERN}" == "flocking_pentagon" ]]; then
+elif [[ "${TRAFFIC_PATTERN}" == "formation_pentagon" ]]; then
     SPAWN_CONFIG=${HILS_ROOT}/config/spawn_point_convergence.yaml
     COORDINATE_CONFIG=${HILS_ROOT}/config/coordinate_point_convergence.yaml
     GUIDANCE_CONFIG=${COLLISION_WS}/src/collision_avoidance/config/flocking_params.yaml
-    GUIDANCE_MODE=flocking
+    GUIDANCE_MODE=formation
     SHOW_ASSIGNED_TARGETS=false
     TARGET_NORTHS=(0.0 0.0 0.0 0.0 0.0)
     TARGET_EASTS=(0.0 0.0 0.0 0.0 0.0)
@@ -204,7 +223,7 @@ if [[ -e "${BAG_DIR}" ]]; then
     exit 2
 fi
 
-echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} v4_architecture=${V4_CONTROL_ARCHITECTURE} policy=${EXECUTION_POLICY} ad_threshold=0m communication_delay_margin=${AMAC_COMMUNICATION_DELAY_MARGIN_M}m active_switch_config=${AMAC_POLICY_CONFIG} run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
+echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4=${V4_MODE} v4_architecture=${V4_CONTROL_ARCHITECTURE} policy=${EXECUTION_POLICY} ad_threshold=0m communication_delay_margin=${AMAC_COMMUNICATION_DELAY_MARGIN_M}m interaction_graph_shadow=${AMAC_INTERACTION_GRAPH_SHADOW_ENABLED} graph_component_cutover=${AMAC_INTERACTION_GRAPH_COMPONENT_CUTOVER_ENABLED} AD_screen=${AMAC_INTERACTION_GRAPH_AD_SCREEN_M}m active_switch_config=${AMAC_POLICY_CONFIG} run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
 for vehicle in 0 1 2 3 4; do
     port=$((8888 + vehicle))
     pkill -KILL -f "MicroXRCEAgent udp4 -p ${port}" 2>/dev/null || true
@@ -270,6 +289,11 @@ for vehicle in 0 1 2 3 4; do
         -p "collision_avoidance_shadow_only:=${SHADOW_ONLY}" \
         -p "avoidance_execution_policy:=${EXECUTION_POLICY}" \
         -p "amac_communication_delay_margin_m:=${AMAC_COMMUNICATION_DELAY_MARGIN_M}" \
+        -p "amac_interaction_graph_shadow_enabled:=${AMAC_INTERACTION_GRAPH_SHADOW_ENABLED}" \
+        -p "amac_interaction_graph_component_cutover_enabled:=${AMAC_INTERACTION_GRAPH_COMPONENT_CUTOVER_ENABLED}" \
+        -p "amac_interaction_graph_ad_screen_m:=${AMAC_INTERACTION_GRAPH_AD_SCREEN_M}" \
+        -p "amac_trajectory_library_version:=${AMAC_TRAJECTORY_LIBRARY_VERSION}" \
+        -p "amac_ad_masd_config_version:=${AMAC_AD_MASD_CONFIG_VERSION}" \
         -p "maneuver_selection_exhaustive_test_mode:=${EXHAUSTIVE_TEST_MODE}" \
         -p v4_safe_control_enabled:=true \
         -p "v4_shadow_only:=${V4_SHADOW_ONLY}" \

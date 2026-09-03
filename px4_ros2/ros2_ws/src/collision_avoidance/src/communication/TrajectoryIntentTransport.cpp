@@ -60,6 +60,9 @@ collision_avoidance::msg::TrajectoryIntent toRosMessage(
         packet.candidate_input.end(),
         message.candidate_input.begin());
     message.candidate_input_revision = packet.candidate_input_revision;
+    message.nominal_lateral_acceleration_mps2 =
+        packet.nominal_lateral_acceleration_mps2;
+    message.safe_rejoin_requested = packet.safe_rejoin_requested;
     std::copy(
         packet.initial_state.begin(),
         packet.initial_state.end(),
@@ -91,6 +94,9 @@ estimation::TrajectoryIntentPacket fromRosMessage(
         message.candidate_input.end(),
         packet.candidate_input.begin());
     packet.candidate_input_revision = message.candidate_input_revision;
+    packet.nominal_lateral_acceleration_mps2 =
+        message.nominal_lateral_acceleration_mps2;
+    packet.safe_rejoin_requested = message.safe_rejoin_requested;
     std::copy(
         message.initial_state.begin(),
         message.initial_state.end(),

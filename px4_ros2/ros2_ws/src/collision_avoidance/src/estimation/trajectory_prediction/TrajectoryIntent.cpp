@@ -263,6 +263,9 @@ bool TrajectoryIntentReceiver::receive(
             && packet.candidate_set_kind
                 != CandidateSetKind::V4SafeControl)
         || !usableInput(input)
+        || (packet.safe_rejoin_requested
+            && !std::isfinite(
+                packet.nominal_lateral_acceleration_mps2))
         || packet.candidate_input_revision != inputRevision(
             packet.candidate_id, packet.candidate_input)
         || !finiteState(initial_state)
@@ -297,6 +300,10 @@ bool TrajectoryIntentReceiver::receive(
     candidate_received.candidate_input = input;
     candidate_received.candidate_input_revision =
         packet.candidate_input_revision;
+    candidate_received.nominal_lateral_acceleration_mps2 =
+        static_cast<double>(packet.nominal_lateral_acceleration_mps2);
+    candidate_received.safe_rejoin_requested =
+        packet.safe_rejoin_requested;
     candidate_received.reconstructed_mean = reconstructed_mean;
     PredictionInputTrajectory inputs{};
     inputs.fill(input);

@@ -12,6 +12,7 @@
 
 #include <collision_avoidance/communication/TrajectoryIntentTransport.hpp>
 #include <collision_avoidance/msg/maneuver_selection_decision.hpp>
+#include <collision_avoidance/msg/interaction_graph_diagnostics.hpp>
 #include <collision_avoidance/selection/ManeuverSelectionWorker.hpp>
 
 namespace collision_avoidance::communication
@@ -59,6 +60,9 @@ private:
     rclcpp::Publisher<
         collision_avoidance::msg::ManeuverSelectionDecision>::SharedPtr
         m_decision_publisher;
+    rclcpp::Publisher<
+        collision_avoidance::msg::InteractionGraphDiagnostics>::SharedPtr
+        m_interaction_graph_diagnostics_publisher;
     std::vector<std::unique_ptr<TrajectoryIntentSubscription>>
         m_intent_subscriptions;
     std::vector<rclcpp::Subscription<

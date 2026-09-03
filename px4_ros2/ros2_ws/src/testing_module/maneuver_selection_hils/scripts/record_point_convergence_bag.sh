@@ -8,6 +8,7 @@ for vehicle in 0 1 2 3 4; do
     TOPICS+=(
         "/common/px4_${vehicle}/trans_vehicle_odometry"
         "/common/px4_${vehicle}/maneuver_selection_decision"
+        "/common/px4_${vehicle}/interaction_graph_diagnostics"
         "/common/px4_${vehicle}/trajectory_intent"
         "/px4_${vehicle}/fmu/out/vehicle_attitude"
         "/px4_${vehicle}/fmu/out/vtol_vehicle_status"

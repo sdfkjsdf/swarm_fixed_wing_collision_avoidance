@@ -16,6 +16,8 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
     source.candidate_set_kind = ce::CandidateSetKind::V4SafeControl;
     source.candidate_input = {19.5F, 120.0F, 0.0F, -4.25F};
     source.candidate_input_revision = 123456789012345ULL;
+    source.nominal_lateral_acceleration_mps2 = 1.75F;
+    source.safe_rejoin_requested = true;
     for (std::size_t index = 0; index < source.initial_state.size(); ++index) {
         source.initial_state[index] = static_cast<float>(index) + 0.25F;
     }
@@ -42,6 +44,10 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
     EXPECT_EQ(
         received.candidate_input_revision,
         source.candidate_input_revision);
+    EXPECT_FLOAT_EQ(
+        received.nominal_lateral_acceleration_mps2,
+        source.nominal_lateral_acceleration_mps2);
+    EXPECT_EQ(received.safe_rejoin_requested, source.safe_rejoin_requested);
     EXPECT_EQ(received.initial_state, source.initial_state);
     EXPECT_EQ(received.initial_covariance, source.initial_covariance);
     EXPECT_FLOAT_EQ(

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <thread>
 
@@ -13,6 +14,7 @@
 #include <collision_avoidance/estimation/trajectory_prediction/TrajectoryIntent.hpp>
 #include <collision_avoidance/formation/FormationDiscrimination.hpp>
 #include <collision_avoidance/selection/HeuristicCandidateSelector.hpp>
+#include <collision_avoidance/selection/InteractionGraph.hpp>
 #include <collision_avoidance/selection/BackupControlInterpolatorV4.hpp>
 #include <collision_avoidance/selection/BackupThreatIntentAdapterV4.hpp>
 #include <collision_avoidance/selection/ManeuverActivationController.hpp>
@@ -89,6 +91,11 @@ struct ManeuverSelectionWorkerParams
     ManeuverExecutionPolicy execution_policy{
         ManeuverExecutionPolicy::AmacAdThreshold};
     bool exhaustive_test_mode{false};
+    // Computes and publishes the project-defined swarm interaction graph.
+    InteractionGraphParams interaction_graph_params{};
+    // Experimental cutover: use the globally cross-checked component result
+    // as the existing proposal path's input instead of also running 7^N.
+    bool interaction_graph_component_cutover_enabled{false};
     bool v4_safe_control_enabled{false};
     // True keeps V4 diagnostic-only; false supplies V4 candidates downstream.
     bool v4_shadow_only{true};
@@ -124,6 +131,47 @@ struct ManeuverSelectionWorkerParams
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollPlus30),
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollMinus50),
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollPlus50)};
+};
+
+enum class InteractionGraphShadowStatus : std::uint8_t
+{
+    Disabled = 0,
+    GraphInvalid,
+    CandidateSetsIncomplete,
+    RequiresSevenCandidates,
+    ComponentEvaluationFailed,
+    GlobalCrosscheckFailed,
+    Evaluated,
+};
+
+struct InteractionGraphDiagnostics
+{
+    int vehicle_id{0};
+    bool shadow_enabled{false};
+    bool component_cutover_enabled{false};
+    bool component_proposal_used{false};
+    InteractionGraphResult graph{};
+    InteractionGraphShadowStatus shadow_status{
+        InteractionGraphShadowStatus::Disabled};
+    bool shadow_search_evaluated{false};
+    std::array<std::uint8_t, kMaximumSelectionAircraft>
+        assembled_candidate_ids{};
+    std::uint32_t assembled_candidate_valid_mask{0};
+    std::uint64_t assembled_candidate_hash{0};
+    std::uint64_t component_solution_hash{0};
+    bool global_crosscheck_evaluated{false};
+    bool global_crosscheck_pass{false};
+    double global_crosscheck_minimum_ad_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    bool legacy_proposal_valid{false};
+    std::array<std::uint8_t, kMaximumSelectionAircraft>
+        legacy_proposed_candidate_ids{};
+    std::uint64_t component_search_time_ns{0};
+    std::uint64_t global_crosscheck_time_ns{0};
+    std::uint64_t total_shadow_time_ns{0};
+    std::size_t component_valid_evaluation_count{0};
+    std::size_t component_safe_evaluation_count{0};
+    JointCombinationEvaluation global_crosscheck_evaluation{};
 };
 
 struct ManeuverSelectionBeliefSnapshot
@@ -189,6 +237,7 @@ struct ManeuverSelectionDecision
         std::numeric_limits<double>::quiet_NaN()};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         selected_candidate_ids{};
+    std::uint32_t selected_candidate_valid_mask{0};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         selected_candidate_input_revisions{};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
@@ -196,15 +245,22 @@ struct ManeuverSelectionDecision
     bool selected_v4_cutover{false};
     std::uint8_t ownship_candidate_id{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
+    bool ownship_candidate_valid{false};
     std::uint64_t proposal_timestamp_us{0};
     std::uint64_t proposal_epoch{0};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         proposed_candidate_ids{};
+    std::uint32_t proposed_candidate_valid_mask{0};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         proposed_candidate_input_revisions{};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         proposed_candidate_source_timestamps_us{};
     bool proposed_v4_cutover{false};
+    bool proposed_component_graph{false};
+    std::uint64_t proposed_candidate_library_hash{0};
+    std::uint64_t proposed_graph_hash{0};
+    std::uint64_t proposed_component_hash{0};
+    std::uint64_t proposed_component_solution_hash{0};
     bool proposal_valid{false};
     bool proposal_consensus_confirmed{false};
     bool switch_superiority_evaluated{false};
@@ -317,6 +373,7 @@ struct ManeuverSelectionPeerDecision
     std::uint64_t local_selection_epoch{0};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         selected_candidate_ids{};
+    std::uint32_t selected_candidate_valid_mask{0};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         selected_candidate_input_revisions{};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
@@ -324,15 +381,22 @@ struct ManeuverSelectionPeerDecision
     bool selected_v4_cutover{false};
     std::uint8_t ownship_candidate_id{
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
+    bool ownship_candidate_valid{false};
     std::uint64_t proposal_timestamp_us{0};
     std::uint64_t proposal_epoch{0};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         proposed_candidate_ids{};
+    std::uint32_t proposed_candidate_valid_mask{0};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         proposed_candidate_input_revisions{};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         proposed_candidate_source_timestamps_us{};
     bool proposed_v4_cutover{false};
+    bool proposed_component_graph{false};
+    std::uint64_t proposed_candidate_library_hash{0};
+    std::uint64_t proposed_graph_hash{0};
+    std::uint64_t proposed_component_hash{0};
+    std::uint64_t proposed_component_solution_hash{0};
     bool proposal_valid{false};
     bool proposal_consensus_confirmed{false};
     bool coordination_qualified{false};
@@ -398,7 +462,7 @@ inline bool maneuverCommandExecutionRequested(
     ManeuverExecutionPolicy policy,
     const ManeuverSelectionDecision & decision) noexcept
 {
-    if (!decision.coordination_qualified) {
+    if (!decision.coordination_qualified || !decision.ownship_candidate_valid) {
         return false;
     }
     if (policy == ManeuverExecutionPolicy::ContinuousV4) {
@@ -496,12 +560,19 @@ public:
         const ManeuverSelectionPeerDecision & decision) noexcept;
     void setActivationEnabled(bool enabled) noexcept;
     std::optional<ManeuverSelectionWorkerOutput> tryPopOutput() noexcept;
+    std::optional<std::shared_ptr<const InteractionGraphDiagnostics>>
+    tryPopInteractionGraphDiagnostics() noexcept;
 
     // Deterministic test/benchmark entry point. Do not call while start() is active.
     bool processPendingForTest();
 
     std::uint64_t droppedInputCount() const noexcept;
     std::uint64_t droppedOutputCount() const noexcept;
+    const InteractionGraphParams & interactionGraphParamsForDiagnostics()
+        const noexcept
+    {
+        return m_params.interaction_graph_params;
+    }
 
 private:
     enum class InputKind : std::uint8_t
@@ -554,11 +625,17 @@ private:
         std::uint64_t epoch{0};
         std::array<std::uint8_t, kMaximumSelectionAircraft>
             candidate_ids{};
+        std::uint32_t candidate_valid_mask{0};
         std::array<std::uint64_t, kMaximumSelectionAircraft>
             candidate_input_revisions{};
         std::array<std::uint64_t, kMaximumSelectionAircraft>
             candidate_source_timestamps_us{};
         bool v4_cutover{false};
+        bool component_graph{false};
+        std::uint64_t candidate_library_hash{0};
+        std::uint64_t graph_hash{0};
+        std::uint64_t component_hash{0};
+        std::uint64_t component_solution_hash{0};
         estimation::PredictInput ownship_input{};
         JointCombinationEvaluation current_evaluation{};
         JointCombinationEvaluation evaluation{};
@@ -607,6 +684,8 @@ private:
     void evaluateCurrentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
+    void evaluateInteractionGraphShadow(std::uint64_t now_us);
+    void publishPendingInteractionGraphDiagnostics() noexcept;
     bool evaluateV4HorizonGate(
         std::uint64_t now_us,
         const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
@@ -636,21 +715,37 @@ private:
         const std::array<std::uint8_t, kMaximumSelectionAircraft>
             & candidate_ids,
         JointCombinationEvaluation & evaluation) const;
+    bool buildNominalIntentSet(
+        std::uint64_t now_us,
+        MultiAircraftCandidateIntentSets & candidate_sets,
+        std::array<std::size_t, kMaximumSelectionAircraft>
+            & candidate_counts);
+    bool evaluateCandidateIdTupleWithExecutionFallback(
+        std::uint64_t evaluation_timestamp_us,
+        const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
+        const std::array<std::size_t, kMaximumSelectionAircraft>
+            & candidate_counts,
+        const std::array<std::uint8_t, kMaximumSelectionAircraft>
+            & candidate_ids,
+        std::uint32_t candidate_valid_mask,
+        JointCombinationEvaluation & evaluation,
+        const ManeuverRejoinObjective * rejoin_objective = nullptr);
     bool proposalChangesActiveCommand(
         const std::array<std::uint8_t, kMaximumSelectionAircraft>
             & candidate_ids,
         const std::array<std::uint64_t, kMaximumSelectionAircraft>
-            & candidate_input_revisions) const noexcept;
+            & candidate_input_revisions,
+        std::uint32_t candidate_valid_mask) const noexcept;
     bool clearlySuperior(
         const JointCombinationEvaluation & current,
         const JointCombinationEvaluation & proposed) const noexcept;
-    bool allProposalParticipantsReady() const noexcept;
+    bool allRevisionSensitiveParticipantsReady() const noexcept;
     bool finalizePendingCoordination(
         ManeuverSelectionWorkerOutput & output);
     bool buildActivationSample(
         std::uint64_t now_us,
         ManeuverActivationSample & sample,
-        ManeuverSelectionDecision & decision) const;
+        ManeuverSelectionDecision & decision);
     bool evaluateNominalPostRelease(
         std::uint64_t now_us,
         JointCombinationEvaluation & evaluation);
@@ -683,6 +778,9 @@ private:
     PositiveMarginBarrierEvaluator m_barrier_evaluator;
     JointManeuverCombinationEvaluator m_joint_evaluator;
     ExhaustiveManeuverCombinationEvaluator m_exhaustive_evaluator;
+    PairwiseAdCertificationEvaluator m_pairwise_ad_certifier;
+    CertifiedComponentManeuverEvaluator m_certified_component_evaluator;
+    InteractionGraphBuilder m_interaction_graph_builder;
     HeuristicCandidateSelector m_candidate_selector;
     ManeuverActivationController m_activation_controller;
     SafeControlSetV4 m_v4_safe_control;
@@ -695,6 +793,11 @@ private:
     common::SpscQueue<WorkerInput, kSelectionWorkerInputCapacity> m_input_queue{};
     common::SpscQueue<
         ManeuverSelectionWorkerOutput, kSelectionWorkerOutputCapacity> m_output_queue{};
+    common::SpscQueue<
+        std::shared_ptr<const InteractionGraphDiagnostics>,
+        kSelectionWorkerOutputCapacity> m_interaction_graph_diagnostics_queue{};
+    std::shared_ptr<InteractionGraphDiagnostics>
+        m_pending_interaction_graph_diagnostics{};
     std::thread m_thread;
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_activation_enabled{true};
@@ -717,6 +820,7 @@ private:
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollZero)};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         m_selected_candidate_ids{};
+    std::uint32_t m_selected_candidate_valid_mask{0};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
         m_selected_candidate_input_revisions{};
     std::array<std::uint64_t, kMaximumSelectionAircraft>
@@ -734,6 +838,12 @@ private:
     std::uint64_t m_next_trajectory_refresh_timestamp_us{0};
     bool m_candidate_set_initialized{false};
     bool m_epoch_evaluated{false};
+    std::unique_ptr<MultiAircraftExhaustiveCandidateIntentSets>
+        m_epoch_certification_candidate_sets{};
+    std::array<std::size_t, kMaximumSelectionAircraft>
+        m_epoch_certification_candidate_counts{};
+    std::array<bool, kMaximumSelectionAircraft>
+        m_epoch_certification_candidate_ready{};
 
     ExhaustiveCandidateIntentSet m_ownship_candidates{};
     bool m_ownship_candidates_complete{false};

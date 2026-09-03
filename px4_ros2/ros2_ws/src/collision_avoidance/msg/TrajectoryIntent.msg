@@ -10,6 +10,10 @@ uint8 candidate_set_kind
 float32[4] candidate_input
 uint64 candidate_input_revision
 
+# Formation rejoin metadata sampled with this trajectory-library revision.
+float32 nominal_lateral_acceleration_mps2
+bool safe_rejoin_requested
+
 # Predictor state order: [p_n, p_e, h, V_ground, course, h_dot, roll].
 float32[7] initial_state
 

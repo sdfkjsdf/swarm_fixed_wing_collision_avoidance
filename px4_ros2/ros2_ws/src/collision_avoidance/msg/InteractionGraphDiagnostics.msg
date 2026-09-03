@@ -1,0 +1,53 @@
+# Project-defined 7x7 pairwise AD certification and component-search data.
+uint64 evaluation_timestamp_us
+uint64 selection_epoch
+int32 vehicle_id
+uint8 aircraft_count
+uint8 graph_status
+bool shadow_enabled
+bool component_cutover_enabled
+bool component_proposal_used
+
+float32 ad_screen_m
+uint64 trajectory_library_version
+uint64 ad_masd_config_version
+uint64 graph_config_version
+uint64 candidate_library_hash
+
+int32[5] participant_vehicle_ids
+uint64[5] source_timestamps_us
+float32[10] pair_minimum_ad_m
+uint8[10] pair_minimum_first_candidate_id
+uint8[10] pair_minimum_second_candidate_id
+uint8[10] pair_edge_required
+uint32 adjacency_bitmask
+uint8[5] component_ids
+uint8[5] component_sizes
+uint8 component_count
+uint8 edge_count
+
+uint32 trajectory_generation_count
+uint32 pairwise_ad_evaluation_count
+uint32 naive_evaluation_count
+uint32 component_evaluation_count
+uint64 certification_hash
+uint64 graph_hash
+uint64 component_hash
+
+uint8 shadow_status
+bool shadow_search_evaluated
+uint8[5] assembled_candidate_ids
+uint32 assembled_candidate_valid_mask
+uint64 assembled_candidate_hash
+uint64 component_solution_hash
+bool global_crosscheck_evaluated
+bool global_crosscheck_pass
+float32 global_crosscheck_minimum_ad_m
+bool legacy_proposal_valid
+uint8[5] legacy_proposed_candidate_ids
+
+uint64 certification_compute_time_ns
+uint64 graph_compute_time_ns
+uint64 component_search_time_ns
+uint64 global_crosscheck_time_ns
+uint64 total_shadow_time_ns
