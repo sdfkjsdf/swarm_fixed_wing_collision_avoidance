@@ -720,16 +720,6 @@ private:
         MultiAircraftCandidateIntentSets & candidate_sets,
         std::array<std::size_t, kMaximumSelectionAircraft>
             & candidate_counts);
-    bool evaluateCandidateIdTupleWithExecutionFallback(
-        std::uint64_t evaluation_timestamp_us,
-        const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
-        const std::array<std::size_t, kMaximumSelectionAircraft>
-            & candidate_counts,
-        const std::array<std::uint8_t, kMaximumSelectionAircraft>
-            & candidate_ids,
-        std::uint32_t candidate_valid_mask,
-        JointCombinationEvaluation & evaluation,
-        const ManeuverRejoinObjective * rejoin_objective = nullptr);
     bool proposalChangesActiveCommand(
         const std::array<std::uint8_t, kMaximumSelectionAircraft>
             & candidate_ids,

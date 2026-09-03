@@ -1044,13 +1044,10 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
         remote_vehicle_id);
     const bool selected_ownship_bit = candidateIsValid(
         decision.selected_candidate_valid_mask, remote_index);
-    const bool active_isolated_candidate = decision.activation_requested
-        && decision.ownship_candidate_valid && !selected_ownship_bit;
-    if ((!selected_ownship_bit && decision.ownship_candidate_valid
-            && !active_isolated_candidate)
-        || (selected_ownship_bit && !decision.ownship_candidate_valid)
-        || (decision.coordination_qualified && selected_ownship_bit
-            && (decision.selected_candidate_ids[remote_index]
+    if (selected_ownship_bit != decision.ownship_candidate_valid
+        || (decision.coordination_qualified
+            && (!selected_ownship_bit
+                || decision.selected_candidate_ids[remote_index]
                     != decision.ownship_candidate_id
                 || decision.selected_candidate_input_revisions[remote_index]
                     == 0))) {
@@ -2170,6 +2167,32 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
         bool evaluated = false;
         const bool component_cutover =
             m_params.interaction_graph_component_cutover_enabled;
+        ManeuverRejoinObjective component_rejoin_objective;
+        const ManeuverRejoinObjective * selection_rejoin_objective_ptr =
+            legacy_rejoin_objective_ptr;
+        if (component_cutover) {
+            bool rejoin_requested = false;
+            bool rejoin_values_valid = true;
+            for (int aircraft = 0;
+                 aircraft < m_params.total_agent_count; ++aircraft) {
+                const std::size_t aircraft_index =
+                    static_cast<std::size_t>(aircraft);
+                const auto & intent = candidate_sets[aircraft_index][0];
+                rejoin_requested = rejoin_requested
+                    || intent.safe_rejoin_requested;
+                component_rejoin_objective
+                    .nominal_lateral_acceleration_mps2[aircraft_index] =
+                    intent.nominal_lateral_acceleration_mps2;
+                rejoin_values_valid = rejoin_values_valid
+                    && std::isfinite(
+                        intent.nominal_lateral_acceleration_mps2);
+            }
+            if (rejoin_requested && rejoin_values_valid) {
+                component_rejoin_objective.enabled = true;
+                selection_rejoin_objective_ptr =
+                    &component_rejoin_objective;
+            }
+        }
         std::array<std::uint8_t, kMaximumSelectionAircraft>
             component_candidate_ids{};
         std::uint32_t component_candidate_valid_mask{0};
@@ -2192,7 +2215,7 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                 safe_combination_count =
                     component.component_safe_evaluation_count;
                 maximum_minimum_ad_m = best.minimum_ad_m;
-                evaluated = best.valid && best.all_pairs_feasible;
+                evaluated = best.valid;
                 component_candidate_ids = component.assembled_candidate_ids;
                 component_candidate_valid_mask =
                     component.assembled_candidate_valid_mask;
@@ -2335,16 +2358,12 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
             JointCombinationEvaluation current_evaluation{};
             std::array<std::uint8_t, kMaximumSelectionAircraft>
                 incumbent_candidate_ids{};
-            bool common_incumbent_available = false;
-            if (!component_cutover) {
-                common_incumbent_available =
-                    m_params.execution_policy
-                            != ManeuverExecutionPolicy::AmacAdThreshold
-                        || buildCommonIncumbentCandidateIds(
-                            incumbent_candidate_ids);
-            }
+            const bool common_incumbent_available =
+                m_params.execution_policy
+                        != ManeuverExecutionPolicy::AmacAdThreshold
+                    || buildCommonIncumbentCandidateIds(
+                        incumbent_candidate_ids);
             const bool current_evaluation_available = active_command_change
-                && !component_cutover
                 && common_incumbent_available
                 && (m_params.execution_policy
                             == ManeuverExecutionPolicy::AmacAdThreshold
@@ -2362,7 +2381,7 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
             const bool current_evaluation_valid =
                 current_evaluation_available && current_evaluation.valid;
             if (current_evaluation_valid
-                && legacy_rejoin_objective_ptr != nullptr) {
+                && selection_rejoin_objective_ptr != nullptr) {
                 current_evaluation.nominal_rejoin_cost = 0.0;
                 for (int aircraft = 0;
                      aircraft < m_params.total_agent_count; ++aircraft) {
@@ -2383,7 +2402,7 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                         break;
                     }
                     const double error = found->candidate_input.a_lat_cmd
-                        - legacy_rejoin_objective_ptr
+                        - selection_rejoin_objective_ptr
                             ->nominal_lateral_acceleration_mps2[
                                 aircraft_index];
                     current_evaluation.nominal_rejoin_cost += error * error;
@@ -2394,7 +2413,7 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                 && m_params.execution_policy
                     == ManeuverExecutionPolicy::ContinuousV4;
             const bool rejoin_improves = active_command_change
-                && legacy_rejoin_objective_ptr != nullptr
+                && selection_rejoin_objective_ptr != nullptr
                 && best.valid && best.all_pairs_feasible
                 && (!current_evaluation_valid
                     || !current_evaluation.all_pairs_feasible
@@ -2405,7 +2424,6 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                             < current_evaluation.nominal_rejoin_cost
                                 - 1.0e-12));
             const bool superiority_evaluated = active_command_change
-                && !component_cutover
                 && (current_evaluation_available
                     || mode_b_role_recertification
                     || rejoin_improves);
@@ -2432,12 +2450,12 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                         current_evaluation.minimum_ad_m;
                 }
             }
-            // A component proposal has already passed the common certified
-            // search and global all-pair check.  Only the legacy path performs
-            // an additional incumbent-superiority comparison.
+            // The component result is authoritative as the proposed tuple,
+            // but changing an active command still uses the same incumbent
+            // persistence rule as the legacy evaluator. Both tuples are
+            // compared on this epoch's frozen candidate library.
             const bool active_change_allowed = !active_command_change
-                || (component_cutover
-                    ? m_params.active_switching_enabled : clearly_superior);
+                || clearly_superior;
             if (!active_change_allowed) {
                 m_pending_proposal = PendingSelectionProposal{};
                 m_latest_selection_decision = decision;
@@ -2561,10 +2579,14 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
     diagnostics.shadow_enabled = true;
     diagnostics.component_cutover_enabled =
         m_params.interaction_graph_component_cutover_enabled;
-    diagnostics.assembled_candidate_ids.fill(0U);
-
     const std::size_t aircraft_count = static_cast<std::size_t>(
         m_params.total_agent_count);
+    std::fill_n(
+        diagnostics.assembled_candidate_ids.begin(),
+        aircraft_count,
+        kRollZeroId);
+    diagnostics.assembled_candidate_valid_mask =
+        candidateMaskForAircraftCount(aircraft_count);
     const bool frozen_library_complete =
         m_epoch_certification_candidate_sets != nullptr
         && std::all_of(
@@ -2682,9 +2704,26 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
             }
         }
         if (member_count == 1) {
-            // Isolation affects only this epoch's candidate search. The slot
-            // remains explicitly invalid; execution separately retains an
-            // active latch or follows the current Formation command.
+            // An isolated aircraft adds no search dimension. Select its
+            // deterministic nominal/rejoin candidate from the same frozen
+            // library used by every worker; without a rejoin request the
+            // neutral RollZero candidate remains the bootstrap value.
+            if (rejoin_objective != nullptr) {
+                const std::size_t aircraft = members[0];
+                const double nominal = rejoin_objective
+                    ->nominal_lateral_acceleration_mps2[aircraft];
+                double best_error = std::numeric_limits<double>::infinity();
+                std::uint8_t best_id = kRollZeroId;
+                for (const auto & intent : certified_candidate_sets[aircraft]) {
+                    const double error = std::abs(
+                        intent.candidate_input.a_lat_cmd - nominal);
+                    if (error < best_error) {
+                        best_error = error;
+                        best_id = intent.candidate_id;
+                    }
+                }
+                diagnostics.assembled_candidate_ids[aircraft] = best_id;
+            }
             continue;
         }
         CertifiedComponentEvaluation component_evaluation;
@@ -2712,8 +2751,6 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
             diagnostics.assembled_candidate_ids[aircraft] =
                 certified_candidate_sets[aircraft][candidate_slot]
                     .candidate_id;
-            diagnostics.assembled_candidate_valid_mask |=
-                std::uint32_t{1} << aircraft;
         }
     }
     diagnostics.component_search_time_ns = static_cast<std::uint64_t>(
@@ -2745,28 +2782,44 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
 
     const auto crosscheck_start = Clock::now();
     JointCombinationEvaluation crosscheck;
-    std::array<std::size_t, kMaximumSelectionAircraft>
-        certified_candidate_counts{};
-    std::fill_n(
-        certified_candidate_counts.begin(),
-        aircraft_count,
-        kExhaustiveCandidatesPerAircraft);
     diagnostics.global_crosscheck_evaluated =
-        evaluateCandidateIdTupleWithExecutionFallback(
-        now_us,
-        certified_candidate_sets,
-        certified_candidate_counts,
-        diagnostics.assembled_candidate_ids,
-        diagnostics.assembled_candidate_valid_mask,
-        crosscheck,
-        rejoin_objective);
+        m_certified_component_evaluator.evaluateTuple(
+            certifications,
+            certified_candidate_sets,
+            diagnostics.assembled_candidate_ids,
+            crosscheck,
+            rejoin_objective);
     diagnostics.global_crosscheck_time_ns = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             Clock::now() - crosscheck_start).count());
     if (diagnostics.global_crosscheck_evaluated) {
+        bool cross_component_pairs_safe = true;
+        for (std::size_t first = 0; first < aircraft_count; ++first) {
+            for (std::size_t second = first + 1;
+                 second < aircraft_count; ++second) {
+                if (diagnostics.graph.component_ids[first]
+                    == diagnostics.graph.component_ids[second]) {
+                    continue;
+                }
+                const auto * pair = certifications.findPair(first, second);
+                const auto * evaluation = pair == nullptr ? nullptr
+                    : pair->find(
+                        crosscheck.candidate_slots[first],
+                        crosscheck.candidate_slots[second]);
+                if (evaluation == nullptr
+                    || evaluation->validity != CombinationValidity::Valid
+                    || !evaluation->feasible) {
+                    cross_component_pairs_safe = false;
+                    break;
+                }
+            }
+            if (!cross_component_pairs_safe) {
+                break;
+            }
+        }
         diagnostics.global_crosscheck_minimum_ad_m = crosscheck.minimum_ad_m;
         diagnostics.global_crosscheck_pass =
-            crosscheck.valid && crosscheck.all_pairs_feasible;
+            crosscheck.valid && cross_component_pairs_safe;
         diagnostics.global_crosscheck_evaluation = crosscheck;
     }
     diagnostics.shadow_status = diagnostics.global_crosscheck_pass
@@ -3106,154 +3159,6 @@ bool ManeuverSelectionWorker::evaluateCandidateIdTuple(
         selected_evaluation.has_best
             ? selected_evaluation.best_combination_index : 0];
     return true;
-}
-
-bool ManeuverSelectionWorker::evaluateCandidateIdTupleWithExecutionFallback(
-    std::uint64_t evaluation_timestamp_us,
-    const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
-    const std::array<std::size_t, kMaximumSelectionAircraft>
-        & candidate_counts,
-    const std::array<std::uint8_t, kMaximumSelectionAircraft>
-        & candidate_ids,
-    std::uint32_t candidate_valid_mask,
-    JointCombinationEvaluation & evaluation,
-    const ManeuverRejoinObjective * rejoin_objective)
-{
-    MultiAircraftCandidateIntentSets nominal_sets{};
-    std::array<std::size_t, kMaximumSelectionAircraft> nominal_counts{};
-    bool nominal_intents_built = false;
-
-    auto selected_sets =
-        std::make_unique<MultiAircraftCandidateIntentSets>();
-    const ManeuverActivationStatus ownship_activation =
-        m_activation_controller.status();
-    for (int aircraft = 0; aircraft < m_params.total_agent_count; ++aircraft) {
-        const std::size_t aircraft_index = static_cast<std::size_t>(aircraft);
-        if (!candidateIsValid(candidate_valid_mask, aircraft_index)) {
-            const estimation::ReceivedTrajectoryIntent * execution_intent =
-                nullptr;
-            std::uint8_t execution_candidate_id = kRollZeroId;
-            bool avoidance_active = false;
-            if (aircraft == m_params.vehicle_id) {
-                avoidance_active = ownship_activation.active;
-                execution_candidate_id =
-                    ownship_activation.latched_candidate_id;
-            } else {
-                const RemoteDecisionCache & peer =
-                    m_remote_decision_caches[aircraft_index];
-                avoidance_active = peer.valid
-                    && peer.decision.coordination_qualified
-                    && peer.decision.activation_requested
-                    && peer.decision.ownship_candidate_valid;
-                execution_candidate_id = peer.decision.ownship_candidate_id;
-            }
-            if (avoidance_active) {
-                const auto begin = candidate_sets[aircraft_index].begin();
-                const auto end = begin + static_cast<std::ptrdiff_t>(
-                    candidate_counts[aircraft_index]);
-                const auto found = std::find_if(
-                    begin,
-                    end,
-                    [execution_candidate_id](const auto & candidate) {
-                        return candidate.candidate_id
-                            == execution_candidate_id;
-                    });
-                if (found == end) {
-                    return false;
-                }
-                execution_intent = &(*found);
-            } else {
-                if (!nominal_intents_built) {
-                    if (!buildNominalIntentSet(
-                            evaluation_timestamp_us,
-                            nominal_sets,
-                            nominal_counts)) {
-                        return false;
-                    }
-                    nominal_intents_built = true;
-                }
-                if (nominal_counts[aircraft_index] != 1U) {
-                    return false;
-                }
-                execution_intent = &nominal_sets[aircraft_index][0];
-            }
-            (*selected_sets)[aircraft_index][0] =
-                *execution_intent;
-            continue;
-        }
-
-        const auto begin = candidate_sets[aircraft_index].begin();
-        const auto end = begin + static_cast<std::ptrdiff_t>(
-            candidate_counts[aircraft_index]);
-        const std::uint8_t selected_id = candidate_ids[aircraft_index];
-        const auto found = std::find_if(
-            begin, end, [selected_id](const auto & candidate) {
-                return candidate.candidate_id == selected_id;
-            });
-        if (found == end) {
-            return false;
-        }
-        (*selected_sets)[aircraft_index][0] = *found;
-    }
-
-    // This is a post-check of one already assembled execution tuple, not a
-    // new joint search. Evaluate its ten aircraft pairs directly so isolated
-    // Formation/active-latch fallbacks do not have to masquerade as a
-    // three-candidate maneuver set.
-    JointCombinationEvaluation checked{};
-    checked.aircraft_count = static_cast<std::size_t>(
-        m_params.total_agent_count);
-    checked.valid = true;
-    checked.all_pairs_feasible = true;
-    checked.minimum_pmr_m = std::numeric_limits<double>::infinity();
-    checked.minimum_ad_m = std::numeric_limits<double>::infinity();
-    checked.reciprocal_cost_sum = 0.0;
-    if (rejoin_objective != nullptr && rejoin_objective->enabled) {
-        checked.nominal_rejoin_cost = 0.0;
-        for (std::size_t aircraft = 0;
-             aircraft < checked.aircraft_count; ++aircraft) {
-            const double nominal = rejoin_objective
-                ->nominal_lateral_acceleration_mps2[aircraft];
-            const double command = (*selected_sets)[aircraft][0]
-                .candidate_input.a_lat_cmd;
-            if (!std::isfinite(nominal) || !std::isfinite(command)) {
-                checked.nominal_rejoin_cost =
-                    std::numeric_limits<double>::infinity();
-                break;
-            }
-            const double error = command - nominal;
-            checked.nominal_rejoin_cost += error * error;
-        }
-    }
-    for (std::size_t first = 0; first < checked.aircraft_count; ++first) {
-        for (std::size_t second = first + 1;
-             second < checked.aircraft_count; ++second) {
-            CombinationEvaluation pair;
-            if (!m_pair_evaluator.evaluatePair(
-                    evaluation_timestamp_us,
-                    (*selected_sets)[first][0],
-                    (*selected_sets)[second][0],
-                    pair)) {
-                return false;
-            }
-            ++checked.evaluated_pair_count;
-            if (pair.ad_m < checked.minimum_ad_m) {
-                checked.minimum_pmr_m = pair.pmr_m;
-                checked.minimum_masd_m = pair.masd_m;
-                checked.minimum_ad_m = pair.ad_m;
-            }
-            if (!pair.feasible || !pair.reciprocal_cost_defined) {
-                checked.all_pairs_feasible = false;
-            } else {
-                checked.reciprocal_cost_sum += pair.reciprocal_cost;
-            }
-        }
-    }
-    checked.valid = checked.evaluated_pair_count
-        == checked.aircraft_count * (checked.aircraft_count - 1U) / 2U;
-    checked.selected_best = checked.valid;
-    evaluation = checked;
-    return evaluation.valid;
 }
 
 bool ManeuverSelectionWorker::proposalChangesActiveCommand(
@@ -3670,6 +3575,9 @@ bool ManeuverSelectionWorker::buildActivationSample(
     }
     if (!m_has_selected_combination || !m_ownship_candidates_complete
         || m_ownship_candidate_count == 0
+        || m_selected_candidate_valid_mask
+            != candidateMaskForAircraftCount(static_cast<std::size_t>(
+                m_params.total_agent_count))
         || (m_selected_v4_cutover
             != (m_ownship_candidate_set_kind
                 == estimation::CandidateSetKind::V4SafeControl))) {
@@ -3692,46 +3600,24 @@ bool ManeuverSelectionWorker::buildActivationSample(
         }
         return nullptr;
     };
-    const auto find_candidate_by_id = [](
-                                          const ExhaustiveCandidateIntentSet
-                                              & candidates,
-                                          std::size_t candidate_count,
-                                          std::uint8_t candidate_id)
-        -> const estimation::ReceivedTrajectoryIntent * {
-        for (std::size_t index = 0; index < candidate_count; ++index) {
-            if (candidates[index].candidate_id == candidate_id) {
-                return &candidates[index];
-            }
-        }
-        return nullptr;
-    };
-
     const std::size_t ownship_index = static_cast<std::size_t>(
         m_params.vehicle_id);
     if (!m_has_latest_state || m_latest_state_timestamp_us != now_us) {
         return false;
     }
-    const bool selected_ownship_candidate_valid = candidateIsValid(
-        m_selected_candidate_valid_mask, ownship_index);
     const ManeuverActivationStatus activation =
         m_activation_controller.status();
-    const std::uint8_t ownship_candidate_id =
-        selected_ownship_candidate_valid
-        ? m_selected_candidate_ids[ownship_index]
-        : activation.latched_candidate_id;
+    const bool monitor_actual_execution = activation.active;
+    const std::uint8_t ownship_candidate_id = monitor_actual_execution
+        ? activation.latched_candidate_id
+        : m_selected_candidate_ids[ownship_index];
     const std::uint64_t ownship_candidate_input_revision =
-        selected_ownship_candidate_valid
-        ? m_selected_candidate_input_revisions[ownship_index]
-        : activation.latched_candidate_input_revision;
+        monitor_actual_execution
+        ? activation.latched_candidate_input_revision
+        : m_selected_candidate_input_revisions[ownship_index];
     estimation::ReceivedTrajectoryIntent active_ownship_intent;
     const estimation::ReceivedTrajectoryIntent * ownship_intent = nullptr;
-    if (selected_ownship_candidate_valid) {
-        ownship_intent = find_candidate(
-            m_ownship_candidates,
-            m_ownship_candidate_count,
-            ownship_candidate_id,
-            ownship_candidate_input_revision);
-    } else if (activation.active) {
+    if (monitor_actual_execution) {
         estimation::TrajectoryIntentPacket packet;
         if (!m_sender.buildForCandidateInput(
                 now_us,
@@ -3745,14 +3631,22 @@ bool ManeuverSelectionWorker::buildActivationSample(
             return false;
         }
         ownship_intent = &active_ownship_intent;
+    } else {
+        ownship_intent = find_candidate(
+            m_ownship_candidates,
+            m_ownship_candidate_count,
+            ownship_candidate_id,
+            ownship_candidate_input_revision);
     }
     if (ownship_intent == nullptr) {
         return false;
     }
 
-    // The alternate-termination study uses the aircraft's current flight
-    // vector.  The selected intent remains the source of AD/PMR/MASD below,
-    // but it must not replace the measured ownship state in the CPA test.
+    // Before activation, AD is evaluated on the coordinated best tuple. Once
+    // active, termination is evaluated on the commands actually being flown:
+    // this aircraft's latch, each active peer's advertised latch, and the
+    // Formation intent of every inactive peer. CPA always starts from the
+    // measured ownship flight vector.
     const double horizontal_speed_squared_m2ps2 =
         m_latest_state.V * m_latest_state.V
         - m_latest_state.h_dot * m_latest_state.h_dot;
@@ -3779,14 +3673,7 @@ bool ManeuverSelectionWorker::buildActivationSample(
     std::size_t evaluated_threat_count = 0;
     MultiAircraftCandidateIntentSets nominal_sets{};
     std::array<std::size_t, kMaximumSelectionAircraft> nominal_counts{};
-    const bool needs_nominal_fallback =
-        m_selected_candidate_valid_mask
-        != candidateMaskForAircraftCount(static_cast<std::size_t>(
-            m_params.total_agent_count));
-    if (needs_nominal_fallback
-        && !buildNominalIntentSet(now_us, nominal_sets, nominal_counts)) {
-        return false;
-    }
+    bool nominal_intents_built = false;
     for (int remote_id = 0;
          remote_id < m_params.total_agent_count; ++remote_id) {
         if (remote_id == m_params.vehicle_id) {
@@ -3799,50 +3686,38 @@ bool ManeuverSelectionWorker::buildActivationSample(
             m_selected_candidate_input_revisions[remote_index];
         const RemoteCandidateCache * cache = &m_remote_caches[remote_index];
         const estimation::ReceivedTrajectoryIntent * remote_intent = nullptr;
-        const bool remote_candidate_valid = candidateIsValid(
-            m_selected_candidate_valid_mask, remote_index);
-        if (!remote_candidate_valid) {
+        bool remote_avoidance_active = false;
+        if (monitor_actual_execution) {
             const RemoteDecisionCache & peer =
                 m_remote_decision_caches[remote_index];
-            const bool remote_avoidance_active = peer.valid
+            remote_avoidance_active = peer.valid
                 && peer.decision.coordination_qualified
                 && peer.decision.activation_requested
                 && peer.decision.ownship_candidate_valid;
             if (remote_avoidance_active) {
                 remote_candidate_id = peer.decision.ownship_candidate_id;
-                if (cache->count > 0
-                    && cache->count == cache->expected_count) {
-                    remote_intent = find_candidate_by_id(
-                        cache->candidates,
-                        cache->count,
-                        remote_candidate_id);
-                }
-                if (remote_intent == nullptr) {
-                    cache = &m_remote_previous_caches[remote_index];
-                    if (cache->count > 0
-                        && cache->count == cache->expected_count) {
-                        remote_intent = find_candidate_by_id(
-                            cache->candidates,
-                            cache->count,
-                            remote_candidate_id);
-                    }
-                }
-                if (remote_intent == nullptr) {
-                    const RemoteSelectedIntentCache & retained =
-                        m_remote_selected_caches[remote_index];
-                    if (retained.valid
-                        && retained.intent.candidate_id
-                            == remote_candidate_id) {
-                        remote_intent = &retained.intent;
-                    }
-                }
+                remote_candidate_input_revision =
+                    peer.decision.selected_candidate_input_revisions[
+                        remote_index];
             } else {
+                if (!nominal_intents_built) {
+                    if (!buildNominalIntentSet(
+                            now_us, nominal_sets, nominal_counts)) {
+                        return false;
+                    }
+                    nominal_intents_built = true;
+                }
                 if (nominal_counts[remote_index] != 1U) {
                     return false;
                 }
+                remote_candidate_id = kRollZeroId;
+                remote_candidate_input_revision =
+                    nominal_sets[remote_index][0].candidate_input_revision;
                 remote_intent = &nominal_sets[remote_index][0];
             }
-        } else if (cache->count > 0 && cache->count == cache->expected_count
+        }
+        if (remote_intent == nullptr
+            && cache->count > 0 && cache->count == cache->expected_count
             && ((m_selected_v4_cutover
                     && cache->candidate_set_kind
                         == estimation::CandidateSetKind::V4SafeControl)
@@ -3855,8 +3730,7 @@ bool ManeuverSelectionWorker::buildActivationSample(
                 remote_candidate_id,
                 remote_candidate_input_revision);
         }
-        if (remote_intent == nullptr
-            && remote_candidate_valid) {
+        if (remote_intent == nullptr) {
             cache = &m_remote_previous_caches[remote_index];
             if (cache->count > 0 && cache->count == cache->expected_count
                 && ((m_selected_v4_cutover
@@ -3872,8 +3746,7 @@ bool ManeuverSelectionWorker::buildActivationSample(
                     remote_candidate_input_revision);
             }
         }
-        if (remote_intent == nullptr
-            && remote_candidate_valid) {
+        if (remote_intent == nullptr) {
             const RemoteSelectedIntentCache & retained =
                 m_remote_selected_caches[remote_index];
             if (retained.valid

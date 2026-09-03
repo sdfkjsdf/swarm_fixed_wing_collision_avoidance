@@ -2340,6 +2340,66 @@ TEST(ManeuverSelectionWorker,
 }
 
 TEST(ManeuverSelectionWorker,
+    InteractionGraphCutoverRetainsBestUnsafeConnectedComponent)
+{
+    constexpr std::uint64_t start = 14'500'000ULL;
+    std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, 2> workers;
+    std::array<cs::ManeuverSelectionWorkerOutput, 2> outputs{};
+    for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
+        auto worker_params = params(static_cast<int>(aircraft), 2);
+        worker_params.exhaustive_test_mode = true;
+        worker_params.interaction_graph_params.enabled = true;
+        worker_params.interaction_graph_component_cutover_enabled = true;
+        worker_params.interaction_graph_params.ad_screen_m = 0.0;
+        workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
+            worker_params);
+        ASSERT_TRUE(workers[aircraft]->pushNominalSetpoint(
+            nominalSnapshot(start)));
+        outputs[aircraft] = pushBeliefAndProcess(
+            *workers[aircraft],
+            beliefSnapshot(
+                start,
+                5.0 * static_cast<double>(aircraft),
+                0.0,
+                20.0,
+                0.0));
+    }
+
+    exchangePackets(*workers[0], *workers[1], outputs[0], outputs[1]);
+    ASSERT_TRUE(workers[0]->pushRemoteDecision(
+        1, nominalPeerDecision(1, start)));
+    ASSERT_TRUE(workers[1]->pushRemoteDecision(
+        0, nominalPeerDecision(0, start)));
+    for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
+        outputs[aircraft] = pushBeliefAndProcess(
+            *workers[aircraft],
+            beliefSnapshot(
+                start + 250'000ULL,
+                5.0 + 5.0 * static_cast<double>(aircraft),
+                0.0,
+                20.0,
+                0.0));
+        ASSERT_TRUE(outputs[aircraft].has_decision);
+        EXPECT_TRUE(outputs[aircraft].decision.proposal_valid);
+        EXPECT_EQ(outputs[aircraft].decision.evaluated_combination_count, 49U);
+        EXPECT_FALSE(outputs[aircraft].decision.selected_combination_safe);
+
+        const auto diagnostics_message =
+            workers[aircraft]->tryPopInteractionGraphDiagnostics();
+        ASSERT_TRUE(diagnostics_message.has_value());
+        ASSERT_TRUE(diagnostics_message.value());
+        const auto & diagnostics = *diagnostics_message.value();
+        ASSERT_TRUE(diagnostics.graph.valid());
+        EXPECT_EQ(diagnostics.graph.component_count, 1U);
+        EXPECT_EQ(diagnostics.graph.component_evaluation_count, 49U);
+        EXPECT_TRUE(diagnostics.global_crosscheck_evaluated);
+        EXPECT_TRUE(diagnostics.global_crosscheck_pass);
+        EXPECT_FALSE(
+            diagnostics.global_crosscheck_evaluation.all_pairs_feasible);
+    }
+}
+
+TEST(ManeuverSelectionWorker,
     InteractionGraphCutoverReplacesLegacyExhaustiveEvaluation)
 {
     constexpr std::uint64_t start = 15'000'000ULL;
@@ -2397,9 +2457,9 @@ TEST(ManeuverSelectionWorker,
         EXPECT_EQ(
             outputs[aircraft].decision.proposed_candidate_ids,
             diagnostics.assembled_candidate_ids);
-        EXPECT_EQ(diagnostics.assembled_candidate_valid_mask, 0U);
+        EXPECT_EQ(diagnostics.assembled_candidate_valid_mask, 0b11U);
         EXPECT_EQ(
-            outputs[aircraft].decision.proposed_candidate_valid_mask, 0U);
+            outputs[aircraft].decision.proposed_candidate_valid_mask, 0b11U);
         EXPECT_NE(
             outputs[aircraft].decision.proposed_candidate_library_hash, 0U);
         EXPECT_NE(outputs[aircraft].decision.proposed_graph_hash, 0U);
@@ -2425,26 +2485,8 @@ TEST(ManeuverSelectionWorker,
     // acknowledgement protocol is introduced for component cutover.
     EXPECT_TRUE(commits[0].decision.coordination_qualified);
     EXPECT_TRUE(commits[1].decision.coordination_qualified);
-    EXPECT_FALSE(commits[0].decision.ownship_candidate_valid);
-    EXPECT_FALSE(commits[1].decision.ownship_candidate_valid);
+    EXPECT_TRUE(commits[0].decision.ownship_candidate_valid);
+    EXPECT_TRUE(commits[1].decision.ownship_candidate_valid);
     EXPECT_FALSE(commits[0].decision.command_execution_requested);
     EXPECT_FALSE(commits[1].decision.command_execution_requested);
-}
-
-TEST(ManeuverExecutionPolicy,
-    ActiveIsolatedAircraftCanKeepItsLatchedCommand)
-{
-    cs::ManeuverSelectionDecision decision;
-    decision.coordination_qualified = true;
-    decision.selected_candidate_valid_mask = 0U;
-    decision.ownship_candidate_valid = true;
-    decision.activation_requested = true;
-
-    EXPECT_TRUE(cs::maneuverCommandExecutionRequested(
-        cs::ManeuverExecutionPolicy::AmacAdThreshold, decision));
-
-    decision.activation_requested = false;
-    decision.ownship_candidate_valid = false;
-    EXPECT_FALSE(cs::maneuverCommandExecutionRequested(
-        cs::ManeuverExecutionPolicy::AmacAdThreshold, decision));
 }
