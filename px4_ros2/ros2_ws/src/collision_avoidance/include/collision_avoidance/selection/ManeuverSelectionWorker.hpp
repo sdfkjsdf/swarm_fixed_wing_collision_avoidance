@@ -91,11 +91,9 @@ struct ManeuverSelectionWorkerParams
     ManeuverExecutionPolicy execution_policy{
         ManeuverExecutionPolicy::AmacAdThreshold};
     bool exhaustive_test_mode{false};
-    // Computes and publishes the project-defined swarm interaction graph.
+    // Enables the project-defined swarm interaction graph and makes its
+    // globally cross-checked component result the proposal source.
     InteractionGraphParams interaction_graph_params{};
-    // Experimental cutover: use the globally cross-checked component result
-    // as the existing proposal path's input instead of also running 7^N.
-    bool interaction_graph_component_cutover_enabled{false};
     bool v4_safe_control_enabled{false};
     // True keeps V4 diagnostic-only; false supplies V4 candidates downstream.
     bool v4_shadow_only{true};
@@ -133,7 +131,7 @@ struct ManeuverSelectionWorkerParams
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollPlus50)};
 };
 
-enum class InteractionGraphShadowStatus : std::uint8_t
+enum class InteractionGraphEvaluationStatus : std::uint8_t
 {
     Disabled = 0,
     GraphInvalid,
@@ -147,13 +145,12 @@ enum class InteractionGraphShadowStatus : std::uint8_t
 struct InteractionGraphDiagnostics
 {
     int vehicle_id{0};
-    bool shadow_enabled{false};
-    bool component_cutover_enabled{false};
+    bool enabled{false};
     bool component_proposal_used{false};
     InteractionGraphResult graph{};
-    InteractionGraphShadowStatus shadow_status{
-        InteractionGraphShadowStatus::Disabled};
-    bool shadow_search_evaluated{false};
+    InteractionGraphEvaluationStatus status{
+        InteractionGraphEvaluationStatus::Disabled};
+    bool component_search_evaluated{false};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         assembled_candidate_ids{};
     std::uint32_t assembled_candidate_valid_mask{0};
@@ -163,12 +160,9 @@ struct InteractionGraphDiagnostics
     bool global_crosscheck_pass{false};
     double global_crosscheck_minimum_ad_m{
         std::numeric_limits<double>::quiet_NaN()};
-    bool legacy_proposal_valid{false};
-    std::array<std::uint8_t, kMaximumSelectionAircraft>
-        legacy_proposed_candidate_ids{};
     std::uint64_t component_search_time_ns{0};
     std::uint64_t global_crosscheck_time_ns{0};
-    std::uint64_t total_shadow_time_ns{0};
+    std::uint64_t total_evaluation_time_ns{0};
     std::size_t component_valid_evaluation_count{0};
     std::size_t component_safe_evaluation_count{0};
     JointCombinationEvaluation global_crosscheck_evaluation{};
@@ -684,7 +678,7 @@ private:
     void evaluateCurrentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
-    void evaluateInteractionGraphShadow(std::uint64_t now_us);
+    void evaluateInteractionGraph(std::uint64_t now_us);
     void publishPendingInteractionGraphDiagnostics() noexcept;
     bool evaluateV4HorizonGate(
         std::uint64_t now_us,
@@ -830,6 +824,8 @@ private:
     bool m_epoch_evaluated{false};
     std::unique_ptr<MultiAircraftExhaustiveCandidateIntentSets>
         m_epoch_certification_candidate_sets{};
+    std::unique_ptr<PairwiseAdCertificationSet>
+        m_epoch_pairwise_ad_certifications{};
     std::array<std::size_t, kMaximumSelectionAircraft>
         m_epoch_certification_candidate_counts{};
     std::array<bool, kMaximumSelectionAircraft>

@@ -166,6 +166,43 @@ TEST(PairwiseAdCertification, CachedComponentSearchMatchesLegacyExhaustive)
         1.0e-12);
 }
 
+TEST(PairwiseAdCertification, CachedTupleMatchesDirectTupleEvaluation)
+{
+    constexpr std::uint64_t epoch = 4;
+    const auto sets = twoAircraftLibrary(epoch);
+    cs::PairwiseAdCertificationEvaluator certifier;
+    cs::PairwiseAdCertificationSet certifications;
+    ASSERT_TRUE(certifier.evaluate(
+        1'000'000, epoch, 1, 1, sets, 2, certifications));
+
+    std::array<std::uint8_t, cs::kMaximumSelectionAircraft> candidate_ids{};
+    candidate_ids[0] = 5;
+    candidate_ids[1] = 0;
+    cs::CertifiedComponentManeuverEvaluator cached_evaluator;
+    cs::JointCombinationEvaluation cached;
+    ASSERT_TRUE(cached_evaluator.evaluateTuple(
+        certifications, sets, candidate_ids, cached));
+
+    cs::MultiAircraftCandidateIntentSets selected_sets{};
+    selected_sets[0][0] = sets[0][candidate_ids[0]];
+    selected_sets[1][0] = sets[1][candidate_ids[1]];
+    std::array<std::size_t, cs::kMaximumSelectionAircraft> counts{};
+    counts[0] = 1;
+    counts[1] = 1;
+    cs::JointManeuverCombinationEvaluator direct_evaluator;
+    cs::JointManeuverEvaluation direct_result;
+    ASSERT_TRUE(direct_evaluator.evaluate(
+        1'000'000, selected_sets, counts, 2, direct_result));
+    ASSERT_TRUE(direct_result.has_best);
+    const auto & direct = direct_result.combinations[
+        direct_result.best_combination_index];
+
+    EXPECT_EQ(cached.valid, direct.valid);
+    EXPECT_EQ(cached.all_pairs_feasible, direct.all_pairs_feasible);
+    EXPECT_NEAR(cached.minimum_ad_m, direct.minimum_ad_m, 1.0e-12);
+    EXPECT_NEAR(cached.reciprocal_cost_sum, direct.reciprocal_cost_sum, 1.0e-12);
+}
+
 TEST(PairwiseAdCertification, ComponentSearchHonorsSafeRejoinObjective)
 {
     constexpr std::uint64_t epoch = 5;

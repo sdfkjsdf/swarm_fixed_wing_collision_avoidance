@@ -46,9 +46,7 @@ int main(int argc, char * argv[])
     node->declare_parameter<bool>(
         "maneuver_selection_exhaustive_test_mode", false);
     node->declare_parameter<bool>(
-        "amac_interaction_graph_shadow_enabled", false);
-    node->declare_parameter<bool>(
-        "amac_interaction_graph_component_cutover_enabled", false);
+        "amac_interaction_graph_enabled", false);
     node->declare_parameter<double>(
         "amac_interaction_graph_ad_screen_m", 0.0);
     node->declare_parameter<int>(
@@ -57,7 +55,7 @@ int main(int argc, char * argv[])
         "amac_ad_masd_config_version", 1);
     node->declare_parameter<int>(
         "amac_interaction_graph_config_version", 1);
-    node->declare_parameter<bool>("v4_safe_control_enabled", true);
+    node->declare_parameter<bool>("v4_safe_control_enabled", false);
     node->declare_parameter<bool>("v4_shadow_only", true);
     node->declare_parameter<std::string>(
         "v4_control_architecture", "legacy_safe_control_set");
@@ -200,10 +198,7 @@ int main(int argc, char * argv[])
         params.exhaustive_test_mode = node->get_parameter(
             "maneuver_selection_exhaustive_test_mode").as_bool();
         params.interaction_graph_params.enabled = node->get_parameter(
-            "amac_interaction_graph_shadow_enabled").as_bool();
-        params.interaction_graph_component_cutover_enabled =
-            node->get_parameter(
-                "amac_interaction_graph_component_cutover_enabled").as_bool();
+            "amac_interaction_graph_enabled").as_bool();
         params.interaction_graph_params.ad_screen_m =
             node->get_parameter(
                 "amac_interaction_graph_ad_screen_m").as_double();
@@ -440,22 +435,25 @@ int main(int argc, char * argv[])
                     runtime->setActivationEnabled(enabled);
                 }
             });
-        if (params.v4_safe_control_enabled) {
-            formation->setNominalSetpointCallback(
-                [weak_runtime](
-                    const collision_avoidance::selection::
-                        ManeuverSelectionNominalSetpointSnapshot & snapshot) {
-                    if (const auto runtime = weak_runtime.lock()) {
-                        static_cast<void>(
-                            runtime->pushNominalSetpoint(snapshot));
-                    }
-                });
-        }
+        // The nominal Formation command is shared by both control paths:
+        // Mode B uses it as the interpolation input, while AMAC uses it to
+        // certify that releasing an active avoidance command is safe.  Keep
+        // this input wired whenever distributed maneuver selection is enabled;
+        // otherwise disabling V4 also disables AMAC termination.
+        formation->setNominalSetpointCallback(
+            [weak_runtime](
+                const collision_avoidance::selection::
+                    ManeuverSelectionNominalSetpointSnapshot & snapshot) {
+                if (const auto runtime = weak_runtime.lock()) {
+                    static_cast<void>(
+                        runtime->pushNominalSetpoint(snapshot));
+                }
+            });
         RCLCPP_INFO(
             node->get_logger(),
             "[main] distributed maneuver selection: enabled=%d shadow_only=%d "
             "execution_policy=%s exhaustive_test=%d active_switch=%d "
-            "interaction_graph_shadow=%d graph_component_cutover=%d "
+            "interaction_graph=%d "
             "AD_screen=%.3f "
             "switch_cost_margin=%.6f switch_ad_margin=%.3f "
             "communication_delay_margin_m=%.3f "
@@ -466,7 +464,6 @@ int main(int argc, char * argv[])
             params.exhaustive_test_mode ? 1 : 0,
             params.active_switching_enabled ? 1 : 0,
             params.interaction_graph_params.enabled ? 1 : 0,
-            params.interaction_graph_component_cutover_enabled ? 1 : 0,
             params.interaction_graph_params.ad_screen_m,
             params.active_switch_cost_margin,
             params.active_switch_minimum_ad_margin_m,

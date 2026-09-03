@@ -4,8 +4,7 @@ uint64 selection_epoch
 int32 vehicle_id
 uint8 aircraft_count
 uint8 graph_status
-bool shadow_enabled
-bool component_cutover_enabled
+bool enabled
 bool component_proposal_used
 
 float32 ad_screen_m
@@ -34,8 +33,8 @@ uint64 certification_hash
 uint64 graph_hash
 uint64 component_hash
 
-uint8 shadow_status
-bool shadow_search_evaluated
+uint8 evaluation_status
+bool component_search_evaluated
 uint8[5] assembled_candidate_ids
 uint32 assembled_candidate_valid_mask
 uint64 assembled_candidate_hash
@@ -43,11 +42,8 @@ uint64 component_solution_hash
 bool global_crosscheck_evaluated
 bool global_crosscheck_pass
 float32 global_crosscheck_minimum_ad_m
-bool legacy_proposal_valid
-uint8[5] legacy_proposed_candidate_ids
-
 uint64 certification_compute_time_ns
 uint64 graph_compute_time_ns
 uint64 component_search_time_ns
 uint64 global_crosscheck_time_ns
-uint64 total_shadow_time_ns
+uint64 total_evaluation_time_ns

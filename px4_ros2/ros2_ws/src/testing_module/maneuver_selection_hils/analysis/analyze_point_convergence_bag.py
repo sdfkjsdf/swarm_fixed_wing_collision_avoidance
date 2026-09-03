@@ -63,7 +63,7 @@ def observed_rate_hz(timestamps):
 
 
 def interaction_graph_summary(messages, start_ns):
-    """Summarize Phase-1/2 graph telemetry without changing control data."""
+    """Summarize the authoritative component-graph evaluation telemetry."""
     records = []
     by_epoch = {}
     for vehicle in range(AIRCRAFT_COUNT):
@@ -79,9 +79,11 @@ def interaction_graph_summary(messages, start_ns):
 
     valid = [message for message in records if int(message.graph_status) == 1]
     evaluated = [
-        message for message in records if bool(message.shadow_search_evaluated)]
+        message for message in records
+        if bool(message.component_search_evaluated)]
     timing_ms = np.asarray(
-        [float(message.total_shadow_time_ns) * 1.0e-6 for message in evaluated],
+        [float(message.total_evaluation_time_ns) * 1.0e-6
+         for message in evaluated],
         dtype=np.float64)
     certification_timing_ms = np.asarray(
         [float(message.certification_compute_time_ns) * 1.0e-6
@@ -98,11 +100,11 @@ def interaction_graph_summary(messages, start_ns):
     matching_component_epochs = 0
     matching_adjacency_epochs = 0
     matching_component_membership_epochs = 0
-    matching_shadow_tuple_epochs = 0
+    matching_component_tuple_epochs = 0
     matching_solution_hash_epochs = 0
-    common_matching_library_shadow_epochs = 0
+    common_matching_library_component_epochs = 0
     matching_solution_given_library_epochs = 0
-    common_shadow_tuple_epochs = 0
+    common_component_tuple_epochs = 0
     for epoch_records in by_epoch.values():
         if len(epoch_records) != AIRCRAFT_COUNT:
             continue
@@ -137,9 +139,9 @@ def interaction_graph_summary(messages, start_ns):
             matching_component_membership_epochs += 1
         evaluated_records = [
             item for item in epoch_records.values()
-            if bool(item.shadow_search_evaluated)]
+            if bool(item.component_search_evaluated)]
         if len(evaluated_records) == AIRCRAFT_COUNT:
-            common_shadow_tuple_epochs += 1
+            common_component_tuple_epochs += 1
             if len({
                     (int(getattr(item, "assembled_candidate_valid_mask", 31)),
                      masked_candidate_tuple(
@@ -147,13 +149,13 @@ def interaction_graph_summary(messages, start_ns):
                          "assembled_candidate_ids",
                          "assembled_candidate_valid_mask"))
                     for item in evaluated_records}) == 1:
-                matching_shadow_tuple_epochs += 1
+                matching_component_tuple_epochs += 1
             if len({int(item.component_solution_hash)
                     for item in evaluated_records}) == 1:
                 matching_solution_hash_epochs += 1
             if len({int(item.candidate_library_hash)
                     for item in evaluated_records}) == 1:
-                common_matching_library_shadow_epochs += 1
+                common_matching_library_component_epochs += 1
                 if len({int(item.component_solution_hash)
                         for item in evaluated_records}) == 1:
                     matching_solution_given_library_epochs += 1
@@ -166,11 +168,12 @@ def interaction_graph_summary(messages, start_ns):
         "available": True,
         "record_count": len(records),
         "valid_graph_count": len(valid),
-        "shadow_evaluated_count": len(evaluated),
-        "shadow_status_counts": {
+        "component_search_evaluated_count": len(evaluated),
+        "evaluation_status_counts": {
             str(status): count
             for status, count in sorted(Counter(
-                int(message.shadow_status) for message in records).items())},
+                int(message.evaluation_status)
+                for message in records).items())},
         "global_crosscheck_pass_count": sum(
             bool(message.global_crosscheck_pass) for message in records),
         "global_crosscheck_failure_count": sum(
@@ -186,12 +189,13 @@ def interaction_graph_summary(messages, start_ns):
         "matching_adjacency_epoch_count": matching_adjacency_epochs,
         "matching_component_membership_epoch_count": (
             matching_component_membership_epochs),
-        "common_shadow_tuple_epoch_count": common_shadow_tuple_epochs,
-        "matching_shadow_tuple_epoch_count": matching_shadow_tuple_epochs,
+        "common_component_tuple_epoch_count": common_component_tuple_epochs,
+        "matching_component_tuple_epoch_count": (
+            matching_component_tuple_epochs),
         "matching_component_solution_hash_epoch_count": (
             matching_solution_hash_epochs),
-        "common_matching_library_shadow_epoch_count": (
-            common_matching_library_shadow_epochs),
+        "common_matching_library_component_epoch_count": (
+            common_matching_library_component_epochs),
         "matching_solution_given_library_epoch_count": (
             matching_solution_given_library_epochs),
         "candidate_library_hash_match_rate": (
@@ -212,16 +216,16 @@ def interaction_graph_summary(messages, start_ns):
         "component_membership_match_rate": (
             matching_component_membership_epochs / common_valid_epochs
             if common_valid_epochs else None),
-        "shadow_tuple_match_rate": (
-            matching_shadow_tuple_epochs / common_shadow_tuple_epochs
-            if common_shadow_tuple_epochs else None),
+        "component_tuple_match_rate": (
+            matching_component_tuple_epochs / common_component_tuple_epochs
+            if common_component_tuple_epochs else None),
         "component_solution_hash_match_rate": (
-            matching_solution_hash_epochs / common_shadow_tuple_epochs
-            if common_shadow_tuple_epochs else None),
+            matching_solution_hash_epochs / common_component_tuple_epochs
+            if common_component_tuple_epochs else None),
         "component_solution_hash_match_rate_given_library": (
             matching_solution_given_library_epochs
-            / common_matching_library_shadow_epochs
-            if common_matching_library_shadow_epochs else None),
+            / common_matching_library_component_epochs
+            if common_matching_library_component_epochs else None),
         "component_size_histogram": {
             str(size): count
             for size, count in sorted(component_size_histogram.items())},
@@ -229,11 +233,11 @@ def interaction_graph_summary(messages, start_ns):
             int(message.naive_evaluation_count) for message in valid}),
         "component_evaluation_count_values": sorted({
             int(message.component_evaluation_count) for message in valid}),
-        "total_shadow_time_ms_p50": (
+        "total_evaluation_time_ms_p50": (
             float(np.percentile(timing_ms, 50)) if timing_ms.size else None),
-        "total_shadow_time_ms_p95": (
+        "total_evaluation_time_ms_p95": (
             float(np.percentile(timing_ms, 95)) if timing_ms.size else None),
-        "total_shadow_time_ms_max": (
+        "total_evaluation_time_ms_max": (
             float(np.max(timing_ms)) if timing_ms.size else None),
         "pairwise_ad_certification_time_ms_p95": (
             float(np.percentile(certification_timing_ms, 95))
@@ -1621,7 +1625,7 @@ def analyze(args):
         "distributed_decision_consensus": decision_consensus_summary(
             decisions, elapsed_s),
         "coordination_invariants": coordination_invariant_summary(decisions),
-        "interaction_graph_shadow_diagnostics": interaction_graph_summary(
+        "interaction_graph_diagnostics": interaction_graph_summary(
             messages, int(grid_ns[0])),
     }
     with (args.summary_dir / "summary.json").open("w", encoding="utf-8") as stream:

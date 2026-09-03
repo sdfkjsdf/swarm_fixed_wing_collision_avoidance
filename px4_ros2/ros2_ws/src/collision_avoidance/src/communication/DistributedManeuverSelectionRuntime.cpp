@@ -385,9 +385,7 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
             message.aircraft_count = static_cast<std::uint8_t>(
                 graph.aircraft_count);
             message.graph_status = static_cast<std::uint8_t>(graph.status);
-            message.shadow_enabled = diagnostics.shadow_enabled;
-            message.component_cutover_enabled =
-                diagnostics.component_cutover_enabled;
+            message.enabled = diagnostics.enabled;
             message.component_proposal_used =
                 diagnostics.component_proposal_used;
             message.ad_screen_m = static_cast<float>(
@@ -444,10 +442,10 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
             message.certification_hash = graph.certification_hash;
             message.graph_hash = graph.graph_hash;
             message.component_hash = graph.component_hash;
-            message.shadow_status = static_cast<std::uint8_t>(
-                diagnostics.shadow_status);
-            message.shadow_search_evaluated =
-                diagnostics.shadow_search_evaluated;
+            message.evaluation_status = static_cast<std::uint8_t>(
+                diagnostics.status);
+            message.component_search_evaluated =
+                diagnostics.component_search_evaluated;
             std::copy(
                 diagnostics.assembled_candidate_ids.begin(),
                 diagnostics.assembled_candidate_ids.end(),
@@ -464,11 +462,6 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 diagnostics.global_crosscheck_pass;
             message.global_crosscheck_minimum_ad_m = static_cast<float>(
                 diagnostics.global_crosscheck_minimum_ad_m);
-            message.legacy_proposal_valid = diagnostics.legacy_proposal_valid;
-            std::copy(
-                diagnostics.legacy_proposed_candidate_ids.begin(),
-                diagnostics.legacy_proposed_candidate_ids.end(),
-                message.legacy_proposed_candidate_ids.begin());
             message.certification_compute_time_ns =
                 graph.certification_compute_time_ns;
             message.graph_compute_time_ns = graph.graph_compute_time_ns;
@@ -476,7 +469,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 diagnostics.component_search_time_ns;
             message.global_crosscheck_time_ns =
                 diagnostics.global_crosscheck_time_ns;
-            message.total_shadow_time_ns = diagnostics.total_shadow_time_ns;
+            message.total_evaluation_time_ns =
+                diagnostics.total_evaluation_time_ns;
             m_interaction_graph_diagnostics_publisher->publish(message);
             }
         }

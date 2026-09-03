@@ -122,9 +122,8 @@ bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
         || params.candidate_refresh_period_us == 0
         || params.coordination_delay_us == 0
         || params.maximum_belief_delay_us == 0
-        || (params.interaction_graph_component_cutover_enabled
-            && (!params.interaction_graph_params.enabled
-                || !params.exhaustive_test_mode
+        || (params.interaction_graph_params.enabled
+            && (!params.exhaustive_test_mode
                 || params.execution_policy
                     != ManeuverExecutionPolicy::AmacAdThreshold))
         || (params.interaction_graph_params.enabled
@@ -661,8 +660,14 @@ bool ManeuverSelectionWorker::processPending()
     const bool coordination_committed = finalizePendingCoordination(output);
     if ((selection_due || trajectory_refreshed || coordination_committed)
         && m_has_selected_combination) {
+        // AMAC peers use the current decision message for post-release safety
+        // acknowledgement and selected-intent awareness. Publish that state
+        // with the 20 Hz trajectory refresh; an unrelated V4 shadow evaluator
+        // must never be the mechanism that supplies this heartbeat.
         updateActivationState(
-            now_us, selection_due || coordination_committed, output);
+            now_us,
+            selection_due || trajectory_refreshed || coordination_committed,
+            output);
     }
 
     if (output.has_decision) {
@@ -1139,6 +1144,7 @@ void ManeuverSelectionWorker::refreshCandidateSet(std::uint64_t now_us)
     m_ownship_candidates_complete = false;
     m_ownship_candidate_count = 0;
     m_epoch_certification_candidate_sets.reset();
+    m_epoch_pairwise_ad_certifications.reset();
     m_epoch_certification_candidate_counts.fill(0);
     m_epoch_certification_candidate_ready.fill(false);
 }
@@ -2129,26 +2135,27 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
         }
     }
 
-    evaluateInteractionGraphShadow(now_us);
+    evaluateInteractionGraph(now_us);
 
     // Component search obtains its fleet-wide rejoin objective from the
     // certified candidate library.  A local objective is only meaningful on
     // the legacy evaluator path.
     ManeuverRejoinObjective legacy_rejoin_objective;
     const ManeuverRejoinObjective * legacy_rejoin_objective_ptr = nullptr;
-    if (!m_params.interaction_graph_component_cutover_enabled
+    if (!m_params.interaction_graph_params.enabled
         && m_safe_rejoin_active
         && buildManeuverRejoinObjective(now_us, legacy_rejoin_objective)) {
         legacy_rejoin_objective_ptr = &legacy_rejoin_objective;
     }
 
-    // Active component cutover must execute from the exact candidate library
+    // Active component search must execute from the exact candidate library
     // that was certified. The 20 Hz live cache may already contain a newer
     // trajectory revision from the same 4 Hz epoch.
-    if (m_params.interaction_graph_component_cutover_enabled
+    if (m_params.interaction_graph_params.enabled
         && m_epoch_certification_candidate_sets
         && m_pending_interaction_graph_diagnostics
-        && m_pending_interaction_graph_diagnostics->shadow_search_evaluated) {
+        && m_pending_interaction_graph_diagnostics
+            ->component_search_evaluated) {
         candidate_sets = *m_epoch_certification_candidate_sets;
         candidate_counts = m_epoch_certification_candidate_counts;
         all_candidate_sets_complete = true;
@@ -2166,7 +2173,7 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
             std::numeric_limits<double>::quiet_NaN();
         bool evaluated = false;
         const bool component_cutover =
-            m_params.interaction_graph_component_cutover_enabled;
+            m_params.interaction_graph_params.enabled;
         ManeuverRejoinObjective component_rejoin_objective;
         const ManeuverRejoinObjective * selection_rejoin_objective_ptr =
             legacy_rejoin_objective_ptr;
@@ -2200,7 +2207,7 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
             const bool component_result_ready =
                 m_pending_interaction_graph_diagnostics
                 && m_pending_interaction_graph_diagnostics
-                    ->shadow_search_evaluated
+                    ->component_search_evaluated
                 && m_pending_interaction_graph_diagnostics
                     ->global_crosscheck_pass;
             if (component_result_ready) {
@@ -2339,16 +2346,10 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                 publishPendingInteractionGraphDiagnostics();
                 return;
             }
-            if (m_pending_interaction_graph_diagnostics) {
-                auto & graph_diagnostics =
-                    *m_pending_interaction_graph_diagnostics;
-                if (component_cutover) {
-                    graph_diagnostics.component_proposal_used = true;
-                } else {
-                    graph_diagnostics.legacy_proposal_valid = true;
-                    graph_diagnostics.legacy_proposed_candidate_ids =
-                        proposed_candidate_ids;
-                }
+            if (component_cutover
+                && m_pending_interaction_graph_diagnostics) {
+                m_pending_interaction_graph_diagnostics
+                    ->component_proposal_used = true;
             }
             const bool active_command_change =
                 proposalChangesActiveCommand(
@@ -2363,21 +2364,40 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                         != ManeuverExecutionPolicy::AmacAdThreshold
                     || buildCommonIncumbentCandidateIds(
                         incumbent_candidate_ids);
-            const bool current_evaluation_available = active_command_change
-                && common_incumbent_available
-                && (m_params.execution_policy
-                            == ManeuverExecutionPolicy::AmacAdThreshold
-                        ? evaluateCandidateIdTuple(
-                            now_us,
+            bool current_evaluation_available = false;
+            if (active_command_change && common_incumbent_available) {
+                if (component_cutover
+                    && m_epoch_pairwise_ad_certifications
+                    && m_epoch_pairwise_ad_certifications->valid
+                    && m_epoch_pairwise_ad_certifications->selection_epoch
+                        == m_selection_epoch) {
+                    // The incumbent and proposed tuples refer to the same
+                    // frozen candidate library and selection timestamp. Reuse
+                    // the already certified 7x7 pair matrices instead of
+                    // propagating the incumbent's ten aircraft pairs again.
+                    current_evaluation_available =
+                        m_certified_component_evaluator.evaluateTuple(
+                            *m_epoch_pairwise_ad_certifications,
                             candidate_sets,
-                            candidate_counts,
                             incumbent_candidate_ids,
-                            current_evaluation)
-                        : evaluateSelectedTuple(
-                            now_us,
-                            candidate_sets,
-                            candidate_counts,
-                            current_evaluation));
+                            current_evaluation);
+                } else {
+                    current_evaluation_available =
+                        m_params.execution_policy
+                                == ManeuverExecutionPolicy::AmacAdThreshold
+                            ? evaluateCandidateIdTuple(
+                                now_us,
+                                candidate_sets,
+                                candidate_counts,
+                                incumbent_candidate_ids,
+                                current_evaluation)
+                            : evaluateSelectedTuple(
+                                now_us,
+                                candidate_sets,
+                                candidate_counts,
+                                current_evaluation);
+                }
+            }
             const bool current_evaluation_valid =
                 current_evaluation_available && current_evaluation.valid;
             if (current_evaluation_valid
@@ -2477,10 +2497,10 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
             m_pending_proposal.v4_cutover =
                 required_set_kind
                 == estimation::CandidateSetKind::V4SafeControl;
-            if (m_params.interaction_graph_component_cutover_enabled
+            if (m_params.interaction_graph_params.enabled
                 && m_pending_interaction_graph_diagnostics
                 && m_pending_interaction_graph_diagnostics
-                    ->shadow_search_evaluated) {
+                    ->component_search_evaluated) {
                 const auto & graph_diagnostics =
                     *m_pending_interaction_graph_diagnostics;
                 m_pending_proposal.component_graph = true;
@@ -2565,7 +2585,7 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
     publishPendingInteractionGraphDiagnostics();
 }
 
-void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
+void ManeuverSelectionWorker::evaluateInteractionGraph(
     std::uint64_t now_us)
 {
     if (!m_params.interaction_graph_params.enabled) {
@@ -2576,9 +2596,7 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
     const auto total_start = Clock::now();
     InteractionGraphDiagnostics diagnostics;
     diagnostics.vehicle_id = m_params.vehicle_id;
-    diagnostics.shadow_enabled = true;
-    diagnostics.component_cutover_enabled =
-        m_params.interaction_graph_component_cutover_enabled;
+    diagnostics.enabled = true;
     const std::size_t aircraft_count = static_cast<std::size_t>(
         m_params.total_agent_count);
     std::fill_n(
@@ -2607,9 +2625,9 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
         diagnostics.graph.evaluation_timestamp_us = now_us;
         diagnostics.graph.selection_epoch = m_selection_epoch;
         diagnostics.graph.aircraft_count = aircraft_count;
-        diagnostics.shadow_status =
-            InteractionGraphShadowStatus::CandidateSetsIncomplete;
-        diagnostics.total_shadow_time_ns = static_cast<std::uint64_t>(
+        diagnostics.status =
+            InteractionGraphEvaluationStatus::CandidateSetsIncomplete;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 Clock::now() - total_start).count());
         m_pending_interaction_graph_diagnostics =
@@ -2619,7 +2637,7 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
     const auto & certified_candidate_sets =
         *m_epoch_certification_candidate_sets;
 
-    PairwiseAdCertificationSet certifications;
+    auto certifications = std::make_unique<PairwiseAdCertificationSet>();
     if (!m_pairwise_ad_certifier.evaluate(
             now_us,
             m_selection_epoch,
@@ -2627,21 +2645,25 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
             m_params.interaction_graph_params.ad_masd_config_version,
             certified_candidate_sets,
             aircraft_count,
-            certifications)) {
+            *certifications)) {
+        m_epoch_pairwise_ad_certifications.reset();
         diagnostics.graph.status =
             InteractionGraphStatus::InvalidCertification;
         diagnostics.graph.evaluation_timestamp_us = now_us;
         diagnostics.graph.selection_epoch = m_selection_epoch;
         diagnostics.graph.aircraft_count = aircraft_count;
-        diagnostics.shadow_status =
-            InteractionGraphShadowStatus::GraphInvalid;
-        diagnostics.total_shadow_time_ns = static_cast<std::uint64_t>(
+        diagnostics.status =
+            InteractionGraphEvaluationStatus::GraphInvalid;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 Clock::now() - total_start).count());
         m_pending_interaction_graph_diagnostics =
             std::make_shared<InteractionGraphDiagnostics>(diagnostics);
         return;
     }
+    m_epoch_pairwise_ad_certifications = std::move(certifications);
+    const PairwiseAdCertificationSet & certified_pairs =
+        *m_epoch_pairwise_ad_certifications;
 
     // Rejoin is a fleet/component objective, so its activation and values
     // must come from the same frozen distributed library as the graph. Using
@@ -2666,9 +2688,9 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
         diagnostics.graph.evaluation_timestamp_us = now_us;
         diagnostics.graph.selection_epoch = m_selection_epoch;
         diagnostics.graph.aircraft_count = aircraft_count;
-        diagnostics.shadow_status =
-            InteractionGraphShadowStatus::ComponentEvaluationFailed;
-        diagnostics.total_shadow_time_ns = static_cast<std::uint64_t>(
+        diagnostics.status =
+            InteractionGraphEvaluationStatus::ComponentEvaluationFailed;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 Clock::now() - total_start).count());
         m_pending_interaction_graph_diagnostics =
@@ -2679,10 +2701,10 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
     const ManeuverRejoinObjective * rejoin_objective =
         safe_rejoin_requested ? &common_rejoin_objective : nullptr;
 
-    diagnostics.graph = m_interaction_graph_builder.build(certifications);
+    diagnostics.graph = m_interaction_graph_builder.build(certified_pairs);
     if (!diagnostics.graph.valid()) {
-        diagnostics.shadow_status = InteractionGraphShadowStatus::GraphInvalid;
-        diagnostics.total_shadow_time_ns = static_cast<std::uint64_t>(
+        diagnostics.status = InteractionGraphEvaluationStatus::GraphInvalid;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 Clock::now() - total_start).count());
         m_pending_interaction_graph_diagnostics =
@@ -2728,7 +2750,7 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
         }
         CertifiedComponentEvaluation component_evaluation;
         if (!m_certified_component_evaluator.evaluate(
-                certifications,
+                certified_pairs,
                 certified_candidate_sets,
                 members,
                 member_count,
@@ -2759,16 +2781,16 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
     if (!component_search_valid
         || actual_evaluation_count
             != diagnostics.graph.component_evaluation_count) {
-        diagnostics.shadow_status =
-            InteractionGraphShadowStatus::ComponentEvaluationFailed;
-        diagnostics.total_shadow_time_ns = static_cast<std::uint64_t>(
+        diagnostics.status =
+            InteractionGraphEvaluationStatus::ComponentEvaluationFailed;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 Clock::now() - total_start).count());
         m_pending_interaction_graph_diagnostics =
             std::make_shared<InteractionGraphDiagnostics>(diagnostics);
         return;
     }
-    diagnostics.shadow_search_evaluated = true;
+    diagnostics.component_search_evaluated = true;
     diagnostics.assembled_candidate_hash = assembledCandidateHash(
         diagnostics.graph.graph_hash,
         diagnostics.assembled_candidate_ids,
@@ -2784,7 +2806,7 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
     JointCombinationEvaluation crosscheck;
     diagnostics.global_crosscheck_evaluated =
         m_certified_component_evaluator.evaluateTuple(
-            certifications,
+            certified_pairs,
             certified_candidate_sets,
             diagnostics.assembled_candidate_ids,
             crosscheck,
@@ -2801,7 +2823,7 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
                     == diagnostics.graph.component_ids[second]) {
                     continue;
                 }
-                const auto * pair = certifications.findPair(first, second);
+                const auto * pair = certified_pairs.findPair(first, second);
                 const auto * evaluation = pair == nullptr ? nullptr
                     : pair->find(
                         crosscheck.candidate_slots[first],
@@ -2822,10 +2844,10 @@ void ManeuverSelectionWorker::evaluateInteractionGraphShadow(
             crosscheck.valid && cross_component_pairs_safe;
         diagnostics.global_crosscheck_evaluation = crosscheck;
     }
-    diagnostics.shadow_status = diagnostics.global_crosscheck_pass
-        ? InteractionGraphShadowStatus::Evaluated
-        : InteractionGraphShadowStatus::GlobalCrosscheckFailed;
-    diagnostics.total_shadow_time_ns = static_cast<std::uint64_t>(
+    diagnostics.status = diagnostics.global_crosscheck_pass
+        ? InteractionGraphEvaluationStatus::Evaluated
+        : InteractionGraphEvaluationStatus::GlobalCrosscheckFailed;
+    diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             Clock::now() - total_start).count());
     m_pending_interaction_graph_diagnostics =

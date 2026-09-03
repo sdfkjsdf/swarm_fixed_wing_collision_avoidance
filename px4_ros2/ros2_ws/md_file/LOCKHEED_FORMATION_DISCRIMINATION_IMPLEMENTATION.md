@@ -30,9 +30,8 @@ policy. No global OR or AND policy is hidden inside the classifier.
 - UAV calibration: every boundary value, state-age limit, range relationship,
   and aggregation-policy selection.
 
-The file `config/formation_discrimination_profiles.yaml` deliberately contains
-two disabled templates. It does not invent source or UAV thresholds. A profile
-must be populated and reviewed before runtime use.
+No runtime profile file is shipped in this worktree. A calibrated profile must
+be supplied explicitly and reviewed before this optional layer is enabled.
 
 ## Runtime integration
 

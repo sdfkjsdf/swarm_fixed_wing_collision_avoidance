@@ -1602,12 +1602,12 @@ TEST(ManeuverSelectionWorker, MonitorsActivationBetweenSelectionEvents)
 }
 
 TEST(ManeuverSelectionWorker,
-    DeactivatesAfterCpaAndCoordinatedFormationRolloutAreSafe)
+    DeactivatesWithoutV4AfterCpaAndCoordinatedFormationRolloutAreSafe)
 {
     auto first_params = params();
-    first_params.v4_safe_control_enabled = true;
     auto second_params = params(1);
-    second_params.v4_safe_control_enabled = true;
+    ASSERT_FALSE(first_params.v4_safe_control_enabled);
+    ASSERT_FALSE(second_params.v4_safe_control_enabled);
     cs::ManeuverSelectionWorker first(first_params);
     cs::ManeuverSelectionWorker second(second_params);
     constexpr std::uint64_t start = 6'500'000ULL;
@@ -1617,8 +1617,10 @@ TEST(ManeuverSelectionWorker,
     for (const std::uint64_t offset : {
              0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
         const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
-        pushV4Inputs(first, start + offset);
-        pushV4Inputs(second, start + offset);
+        ASSERT_TRUE(first.pushNominalSetpoint(
+            nominalSnapshot(start + offset)));
+        ASSERT_TRUE(second.pushNominalSetpoint(
+            nominalSnapshot(start + offset)));
         first_output = pushBeliefAndProcess(
             first,
             beliefSnapshot(
@@ -1632,8 +1634,10 @@ TEST(ManeuverSelectionWorker,
         exchangePackets(first, second, first_output, second_output);
     }
 
-    pushV4Inputs(first, start + 250'000ULL);
-    pushV4Inputs(second, start + 250'000ULL);
+    ASSERT_TRUE(first.pushNominalSetpoint(
+        nominalSnapshot(start + 250'000ULL)));
+    ASSERT_TRUE(second.pushNominalSetpoint(
+        nominalSnapshot(start + 250'000ULL)));
     first_output = pushBeliefAndProcess(
         first,
         beliefSnapshot(start + 250'000ULL, -40.0, 0.0, 20.0, 0.0));
@@ -1652,6 +1656,10 @@ TEST(ManeuverSelectionWorker,
     for (std::size_t step = 0; step < 5; ++step) {
         const std::uint64_t timestamp_us =
             start + 300'000ULL + step * 50'000ULL;
+        ASSERT_TRUE(first.pushNominalSetpoint(
+            nominalSnapshot(timestamp_us)));
+        ASSERT_TRUE(second.pushNominalSetpoint(
+            nominalSnapshot(timestamp_us)));
         auto second_peer = peerDecision(second_output.decision);
         auto first_peer = peerDecision(first_output.decision);
         // Nominal post-release safety is timestamped independently of the
@@ -1662,8 +1670,6 @@ TEST(ManeuverSelectionWorker,
         first_peer.local_selection_epoch += 200U;
         ASSERT_TRUE(first.pushRemoteDecision(1, second_peer));
         ASSERT_TRUE(second.pushRemoteDecision(0, first_peer));
-        pushV4Inputs(first, timestamp_us);
-        pushV4Inputs(second, timestamp_us);
         first_output = pushBeliefAndProcess(
             first,
             beliefSnapshot(
@@ -2224,67 +2230,6 @@ TEST(ManeuverSelectionWorker, ExhaustiveTestModeEvaluatesAllFiveAircraftRollTupl
 }
 
 TEST(ManeuverSelectionWorker,
-    InteractionGraphShadowDoesNotReplaceLegacyDecision)
-{
-    constexpr std::uint64_t start = 13'000'000ULL;
-    std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, 2> workers;
-    std::array<cs::ManeuverSelectionWorkerOutput, 2> outputs{};
-    for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
-        auto worker_params = params(static_cast<int>(aircraft), 2);
-        worker_params.exhaustive_test_mode = true;
-        worker_params.interaction_graph_params.enabled = true;
-        // An intentionally permissive negative screen isolates both aircraft
-        // in shadow. The legacy exhaustive evaluator must remain 7^2.
-        worker_params.interaction_graph_params.ad_screen_m = -1.0e6;
-        workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
-            worker_params);
-        ASSERT_TRUE(workers[aircraft]->pushNominalSetpoint(
-            nominalSnapshot(start)));
-        outputs[aircraft] = pushBeliefAndProcess(
-            *workers[aircraft],
-            beliefSnapshot(
-                start,
-                100.0 * static_cast<double>(aircraft),
-                0.0,
-                20.0,
-                0.0));
-        ASSERT_EQ(outputs[aircraft].intent_packet_count, 7U);
-    }
-
-    exchangePackets(*workers[0], *workers[1], outputs[0], outputs[1]);
-    ASSERT_TRUE(workers[0]->pushRemoteDecision(
-        1, nominalPeerDecision(1, start)));
-    ASSERT_TRUE(workers[1]->pushRemoteDecision(
-        0, nominalPeerDecision(0, start)));
-    for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
-        outputs[aircraft] = pushBeliefAndProcess(
-            *workers[aircraft],
-            beliefSnapshot(
-                start + 250'000ULL,
-                5.0 + 100.0 * static_cast<double>(aircraft),
-                0.0,
-                20.0,
-                0.0));
-        ASSERT_TRUE(outputs[aircraft].has_decision);
-        const auto diagnostics_message =
-            workers[aircraft]->tryPopInteractionGraphDiagnostics();
-        ASSERT_TRUE(diagnostics_message.has_value());
-        ASSERT_TRUE(diagnostics_message.value());
-        const auto & diagnostics = *diagnostics_message.value();
-        ASSERT_TRUE(diagnostics.graph.valid());
-        EXPECT_EQ(diagnostics.graph.component_count, 2U);
-        EXPECT_EQ(diagnostics.graph.component_evaluation_count, 0U);
-        EXPECT_TRUE(diagnostics.shadow_search_evaluated);
-        EXPECT_TRUE(diagnostics.global_crosscheck_evaluated);
-        EXPECT_TRUE(diagnostics.global_crosscheck_pass);
-        EXPECT_EQ(diagnostics.shadow_status,
-            cs::InteractionGraphShadowStatus::Evaluated);
-        EXPECT_EQ(outputs[aircraft].decision.evaluated_combination_count, 49U);
-        EXPECT_FALSE(outputs[aircraft].decision.activation_requested);
-    }
-}
-
-TEST(ManeuverSelectionWorker,
     InteractionGraphGlobalCrosscheckRejectsMissedUnsafePair)
 {
     constexpr std::uint64_t start = 14'000'000ULL;
@@ -2331,16 +2276,16 @@ TEST(ManeuverSelectionWorker,
         ASSERT_TRUE(diagnostics_message.value());
         const auto & diagnostics = *diagnostics_message.value();
         ASSERT_TRUE(diagnostics.graph.valid());
-        EXPECT_TRUE(diagnostics.shadow_search_evaluated);
+        EXPECT_TRUE(diagnostics.component_search_evaluated);
         EXPECT_TRUE(diagnostics.global_crosscheck_evaluated);
         EXPECT_FALSE(diagnostics.global_crosscheck_pass);
-        EXPECT_EQ(diagnostics.shadow_status,
-            cs::InteractionGraphShadowStatus::GlobalCrosscheckFailed);
+        EXPECT_EQ(diagnostics.status,
+            cs::InteractionGraphEvaluationStatus::GlobalCrosscheckFailed);
     }
 }
 
 TEST(ManeuverSelectionWorker,
-    InteractionGraphCutoverRetainsBestUnsafeConnectedComponent)
+    InteractionGraphRetainsBestUnsafeConnectedComponent)
 {
     constexpr std::uint64_t start = 14'500'000ULL;
     std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, 2> workers;
@@ -2349,7 +2294,6 @@ TEST(ManeuverSelectionWorker,
         auto worker_params = params(static_cast<int>(aircraft), 2);
         worker_params.exhaustive_test_mode = true;
         worker_params.interaction_graph_params.enabled = true;
-        worker_params.interaction_graph_component_cutover_enabled = true;
         worker_params.interaction_graph_params.ad_screen_m = 0.0;
         workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
             worker_params);
@@ -2400,7 +2344,7 @@ TEST(ManeuverSelectionWorker,
 }
 
 TEST(ManeuverSelectionWorker,
-    InteractionGraphCutoverReplacesLegacyExhaustiveEvaluation)
+    InteractionGraphReplacesLegacyExhaustiveEvaluation)
 {
     constexpr std::uint64_t start = 15'000'000ULL;
     std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, 2> workers;
@@ -2409,7 +2353,6 @@ TEST(ManeuverSelectionWorker,
         auto worker_params = params(static_cast<int>(aircraft), 2);
         worker_params.exhaustive_test_mode = true;
         worker_params.interaction_graph_params.enabled = true;
-        worker_params.interaction_graph_component_cutover_enabled = true;
         worker_params.interaction_graph_params.ad_screen_m = -1.0e6;
         workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
             worker_params);
@@ -2442,17 +2385,16 @@ TEST(ManeuverSelectionWorker,
         ASSERT_TRUE(outputs[aircraft].has_decision);
         EXPECT_TRUE(outputs[aircraft].decision.proposal_valid);
         // Both nodes are isolated, so no component combination is evaluated;
-        // the legacy 7^2=49 search must not run in cutover mode.
+        // the legacy 7^2=49 search must not run when the graph is active.
         EXPECT_EQ(outputs[aircraft].decision.evaluated_combination_count, 0U);
         const auto diagnostics_message =
             workers[aircraft]->tryPopInteractionGraphDiagnostics();
         ASSERT_TRUE(diagnostics_message.has_value());
         ASSERT_TRUE(diagnostics_message.value());
         const auto & diagnostics = *diagnostics_message.value();
-        EXPECT_TRUE(diagnostics.component_cutover_enabled);
+        EXPECT_TRUE(diagnostics.enabled);
         EXPECT_TRUE(diagnostics.component_proposal_used);
         EXPECT_TRUE(diagnostics.global_crosscheck_pass);
-        EXPECT_FALSE(diagnostics.legacy_proposal_valid);
         EXPECT_TRUE(outputs[aircraft].decision.proposed_component_graph);
         EXPECT_EQ(
             outputs[aircraft].decision.proposed_candidate_ids,
@@ -2482,7 +2424,7 @@ TEST(ManeuverSelectionWorker,
         *workers[0], *workers[1], outputs[0], outputs[1]);
     // Matching component identities from every participant are the existing
     // proposal/peer-awareness qualification.  No additional all-peer
-    // acknowledgement protocol is introduced for component cutover.
+    // acknowledgement protocol is introduced for component proposals.
     EXPECT_TRUE(commits[0].decision.coordination_qualified);
     EXPECT_TRUE(commits[1].decision.coordination_qualified);
     EXPECT_TRUE(commits[0].decision.ownship_candidate_valid);
