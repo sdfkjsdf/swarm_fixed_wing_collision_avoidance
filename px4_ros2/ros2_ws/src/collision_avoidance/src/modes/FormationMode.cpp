@@ -116,24 +116,17 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
     flocking_params.height_rate_max_climb      = declare_or_get("height_rate_max_climb", 8.0f);
     flocking_params.height_rate_max_sink       = declare_or_get("height_rate_max_sink",  2.7f);
     flocking_params.max_roll_deg               = declare_or_get("max_roll_deg", 50.0f);
-    flocking_params.max_pitch_deg              = declare_or_get("max_pitch_deg", 30.0f);
-    flocking_params.max_pitch_rate_deg_per_sec = declare_or_get("max_pitch_rate_deg_per_sec", 30.0f);
 
     /* ── alt_hold (수직 가속도) P 게인 (airframe_spec.yaml) ── */
     flocking_params.alt_hold_p_gain            = declare_or_get("alt_hold_p_gain", 0.1f);
 
-    /* ── TECS 에너지 기반 dV/dt 클램프 (airframe_spec.yaml) ── */
-    AirframeLimits airframe_limits;
-    airframe_limits.max_climb_rate  = declare_or_get("height_rate_max_climb", 5.0f);
-    airframe_limits.min_sink_rate   = declare_or_get("height_rate_min_sink", 2.0f);
-    airframe_limits.airspeed_min    = flocking_params.airspeed_min;
-    airframe_limits.energy_fraction = declare_or_get("energy_fraction", 0.5f);
-    airframe_limits.gravity         = declare_or_get("gravity", 9.80665f);
+    const float gravity_mps2 = declare_or_get("gravity", 9.80665f);
 
     m_minimum_level_eas = flocking_params.airspeed_min;
-    m_gravity = airframe_limits.gravity;
+    m_gravity = gravity_mps2;
 
-    m_flocking = std::make_unique<FlockingGuidance>(flocking_params, airframe_limits);
+    m_flocking = std::make_unique<FlockingGuidance>(
+        flocking_params, gravity_mps2);
 
     if (!_node.has_parameter("test_guidance_mode")) {
         _node.declare_parameter<std::string>("test_guidance_mode", "formation");
@@ -150,7 +143,7 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
     point_params.course_error_gain_per_s = declare_or_get(
         "point_course_error_gain_per_s", 1.2F);
     point_params.maximum_roll_degrees = flocking_params.max_roll_deg;
-    point_params.gravity_mps2 = airframe_limits.gravity;
+    point_params.gravity_mps2 = gravity_mps2;
     m_point_convergence = std::make_unique<
         collision_avoidance::guidance::PointConvergenceGuidance>(point_params);
 
@@ -158,34 +151,21 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
     m_alt_hold_p_gain = declare_or_get("alt_hold_p_gain", 0.5f);
     m_alt_hold_hr_max = declare_or_get("alt_hold_hr_max", 2.7f);
 
-    /*터미널에 표시가 되는 것들 */
-
-            RCLCPP_INFO(_node.get_logger(),
-                "[Formation] Flocking params: lambda=%.2f beta=%.2f k1=%.2f k2=%.4f d=%.2f n=%d dt=%.4f",
-                flocking_params.lambda, flocking_params.beta,
-                flocking_params.k1, flocking_params.k2,
-                flocking_params.desired_distance, flocking_params.neighbor_count,
-                flocking_params.integration_dt);
-            RCLCPP_INFO(_node.get_logger(),
-                "[Formation] Airframe spec: airspeed=[%.1f,%.1f] hr_climb=%.1f hr_sink=%.1f roll_max=%.1f pitch_max=%.1f pitch_rate_max=%.1f",
-                flocking_params.airspeed_min, flocking_params.airspeed_max,
-                flocking_params.height_rate_max_climb,
-                flocking_params.height_rate_max_sink,
-                flocking_params.max_roll_deg,
-                flocking_params.max_pitch_deg,
-                flocking_params.max_pitch_rate_deg_per_sec);
-            RCLCPP_INFO(_node.get_logger(),
-                "[Formation] AirframeLimits: climb=%.1f sink=%.1f fraction=%.2f → dv/dt=[%.2f, +%.2f] @%.0fm/s",
-                airframe_limits.max_climb_rate, airframe_limits.min_sink_rate,
-                airframe_limits.energy_fraction,
-                airframe_limits.dvdtMin(flocking_params.airspeed_min),
-                airframe_limits.dvdtMax(flocking_params.airspeed_min),
-                flocking_params.airspeed_min);
-            RCLCPP_INFO(_node.get_logger(),
-                "[Formation] Alt P-control: p_gain=%.2f hr_max=%.1f",
-                m_alt_hold_p_gain, m_alt_hold_hr_max);
-
-
+    RCLCPP_INFO(_node.get_logger(),
+        "[Formation] Flocking params: lambda=%.2f beta=%.2f k1=%.2f k2=%.4f d=%.2f n=%d dt=%.4f",
+        flocking_params.lambda, flocking_params.beta,
+        flocking_params.k1, flocking_params.k2,
+        flocking_params.desired_distance, flocking_params.neighbor_count,
+        flocking_params.integration_dt);
+    RCLCPP_INFO(_node.get_logger(),
+        "[Formation] Airframe spec: airspeed=[%.1f,%.1f] hr_climb=%.1f hr_sink=%.1f roll_max=%.1f",
+        flocking_params.airspeed_min, flocking_params.airspeed_max,
+        flocking_params.height_rate_max_climb,
+        flocking_params.height_rate_max_sink,
+        flocking_params.max_roll_deg);
+    RCLCPP_INFO(_node.get_logger(),
+        "[Formation] Alt P-control: p_gain=%.2f hr_max=%.1f",
+        m_alt_hold_p_gain, m_alt_hold_hr_max);
 
     /* rt_thread 는 노드 생성 시점부터 항상 돌도록 시작. */
     m_rt_running_mt2rt.store(true);
@@ -459,10 +439,7 @@ void FormationMode::rt_loop()
             num_others++;
         }
 
-        /* (3) 가이던스 한 방에 — 가속도/적분/saturation/변환/fallback 전부 내부에서 */
-        const float wind_n = m_wind_n_mt2rt.load(std::memory_order_relaxed);
-        const float wind_e = m_wind_e_mt2rt.load(std::memory_order_relaxed);
-
+        /* (3) Guidance acceleration, integration and saturation. */
         /* (3b) height_setpoint — formation 시작 시점에 캡처된 reference NED z (m).
                  m_ref_pos_d_mt 가 아직 캡처 전이면 NaN 으로 전달 → FlockingGuidance 가 무시. */
         const float height_setpoint = m_ref_pos_d_valid_mt
@@ -473,8 +450,7 @@ void FormationMode::rt_loop()
             m_point_convergence_test_mode && m_point_convergence
             ? m_point_convergence->computeFwSetpoint(self, height_setpoint)
             : m_flocking->computeFwSetpoint(
-                self, m_others_buf_rt, num_others,
-                wind_n, wind_e, height_setpoint);
+                self, m_others_buf_rt, num_others, height_setpoint);
 
 
 

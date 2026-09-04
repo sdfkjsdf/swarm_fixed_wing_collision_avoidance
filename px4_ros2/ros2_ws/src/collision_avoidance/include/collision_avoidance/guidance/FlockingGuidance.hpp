@@ -3,33 +3,17 @@
 /*
    FlockingGuidance
    ----------------
-   Olfati-Saber 스타일 flocking 가이던스 (NE 평면 2D) 의 "완전한 가이던스 솔루션".
+   Olfati-Saber 스타일 Formation 가이던스의 수평 NE 구현.
 
-   상태 공간: spherical (v, ψ, γ)
-     v     : 속력 [m/s]
-     ψ     : ground course [rad] (EAS 경계 변환의 방향 입력)
-     γ     : 비행 경로각 [rad] (위가 양)
+   실제 파이프라인:
+     1. 이웃 상태에서 NE 가속도 (a_N, a_E)를 계산한다.
+     2. 현재 course 방향 성분을 ground-speed 명령에 한 step 적분한다.
+     3. 수직 명령은 별도의 고도 P 제어로 계산한다.
+     4. course 수직 성분을 lateral-acceleration 명령으로 변환한다.
+     5. PX4 경계에서 ground-speed 명령을 EAS 명령으로 변환한다.
 
-     V_NED = ( v·cos(ψ)·cos(γ),  v·sin(ψ)·cos(γ),  -v·sin(γ) )
-
-   파이프라인:
-     1. Flocking → NED 가속도 (a_N, a_E, a_D)
-     2. M^{-1} 적용 → (dv/dt, dψ/dt, dγ/dt)
-     3. dψ/dt 클램프: ω_max = g·tan(roll_max)/v       (coordinated turn)
-     4. dγ/dt 클램프: pitch rate 기체 한계
-     5. dv/dt 클램프: 0.5 × STE_rate / TAS (ArduPilot TECS 방식, AirframeLimits)
-     5. 적분: v, ψ, γ 갱신
-     6. 상태 클램프: v ∈ [vmin,vmax], γ ∈ [-γmax,γmax], ψ wrap to [-π,π]
-     7. 출력: course = ground course ψ
-              height_rate = +v·sin(γ)         (ENU 위가 양)
-              airspeed    = ground-speed command (legacy field name)
-        PX4 경계에서 공통 computeRequiredEquivalentAirspeed()로 EAS 명령을 계산한다.
-
-   장점:
-   - 상태 = setpoint (변환 불필요)
-   - 모든 클램프가 물리적 의미 (좌표축 편향 없음)
-   - atan2 불안정성·적분 드리프트 자연 해소
-   - cos(γ)≥cos(γ_max)>0, v≥vmin 보장 → 분모 가드 불필요
+   이 모듈은 비행경로각 상태를 적분하거나 TECS 종방향 동역학을
+   모사하지 않는다.
 
    인터페이스:
    - 상태 포맷: collision_avoidance::types::AgentState (rt_thread 전용)
@@ -39,8 +23,6 @@
 #include <Eigen/Core>
 
 #include <collision_avoidance/common/GlobalTypes.hpp>
-#include <collision_avoidance/guidance/AirframeLimits.hpp>
-
 
 class FlockingGuidance
 {
@@ -64,15 +46,12 @@ public:
         float height_rate_max_climb{8.0f};        /* height_rate climb 한계 [m/s] — PX4 FW_T_CLMB_MAX */
         float height_rate_max_sink{2.7f};         /* height_rate sink  한계 [m/s] — PX4 FW_T_SINK_MAX */
         float max_roll_deg{50.0f};                /* FW_R_LIM — coordinated turn */
-        float max_pitch_deg{30.0f};               /* γ 상한 [deg] */
-        float max_pitch_rate_deg_per_sec{60.0f};  /* dγ/dt 상한 [deg/s] */
 
         /* ── alt_hold (height_rate 직접 산출) P 게인 ── */
         float alt_hold_p_gain{0.1f};              /* [1/s] — h_dot = +p_gain × (self.pos_d - height_setpoint) */
     };
 
-    explicit FlockingGuidance(const Parameters& params,
-                             const AirframeLimits& limits);
+    explicit FlockingGuidance(const Parameters & params, float gravity_mps2);
 
     /* ── 메인 엔트리 포인트 ──
        height_setpoint: formation 시작 시점에 캡처된 reference NED z (m).
@@ -82,15 +61,11 @@ public:
         const collision_avoidance::types::AgentState      & self,
         const collision_avoidance::types::AgentStateArray & others,
         int                                num_others,
-        float wind_n, float wind_e,
         float height_setpoint);
 
     /* 런타임 파라미터 갱신 */
     void setParameters(const Parameters& params) { _params = params; }
     const Parameters & parameters() const { return _params; }
-
-    void setAirframeLimits(const AirframeLimits& limits) { _airframe = limits; }
-    const AirframeLimits & airframeLimits() const { return _airframe; }
 
     /* (선택) NE 평면 raw 가속도 — 디버깅/단위 테스트용. */
     Eigen::Vector2f computeAcceleration(
@@ -99,13 +74,11 @@ public:
         int                                num_others) const;
 
 private:
-    Parameters    _params;
-    AirframeLimits _airframe;
+    Parameters _params;
+    float m_gravity_mps2{9.80665F};
 
     /* ── setpoint 생성용 상태 (rt_thread 전용) ── */
     float m_speed_setpoint_rt{0.f};          /* 속력 setpoint [m/s] */
-    float m_gamma_setpoint_rt{0.f};          /* 비행 경로각 setpoint [rad] */
     float m_lateral_acceleration_rt{0.f};    /* 횡방향 가속도 [m/s^2] */
-    float m_airspeed_setpoint_rt{0.f};       /* 등가대기속도 setpoint [m/s] */
     float m_height_rate_setpoint_rt{0.f};    /* 고도변화율 setpoint [m/s] */
 };

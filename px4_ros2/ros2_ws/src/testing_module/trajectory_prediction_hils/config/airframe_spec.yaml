@@ -23,11 +23,6 @@
     max_roll_deg: 50.0
     max_roll_rate_deg_per_s: 70.0  # FW_R_RMAX (SITL live/default)
 
-    # ── 호환 차원 (SetpointSequencer 가 직접 사용 안 함) ──
-    max_pitch_deg: 30.0
-    max_pitch_rate_deg_per_sec: 60.0
-    energy_fraction: 0.5
-
     # ═══════════════════════════════════════════════════════════
     # PX4 시정수 — TrajectoryPredict 1차 지연 식별값
     # 2026-05-11: SITL 1040_gazebo-classic_standard_vtol live readout 으로 동기화.

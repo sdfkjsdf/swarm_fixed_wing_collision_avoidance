@@ -39,9 +39,9 @@
 │ │  FormationMode::rt_loop (cpp:266)        주기: ~1ms (sleep_for(1ms))               │          │
 │ │     1. m_input_queue_mt2rt.try_pop()      ← swarm snapshot                         │          │
 │ │     2. self / others 추출 → AgentState                                          │          │
-│ │     3. m_wind_n_mt2rt.load(), wind_e.load()  ← atomic                              │          │
+│ │     3. height reference 읽기                                                        │          │
 │ │     4. m_flocking->computeFwSetpoint(...)    ← 모든 무거운 계산                     │          │
-│ │        (Flocking 가속도 + 적분 + saturation + 변환)                                  │          │
+│ │        (Flocking 가속도 + 적분 + saturation)                                        │          │
 │ │     5. m_output_queue_rt2mt.try_push(out)                                          │          │
 │ └────────────────────────────────────┬────────────────────────────────────────────────┘         │
 │                                      │                                                          │
@@ -411,11 +411,7 @@ void FormationMode::rt_loop()
             num_others++;
         }
 
-        /* (3) atomic 으로 wind 값 받기 */
-        const float wind_n = m_wind_n_mt2rt.load(std::memory_order_relaxed);
-        const float wind_e = m_wind_e_mt2rt.load(std::memory_order_relaxed);
-
-        /* (3b) height_setpoint — m_ref_pos_d_mt 가 캡처 안되었으면 NaN */
+        /* (3) height_setpoint — m_ref_pos_d_mt 가 캡처 안되었으면 NaN */
         const float height_setpoint = m_ref_pos_d_valid_mt
                                           ? m_ref_pos_d_mt
                                           : std::nanf("");
@@ -423,7 +419,6 @@ void FormationMode::rt_loop()
         /* (4) ★ 무거운 계산 — Flocking 가이던스 한 방에 ★ */
         const collision_avoidance::types::FwSetpoint out =
             m_flocking->computeFwSetpoint(self, m_others_buf_rt, num_others,
-                                          wind_n, wind_e,
                                           height_setpoint);
 
         /* (5) 출력 큐로 push */

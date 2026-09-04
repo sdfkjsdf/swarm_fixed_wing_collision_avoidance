@@ -983,7 +983,7 @@ TEST(ManeuverSelectionWorker,
     // distributed proposal/confirmation below.
     std::array<std::uint64_t, 3> first_epoch_revisions{};
     bool captured_first_epoch_revisions = false;
-    for (const auto [offset, nominal_lateral_acceleration] :
+    for (const auto & [offset, nominal_lateral_acceleration] :
          std::array<std::pair<std::uint64_t, double>, 3>{
              std::pair{350'000ULL, 0.0},
              std::pair{400'000ULL, 2.0},

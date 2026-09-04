@@ -4,21 +4,15 @@
 
 
 namespace {
-
-/* 각도를 [-π, π] 로 wrap. ψ 누적 발산 방지. */
-inline float wrap_pi(float angle)
-{
-    return std::atan2(std::sin(angle), std::cos(angle));
-}
-
 constexpr float kDeg2Rad = static_cast<float>(M_PI) / 180.0f;
 
 }  // namespace
 
 
-FlockingGuidance::FlockingGuidance(const Parameters& params,
-                                   const AirframeLimits& limits)
-: _params(params), _airframe(limits) {}
+FlockingGuidance::FlockingGuidance(
+    const Parameters & params,
+    float gravity_mps2)
+: _params(params), m_gravity_mps2(gravity_mps2) {}
 
 
 
@@ -84,25 +78,13 @@ Eigen::Vector2f FlockingGuidance::computeAcceleration(
 }
 
 
-/* ══════════════════════════════════════════════════════════════════
-   메인 엔트리 — Spherical state (v, ψ, γ) 기반 파이프라인.
-   현재 여기서는 지금 속도를 그대로 적분한 다음에 saturation을 진행하는 방식으로
-
-
-
-
-   ═══════════════ */
+/* NE flocking acceleration to fixed-wing setpoints. */
 collision_avoidance::types::FwSetpoint FlockingGuidance::computeFwSetpoint(
     const collision_avoidance::types::AgentState      & self,
     const collision_avoidance::types::AgentStateArray & others,
     int                                   num_others,
-    float wind_n, float wind_e,
     float height_setpoint)
 {
-    /* wind 는 NE 평면 직접 계산으로 전환 후 미사용. 시그니처 호환 위해 유지. */
-    (void)wind_n;
-    (void)wind_e;
-
     /* (1) Flocking 가속도 (NE 평면, m/s^2) */
     const Eigen::Vector2f a_ne = computeAcceleration(self, others, num_others);
     const float aN = a_ne[0];
@@ -134,25 +116,20 @@ collision_avoidance::types::FwSetpoint FlockingGuidance::computeFwSetpoint(
         -_params.height_rate_max_sink,    /* 음수 한계 (sink) */
          _params.height_rate_max_climb);  /* 양수 한계 (climb) */
 
-    /* (6) speed setpoint — 3D 합성 후 airspeed min/max 만 clamp.
-           ★ 비교 검증용: dv/dt 자체 한계 (TECS 에너지 기반) 임시 비활성 ★
-              주석 해제 시 한 step 동안 가능한 속도 변화 한계 (PX4 TECS.cpp:333-336
-              와 동일한 0.5×g×CLMB_MAX/V_a) 로 추가 clamp. */
+    /* (6) 3D ground-speed command magnitude, clamped to configured bounds. */
     const float v_NE_next = v_NE + dv_dt_NE * dt;
-    const float v_3d_next = std::sqrt(v_NE_next * v_NE_next
-                                    + m_height_rate_setpoint_rt * m_height_rate_setpoint_rt);
+    const float ground_speed_next = std::sqrt(
+        v_NE_next * v_NE_next
+        + m_height_rate_setpoint_rt * m_height_rate_setpoint_rt);
 
-    // const float v_3d_step_lower = self.speed + _airframe.dvdtMin(self.speed) * dt;
-    // const float v_3d_step_upper = self.speed + _airframe.dvdtMax(self.speed) * dt;
-    // const float v_3d_clamped    = std::clamp(v_3d_next, v_3d_step_lower, v_3d_step_upper);
-
-    m_speed_setpoint_rt = std::clamp(v_3d_next,
+    m_speed_setpoint_rt = std::clamp(ground_speed_next,
                                      _params.airspeed_min,
                                      _params.airspeed_max);
 
     /* (8) lateral acceleration — coordinated turn 한계 clamp
            a_lat = -aN·sin(ψ) + aE·cos(ψ) */
-    const float lat_accel_max = std::tan(_params.max_roll_deg * kDeg2Rad) * _airframe.gravity;
+    const float lat_accel_max =
+        std::tan(_params.max_roll_deg * kDeg2Rad) * m_gravity_mps2;
     const float lat_accel_raw = -aN * sin_psi + aE * cos_psi;
     m_lateral_acceleration_rt = std::clamp(lat_accel_raw, -lat_accel_max, lat_accel_max);
 

@@ -208,8 +208,6 @@ BackupSafetyCertifierV4Result BackupSafetyCertifierV4::evaluate(
             }
         }
     }
-    result.invalid_threat_vehicle_id = -1;
-
     const auto evaluateBranch = [this, &input](
         BackupBranchResultV4 & branch) noexcept
         -> BackupCertificationStatusV4 {

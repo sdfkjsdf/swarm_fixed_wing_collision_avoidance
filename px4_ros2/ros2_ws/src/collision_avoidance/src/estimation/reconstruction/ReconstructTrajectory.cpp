@@ -67,10 +67,9 @@ void ReconstructTrajectory::calculate_clamp_cubic_spline(const TrajectorySample 
     /* (1) set 함수를 통해서 instance sample storage 에 값 할당 */
     set_sample_point(s);
 
-    /* (2) 4×3 행렬 B, C — 초기화된 (Zero) 상태로 선언.
+    /* (2) 4×3 우변 행렬 B를 zero-initialize.
        정적 크기 (Eigen::Matrix<float, 4, 3>) 라 stack 할당, heap 0. */
     Eigen::Matrix<float, 4, 3> B = Eigen::Matrix<float, 4, 3>::Zero();
-    Eigen::Matrix<float, 4, 3> C = Eigen::Matrix<float, 4, 3>::Zero();
 
     /* h = spline_time (1.5s) — 컴파일 타임 상수, 컴파일러가 fold */
     constexpr float h           = detail::spline_time;
@@ -87,7 +86,7 @@ void ReconstructTrajectory::calculate_clamp_cubic_spline(const TrajectorySample 
               - three_div_h * (m_points[3] - m_points[2])).transpose();
 
     /* (4) C = inverse_A · B  (4×4 · 4×3 = 4×3) */
-    C = detail::inverse_A * B;
+    const Eigen::Matrix<float, 4, 3> C = detail::inverse_A * B;
 
     /* (5) C 의 각 행을 transpose → 3×1 Vector3f 로 c1..c4 추출.
        ★ 2026-05-20 refactor: c1..c4 는 *함수 local 변수* (이전엔 detail::cN).

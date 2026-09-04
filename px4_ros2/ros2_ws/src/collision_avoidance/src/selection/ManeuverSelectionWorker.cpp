@@ -270,44 +270,6 @@ IntentKinematicsStatus interpolateIntentKinematics(
     return IntentKinematicsStatus::Valid;
 }
 
-IntentKinematicsStatus propagateIntentInitialKinematics(
-    const estimation::ReceivedTrajectoryIntent & intent,
-    std::uint64_t evaluation_timestamp_us,
-    IntentKinematics & kinematics) noexcept
-{
-    if (intent.source_timestamp_us > evaluation_timestamp_us) {
-        return IntentKinematicsStatus::Future;
-    }
-    const double age_s = static_cast<double>(
-        evaluation_timestamp_us - intent.source_timestamp_us) * 1.0e-6;
-    if (!std::isfinite(age_s) || age_s < 0.0
-        || age_s > kTrajectoryHorizonSeconds) {
-        return IntentKinematicsStatus::Stale;
-    }
-
-    // The graph must be independent of a candidate maneuver. Every intent in
-    // one aircraft's set has the same t=0 state, so align that measured state
-    // to the common evaluation time with one deterministic constant-velocity
-    // rule instead of following an arbitrary candidate trajectory.
-    const auto & state = intent.reconstructed_mean.front();
-    if (!std::isfinite(state.p_n) || !std::isfinite(state.p_e)
-        || !std::isfinite(state.h) || !std::isfinite(state.V)
-        || !std::isfinite(state.h_dot) || !std::isfinite(state.psi)) {
-        return IntentKinematicsStatus::Invalid;
-    }
-    const double horizontal_speed = std::sqrt(std::max(
-        0.0, state.V * state.V - state.h_dot * state.h_dot));
-    kinematics.velocity_ned = {
-        horizontal_speed * std::cos(state.psi),
-        horizontal_speed * std::sin(state.psi),
-        -state.h_dot};
-    kinematics.position_ned = {
-        state.p_n + kinematics.velocity_ned[0] * age_s,
-        state.p_e + kinematics.velocity_ned[1] * age_s,
-        -state.h + kinematics.velocity_ned[2] * age_s};
-    return IntentKinematicsStatus::Valid;
-}
-
 V4SnapshotStatus classifySnapshot(
     bool present,
     bool value_valid,

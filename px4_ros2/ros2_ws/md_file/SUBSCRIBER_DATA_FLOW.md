@@ -448,7 +448,7 @@ out.is_fallback          = false;                         // 정상 계산
 return out;
 ```
 
-- 가이던스 본체 (`computeFwSetpoint`) 가 NE 평면 가속도 → saturation → 변환을 모두 마친 결과
+- 가이던스 본체 (`computeFwSetpoint`) 가 NE 평면 가속도 → 적분 → saturation을 마친 결과
 - 멤버 변수 `m_*_rt` 는 디버그/내부 상태 추적용 (외부엔 `out` 만 노출)
 
 → **이 시점에 `out` 은 rt_thread 의 stack 위에 있는 임시 객체.**
@@ -482,7 +482,6 @@ collision_avoidance::types::FwSetpointQueue m_output_queue_rt2mt{};
 ```cpp
 const collision_avoidance::types::FwSetpoint out =
     m_flocking->computeFwSetpoint(self, m_others_buf_rt, num_others,
-                                  wind_n, wind_e,
                                   height_setpoint);
 
 /* (4) output_queue 로 push */

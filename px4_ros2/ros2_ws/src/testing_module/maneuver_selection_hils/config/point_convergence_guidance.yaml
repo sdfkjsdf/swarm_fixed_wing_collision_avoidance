@@ -22,9 +22,6 @@
     max_roll_deg: 50.0
     max_roll_rate_deg_per_s: 70.0
     amac_communication_delay_margin_m: 0.0 # residual-only MASD term; calibrate before enabling
-    max_pitch_deg: 30.0
-    max_pitch_rate_deg_per_sec: 60.0
-    energy_fraction: 0.5
     gravity: 9.80665
     alt_hold_p_gain: 0.1
     alt_hold_hr_max: 2.7

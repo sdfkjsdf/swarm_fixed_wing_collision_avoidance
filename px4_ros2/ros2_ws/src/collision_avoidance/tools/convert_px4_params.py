@@ -53,10 +53,8 @@ PX4_TO_YAML = {
     "FW_Y_RMAX":       ("max_yaw_rate_deg_per_s",  "최대 yaw-rate [deg/s] (V4 upper cap)"),
 }
 
-# PX4 에 대응이 없어서 우리가 정하는 값들 (Spherical pipeline 기준)
+# PX4 에 대응이 없어서 우리가 정하는 V4 safety 값들
 OUR_DEFAULTS = {
-    "max_pitch_deg":               (30.0, "[deg] |γ| 한계 (Spherical state pitch 자유도)"),
-    "max_pitch_rate_deg_per_sec":  (30.0, "[deg/s] dγ/dt 한계 (pitch angular rate)"),
     "v4_margin_time_constant_s":   (5.0, "[s] V4 positive-margin time constant"),
     "v4_candidate_guard_deg_per_s": (0.5, "[deg/s] V4 representative guard"),
     "v4_constraint_tolerance_mps": (1.0e-5, "[m/s] V4 affine residual tolerance"),
