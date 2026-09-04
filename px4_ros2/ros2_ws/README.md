@@ -8,7 +8,8 @@ PX4 ROS 2 기반 VTOL/fixed-wing swarm 편대 비행과 단일 기체 궤적 예
 - `src/testing_module/trajectory_prediction_hils`: 사전 정의 setpoint 재생과 SITL/HILS 검증 harness
 - `src/testing_module/formation_hils`: 다기체 formation SITL/HILS 실행과 모니터링
 - `src/testing_module/analysis_tools`: CSV 후처리, 비교 및 그래프 도구
-- `docker`: Raspberry Pi 5용 `collision_avoidance` 컨테이너 정의
+- `docker`: Raspberry Pi 5용 `collision_avoidance` 컨테이너 정의와
+  [빌드·의존성 복구 절차](docker/README.md)
 - `md_file`: 배포, 설계, 데이터 흐름 및 알고리즘 인수인계 문서
 
 PX4 외부 의존성은 소스에 중복 저장하지 않는다. 검증된 커밋은 `px4_dependencies.repos`에 고정되어 있다.
