@@ -1071,6 +1071,12 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
         && !decision.selected_v4_cutover
         && cache.decision.v4_control_architecture
             == decision.v4_control_architecture;
+    if (decision.activation_just_started) {
+        // Preserve the edge until the next local 20 Hz belief update. A newer
+        // peer heartbeat may otherwise overwrite this one-shot event before
+        // the component activation roll-up consumes it.
+        cache.activation_start_pending = true;
+    }
     cache.decision = decision;
     // Readiness advertises that this peer has demonstrated the selected V4
     // architecture, not that its latest 20 Hz diagnostic sample is a command.
@@ -2512,6 +2518,11 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                     graph_diagnostics.graph.component_hash;
                 m_pending_proposal.component_solution_hash =
                     graph_diagnostics.component_solution_hash;
+                m_pending_proposal.component_ids =
+                    graph_diagnostics.graph.component_ids;
+                m_pending_proposal.component_count =
+                    static_cast<std::uint8_t>(
+                        graph_diagnostics.graph.component_count);
             }
             const std::uint8_t ownship_slot = proposed_candidate_slots[
                 static_cast<std::size_t>(m_params.vehicle_id)];
@@ -3490,6 +3501,12 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
     m_selected_candidate_source_timestamps_us =
         authoritative_source_timestamps_us;
     m_selected_v4_cutover = m_pending_proposal.v4_cutover;
+    m_selected_component_graph = m_pending_proposal.component_graph;
+    m_selected_component_ids = m_pending_proposal.component_graph
+        ? m_pending_proposal.component_ids
+        : std::array<std::uint8_t, kMaximumSelectionAircraft>{};
+    m_selected_component_count = m_pending_proposal.component_graph
+        ? m_pending_proposal.component_count : 0;
     m_has_selected_combination = true;
     const ManeuverActivationStatus committed_activation =
         m_activation_controller.status();
@@ -3578,6 +3595,64 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
     output.decision = decision;
     output.has_decision = true;
     return true;
+}
+
+std::uint32_t ManeuverSelectionWorker::selectedComponentMemberMask(
+    const std::size_t aircraft_index) const noexcept
+{
+    if (!m_selected_component_graph
+        || aircraft_index >= static_cast<std::size_t>(m_params.total_agent_count)
+        || m_selected_component_count == 0) {
+        return 0U;
+    }
+
+    const std::uint8_t component_id =
+        m_selected_component_ids[aircraft_index];
+    if (component_id >= m_selected_component_count) {
+        return 0U;
+    }
+
+    std::uint32_t member_mask = 0U;
+    for (int aircraft = 0; aircraft < m_params.total_agent_count; ++aircraft) {
+        const std::size_t index = static_cast<std::size_t>(aircraft);
+        if (m_selected_component_ids[index] == component_id) {
+            member_mask |= std::uint32_t{1} << index;
+        }
+    }
+    return member_mask;
+}
+
+bool ManeuverSelectionWorker::selectedComponentActivationRequested(
+    const std::uint32_t ownship_component_mask) const noexcept
+{
+    if (!m_selected_component_graph || ownship_component_mask == 0U) {
+        return false;
+    }
+
+    for (int aircraft = 0; aircraft < m_params.total_agent_count; ++aircraft) {
+        if (aircraft == m_params.vehicle_id) {
+            continue;
+        }
+        const std::size_t aircraft_index = static_cast<std::size_t>(aircraft);
+        const std::uint32_t aircraft_bit = std::uint32_t{1} << aircraft_index;
+        if ((ownship_component_mask & aircraft_bit) == 0U) {
+            continue;
+        }
+        const RemoteDecisionCache & peer =
+            m_remote_decision_caches[aircraft_index];
+        if (peer.valid && peer.decision.coordination_qualified
+            && (ownship_component_mask & aircraft_bit) != 0U
+            && peer.decision.local_selection_epoch
+                == m_latest_selection_decision.local_selection_epoch
+            && peer.decision.selected_candidate_valid_mask
+                == m_selected_candidate_valid_mask
+            && peer.decision.selected_candidate_ids
+                == m_selected_candidate_ids
+            && peer.activation_start_pending) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool ManeuverSelectionWorker::buildActivationSample(
@@ -4300,6 +4375,38 @@ void ManeuverSelectionWorker::updateActivationState(
     const bool sample_valid = buildActivationSample(now_us, sample, decision);
     sample.valid = sample_valid;
     applyFormationActivationGate(now_us, sample, decision);
+    const std::size_t activation_ownship_index = static_cast<std::size_t>(
+        m_params.vehicle_id);
+    const bool local_activation_trigger = sample.valid
+        && sample.allow_new_activation && std::isfinite(sample.minimum_ad_m)
+        && sample.minimum_ad_m < 0.0 && sample.unsafe_threat_mask != 0U;
+
+    const ManeuverActivationStatus activation_before_rollup =
+        m_activation_controller.status();
+    if (!activation_before_rollup.active && m_selected_component_graph) {
+        const std::size_t ownship_index = activation_ownship_index;
+        const std::uint32_t ownship_bit = std::uint32_t{1} << ownship_index;
+        const std::uint32_t component_mask =
+            selectedComponentMemberMask(ownship_index);
+        const bool peer_component_trigger =
+            selectedComponentActivationRequested(component_mask);
+        if (local_activation_trigger || peer_component_trigger) {
+            sample.coordinated_activation_requested = true;
+            sample.unsafe_threat_mask |= component_mask & ~ownship_bit;
+            // A legitimate trigger from another member of the committed
+            // component must not be vetoed by this node having no local unsafe
+            // pair. Formation filtering has already been applied at the source.
+            if (peer_component_trigger) {
+                sample.allow_new_activation = true;
+            }
+        }
+    }
+    // activation_just_started is an edge, not a level. Consume every received
+    // edge exactly once at the next local state update; an edge that does not
+    // match the currently committed component tuple must not be reused later.
+    for (RemoteDecisionCache & peer : m_remote_decision_caches) {
+        peer.activation_start_pending = false;
+    }
     JointCombinationEvaluation post_release_evaluation;
     if (evaluateNominalPostRelease(now_us, post_release_evaluation)) {
         m_last_post_release_evaluation = post_release_evaluation;

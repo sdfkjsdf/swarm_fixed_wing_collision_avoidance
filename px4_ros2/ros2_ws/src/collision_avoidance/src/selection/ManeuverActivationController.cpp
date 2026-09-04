@@ -41,9 +41,10 @@ ManeuverActivationStatus ManeuverActivationController::update(
     // The public alternate-termination study does not publish its post-CPA
     // re-arm state machine. Immediate eligibility here is an explicit project
     // reconstruction and is intentionally kept separate from futureCpaClear().
-    if (!sample.allow_new_activation
-        || !sample.valid || !std::isfinite(sample.minimum_ad_m)
-        || sample.minimum_ad_m >= 0.0
+    const bool local_ad_trigger = std::isfinite(sample.minimum_ad_m)
+        && sample.minimum_ad_m < 0.0 && sample.unsafe_threat_mask != 0U;
+    if (!sample.allow_new_activation || !sample.valid
+        || (!local_ad_trigger && !sample.coordinated_activation_requested)
         || sample.unsafe_threat_mask == 0U) {
         return m_status;
     }

@@ -45,6 +45,11 @@ struct ManeuverActivationSample
     // Formation discrimination may inhibit only a new activation. It never
     // terminates or resets an already active avoidance episode.
     bool allow_new_activation{true};
+    // A peer in the same committed interaction-graph component observed the
+    // AD activation boundary. This closes the contract between a jointly
+    // evaluated component tuple and its execution without changing the legacy
+    // local-AD trigger when the interaction graph is disabled.
+    bool coordinated_activation_requested{false};
     // CPA clear is necessary but not sufficient for release.  The worker
     // sets this only after the actual Formation rollout is safe.
     bool allow_deactivation{true};

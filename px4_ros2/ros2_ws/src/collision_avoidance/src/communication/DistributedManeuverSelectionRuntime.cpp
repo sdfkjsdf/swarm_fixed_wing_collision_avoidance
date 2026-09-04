@@ -177,6 +177,8 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->coordination_qualified;
                     decision.activation_requested =
                         message->activation_requested;
+                    decision.activation_just_started =
+                        message->activation_just_started;
                     decision.command_execution_requested =
                         message->command_execution_requested;
                     decision.nominal_setpoint_available =

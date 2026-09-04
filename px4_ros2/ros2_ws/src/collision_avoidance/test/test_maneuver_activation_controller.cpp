@@ -120,6 +120,20 @@ TEST(ManeuverActivationController, FormationInhibitBlocksOnlyNewActivation)
         cs::ManeuverDeactivationReason::FutureCpaClear);
 }
 
+TEST(ManeuverActivationController,
+    CoordinatedComponentTriggerActivatesWithPositiveLocalAd)
+{
+    cs::ManeuverActivationController controller;
+    auto coordinated = sample(2'400'000, 5.0, 20.0, 1.0, 6);
+    coordinated.coordinated_activation_requested = true;
+
+    const auto status = controller.update(coordinated);
+    ASSERT_TRUE(status.active);
+    EXPECT_TRUE(status.just_activated);
+    EXPECT_EQ(status.latched_candidate_id, 6U);
+    EXPECT_EQ(status.affected_threat_mask, std::uint32_t{1} << 1);
+}
+
 TEST(ManeuverActivationController, RequiresEveryAffectedPairCpaToBeClear)
 {
     cs::ManeuverActivationController controller;

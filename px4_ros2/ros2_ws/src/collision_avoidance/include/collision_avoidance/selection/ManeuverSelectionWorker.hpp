@@ -395,6 +395,7 @@ struct ManeuverSelectionPeerDecision
     bool proposal_consensus_confirmed{false};
     bool coordination_qualified{false};
     bool activation_requested{false};
+    bool activation_just_started{false};
     bool command_execution_requested{false};
     bool nominal_setpoint_available{false};
     std::uint64_t nominal_setpoint_timestamp_us{0};
@@ -604,6 +605,7 @@ private:
     struct RemoteDecisionCache
     {
         ManeuverSelectionPeerDecision decision{};
+        bool activation_start_pending{false};
         bool valid{false};
     };
 
@@ -630,6 +632,8 @@ private:
         std::uint64_t graph_hash{0};
         std::uint64_t component_hash{0};
         std::uint64_t component_solution_hash{0};
+        std::array<std::uint8_t, kMaximumSelectionAircraft> component_ids{};
+        std::uint8_t component_count{0};
         estimation::PredictInput ownship_input{};
         JointCombinationEvaluation current_evaluation{};
         JointCombinationEvaluation evaluation{};
@@ -730,6 +734,10 @@ private:
         std::uint64_t now_us,
         ManeuverActivationSample & sample,
         ManeuverSelectionDecision & decision);
+    std::uint32_t selectedComponentMemberMask(
+        std::size_t aircraft_index) const noexcept;
+    bool selectedComponentActivationRequested(
+        std::uint32_t ownship_component_mask) const noexcept;
     bool evaluateNominalPostRelease(
         std::uint64_t now_us,
         JointCombinationEvaluation & evaluation);
@@ -841,6 +849,10 @@ private:
     std::uint64_t m_v4_epoch_candidate_selection_epoch{0};
     bool m_v4_epoch_candidates_valid{false};
     bool m_selected_v4_cutover{false};
+    bool m_selected_component_graph{false};
+    std::array<std::uint8_t, kMaximumSelectionAircraft>
+        m_selected_component_ids{};
+    std::uint8_t m_selected_component_count{0};
     bool m_v4_horizon_local_gate_active{false};
     bool m_v4_horizon_gate_active{false};
     std::uint64_t m_v4_horizon_activation_timestamp_us{0};
