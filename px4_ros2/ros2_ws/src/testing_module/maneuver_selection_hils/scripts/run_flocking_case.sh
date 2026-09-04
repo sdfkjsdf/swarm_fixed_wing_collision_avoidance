@@ -5,10 +5,11 @@
 set -o pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# Keep the Formation HILS AMAC policy confined to this explicitly selected
-# case. The policy intentionally contains no geometry-specific threat
-# exemption, so line and pentagon layouts use the same AD activation rule.
-AMAC_POLICY_CONFIG=${AMAC_POLICY_CONFIG:-${SCRIPT_DIR}/../config/amac_flocking_formation.yaml}
+# Use the shared installed Formation AMAC policy. The local HILS workers and a
+# future onboard worker therefore read one configuration rather than separate
+# test and deployment copies.
+COLLISION_WS=${COLLISION_WS:-/home/hmcl/workspace/swarm-fixed-wing/ros2_ws}
+AMAC_POLICY_CONFIG=${AMAC_POLICY_CONFIG:-${COLLISION_WS}/src/collision_avoidance/config/amac_distributed_formation.yaml}
 export AMAC_POLICY_CONFIG
 # The shared point-convergence runner historically enabled the experimental
 # positive-margin filter for every shadow run through a later CLI override.

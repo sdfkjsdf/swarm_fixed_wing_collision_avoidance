@@ -43,11 +43,11 @@ as five color-matched stars in the PNG and MP4.
 The flocking case reuses `testing_module/formation_hils/config/spawn_config.yaml`,
 production `collision_avoidance/config/flocking_params.yaml`, and
 `test_guidance_mode=flocking`. It does not add a test-only flocking controller.
-The avoidance form explicitly selects the provisional
-`config/amac_flocking_formation.yaml` v2 profile. This profile is limited to
-Flocking HILS: it is not a production or flight-qualified default. A threat is
-exempted only from a new activation, and only when both the 30 m target spacing
-and its current 3-D spacing exceed that pair's hard activation criterion.
+The avoidance form uses the same installed
+`collision_avoidance/config/amac_distributed_formation.yaml` AMAC policy on
+local and onboard workers. It is still a research configuration rather than a
+flight-qualified policy, but there is no test-only copy that can drift from the
+onboard image.
 The first smoke case starts the five vehicles in a 35 m-spaced line with a
 common northbound course and checks whether the normal 30 m flocking spacing
 causes any unnecessary V4 override.
@@ -78,6 +78,33 @@ the shared-coordinate transformer, and one guidance node per aircraft. It
 records first and performs all analysis after the bag has been finalized.
 The run is rejected unless all five vehicles enter the mode lifecycle that
 executes `point_convergence` after fixed-wing transition and stabilization.
+
+## Hybrid one-Raspberry-Pi HILS
+
+The hybrid runner keeps Gazebo, five PX4 SITL instances, five MicroXRCEAgents,
+the common-coordinate transformer, rosbag, and guidance workers 1..4 on the
+local PC. Guidance worker 0 runs in the same built image on one Raspberry Pi.
+Both locations invoke the installed `run_guidance_vehicle.sh`; only the vehicle
+ID and execution host differ.
+
+Build `collision-avoidance:distributed` from the same Git commit on the
+Raspberry Pi, ensure passwordless SSH and Docker access work, then run locally:
+
+```bash
+REMOTE_SSH_TARGET=ubuntu@192.168.1.50 \
+REMOTE_DOCKER_IMAGE=collision-avoidance:distributed \
+FLOCKING_LAYOUT=pentagon \
+RUN_ID=hybrid_1rpi_4local_formation_200s \
+RUN_DURATION_SECONDS=200 \
+scripts/run_hybrid_1rpi_4local_case.sh avoidance
+```
+
+The runner rejects duplicate or missing assignments: vehicle 0 is remote and
+vehicles 1..4 are local exactly once. Remote stdout is retained as the local
+`guidance_0.log`, so the existing activation-time checks and offline analyzer
+are reused without a hybrid-only analysis path. Both hosts must use the same
+`ROS_DOMAIN_ID`, `ROS_LOCALHOST_ONLY=0`, compatible RMW implementations, and a
+network that carries the required DDS discovery and data traffic.
 
 The evaluation epoch is the latest of those five activation timestamps. All
 odometry, decisions, plots, metrics, and video before that common

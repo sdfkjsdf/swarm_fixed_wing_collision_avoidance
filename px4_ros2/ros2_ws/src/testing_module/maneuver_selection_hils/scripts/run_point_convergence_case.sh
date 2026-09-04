@@ -15,6 +15,9 @@ FORMATION_HILS=${FORMATION_HILS:-${ROS2_WS}/src/testing_module/formation_hils}
 RESULT_ROOT=${RESULT_ROOT:-${HILS_ROOT}/result}
 RUN_DURATION_SECONDS=${RUN_DURATION_SECONDS:-55}
 MODE=${1:-avoidance}
+LOCAL_GUIDANCE_IDS_CSV=${LOCAL_GUIDANCE_IDS_CSV:-0,1,2,3,4}
+REMOTE_GUIDANCE_ID=${REMOTE_GUIDANCE_ID:-}
+REMOTE_GUIDANCE_LAUNCHER=${REMOTE_GUIDANCE_LAUNCHER:-}
 # HILS validation evaluates every configured roll candidate.  The heuristic
 # three-candidate reduction remains available only as an explicit comparison.
 SEARCH_MODE=${MANEUVER_SEARCH_MODE:-exhaustive}
@@ -88,6 +91,35 @@ if [[ "${TRAFFIC_PATTERN}" != "point_convergence" \
     echo "TRAFFIC_PATTERN must be point_convergence, opposite_edge_crossing, formation, or formation_pentagon"
     exit 2
 fi
+
+IFS=',' read -r -a LOCAL_GUIDANCE_IDS <<< "${LOCAL_GUIDANCE_IDS_CSV}"
+declare -a GUIDANCE_ID_ASSIGNMENT=(0 0 0 0 0)
+for vehicle in "${LOCAL_GUIDANCE_IDS[@]}"; do
+    if [[ ! "${vehicle}" =~ ^[0-4]$ ]]; then
+        echo "LOCAL_GUIDANCE_IDS_CSV must contain unique IDs from 0 to 4"
+        exit 2
+    fi
+    GUIDANCE_ID_ASSIGNMENT[vehicle]=$((GUIDANCE_ID_ASSIGNMENT[vehicle] + 1))
+done
+if [[ -n "${REMOTE_GUIDANCE_ID}" ]]; then
+    if [[ ! "${REMOTE_GUIDANCE_ID}" =~ ^[0-4]$ ]]; then
+        echo "REMOTE_GUIDANCE_ID must be empty or an ID from 0 to 4"
+        exit 2
+    fi
+    if [[ -z "${REMOTE_GUIDANCE_LAUNCHER}" \
+            || ! -x "${REMOTE_GUIDANCE_LAUNCHER}" ]]; then
+        echo "REMOTE_GUIDANCE_LAUNCHER must be executable when REMOTE_GUIDANCE_ID is set"
+        exit 2
+    fi
+    GUIDANCE_ID_ASSIGNMENT[REMOTE_GUIDANCE_ID]=$((
+        GUIDANCE_ID_ASSIGNMENT[REMOTE_GUIDANCE_ID] + 1))
+fi
+for vehicle in 0 1 2 3 4; do
+    if (( GUIDANCE_ID_ASSIGNMENT[vehicle] != 1 )); then
+        echo "vehicle ${vehicle} must be assigned exactly once across local and remote guidance"
+        exit 2
+    fi
+done
 
 SHADOW_ONLY=true
 if [[ "${MODE}" == "avoidance" ]]; then
@@ -165,7 +197,7 @@ source "${COLLISION_WS}/install/setup.bash"
 
 AGENT_BIN=${MICRO_XRCE_AGENT_BIN:-/home/hmcl/workspace/swarm-fixed-wing/tools/micro-xrce-dds-agent/bin/MicroXRCEAgent}
 AGENT_LIB_DIR=${MICRO_XRCE_AGENT_LIB_DIR:-$(dirname "${AGENT_BIN}")/../lib}
-GUIDANCE_BIN=$(ros2 pkg prefix collision_avoidance)/lib/collision_avoidance/vtol_guidance_node
+GUIDANCE_RUNNER=$(ros2 pkg prefix collision_avoidance)/lib/collision_avoidance/run_guidance_vehicle.sh
 AGENT_PIDS=()
 GUIDANCE_PIDS=()
 SIM_PID=""
@@ -207,6 +239,10 @@ if [[ ! -x "${AGENT_BIN}" ]]; then
     echo "[run] ERROR: MicroXRCEAgent not executable: ${AGENT_BIN}"
     exit 1
 fi
+if [[ ! -x "${GUIDANCE_RUNNER}" ]]; then
+    echo "[run] ERROR: shared guidance runner not executable: ${GUIDANCE_RUNNER}"
+    exit 1
+fi
 if [[ ! -f "${AMAC_POLICY_CONFIG}" ]]; then
     echo "[run] ERROR: AMAC policy config not found: ${AMAC_POLICY_CONFIG}"
     exit 2
@@ -222,7 +258,7 @@ if [[ -e "${BAG_DIR}" ]]; then
     exit 2
 fi
 
-echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4_enabled=${V4_SAFE_CONTROL_ENABLED} v4=${V4_MODE} v4_architecture=${V4_CONTROL_ARCHITECTURE} policy=${EXECUTION_POLICY} ad_threshold=0m communication_delay_margin=${AMAC_COMMUNICATION_DELAY_MARGIN_M}m interaction_graph=${AMAC_INTERACTION_GRAPH_ENABLED} AD_screen=${AMAC_INTERACTION_GRAPH_AD_SCREEN_M}m active_switch_config=${AMAC_POLICY_CONFIG} run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
+echo "[run] pattern=${TRAFFIC_PATTERN} mode=${MODE} search=${SEARCH_MODE} v4_enabled=${V4_SAFE_CONTROL_ENABLED} v4=${V4_MODE} v4_architecture=${V4_CONTROL_ARCHITECTURE} policy=${EXECUTION_POLICY} ad_threshold=0m communication_delay_margin=${AMAC_COMMUNICATION_DELAY_MARGIN_M}m interaction_graph=${AMAC_INTERACTION_GRAPH_ENABLED} AD_screen=${AMAC_INTERACTION_GRAPH_AD_SCREEN_M}m active_switch_config=${AMAC_POLICY_CONFIG} local_guidance=${LOCAL_GUIDANCE_IDS_CSV} remote_guidance=${REMOTE_GUIDANCE_ID:-none} run_id=${RUN_ID} duration=${RUN_DURATION_SECONDS}s"
 for vehicle in 0 1 2 3 4; do
     port=$((8888 + vehicle))
     pkill -KILL -f "MicroXRCEAgent udp4 -p ${port}" 2>/dev/null || true
@@ -272,34 +308,43 @@ bash "${SCRIPT_DIR}/record_point_convergence_bag.sh" "${BAG_DIR}" \
 BAG_PID=$!
 sleep 2
 
-for vehicle in 0 1 2 3 4; do
-    "${GUIDANCE_BIN}" \
-        --ros-args \
-        --params-file "${GUIDANCE_CONFIG}" \
-        --params-file "${AMAC_POLICY_CONFIG}" \
-        -r "__node:=vtol_guidance_${vehicle}" \
-        -p "vehicle_ID:=${vehicle}" \
-        -p total_agent_num:=5 \
-        -p "test_guidance_mode:=${GUIDANCE_MODE}" \
-        -p "point_target_north_m:=${TARGET_NORTHS[$vehicle]}" \
-        -p "point_target_east_m:=${TARGET_EASTS[$vehicle]}" \
-        -p "preflight_desired_course_rad:=${COURSES[$vehicle]}" \
-        -p preflight_desired_ground_speed_mps:=20.0 \
-        -p "collision_avoidance_shadow_only:=${SHADOW_ONLY}" \
-        -p "avoidance_execution_policy:=${EXECUTION_POLICY}" \
-        -p "amac_communication_delay_margin_m:=${AMAC_COMMUNICATION_DELAY_MARGIN_M}" \
-        -p "amac_interaction_graph_enabled:=${AMAC_INTERACTION_GRAPH_ENABLED}" \
-        -p "amac_interaction_graph_ad_screen_m:=${AMAC_INTERACTION_GRAPH_AD_SCREEN_M}" \
-        -p "amac_trajectory_library_version:=${AMAC_TRAJECTORY_LIBRARY_VERSION}" \
-        -p "amac_ad_masd_config_version:=${AMAC_AD_MASD_CONFIG_VERSION}" \
-        -p "maneuver_selection_exhaustive_test_mode:=${EXHAUSTIVE_TEST_MODE}" \
-        -p "v4_safe_control_enabled:=${V4_SAFE_CONTROL_ENABLED}" \
-        -p "v4_shadow_only:=${V4_SHADOW_ONLY}" \
-        -p "v4_control_architecture:=${V4_CONTROL_ARCHITECTURE}" \
-        -p "positive_margin_filter_enabled:=${POSITIVE_MARGIN_FILTER_ENABLED}" \
+launch_guidance() {
+    local vehicle=$1
+    local launcher=$2
+    shift 2
+    env \
+        GUIDANCE_MODE="${GUIDANCE_MODE}" \
+        POINT_TARGET_NORTH_M="${TARGET_NORTHS[$vehicle]}" \
+        POINT_TARGET_EAST_M="${TARGET_EASTS[$vehicle]}" \
+        PREFLIGHT_DESIRED_COURSE_RAD="${COURSES[$vehicle]}" \
+        PREFLIGHT_DESIRED_GROUND_SPEED_MPS=20.0 \
+        COLLISION_AVOIDANCE_SHADOW_ONLY="${SHADOW_ONLY}" \
+        AVOIDANCE_EXECUTION_POLICY="${EXECUTION_POLICY}" \
+        AMAC_COMMUNICATION_DELAY_MARGIN_M="${AMAC_COMMUNICATION_DELAY_MARGIN_M}" \
+        AMAC_INTERACTION_GRAPH_ENABLED="${AMAC_INTERACTION_GRAPH_ENABLED}" \
+        AMAC_INTERACTION_GRAPH_AD_SCREEN_M="${AMAC_INTERACTION_GRAPH_AD_SCREEN_M}" \
+        AMAC_TRAJECTORY_LIBRARY_VERSION="${AMAC_TRAJECTORY_LIBRARY_VERSION}" \
+        AMAC_AD_MASD_CONFIG_VERSION="${AMAC_AD_MASD_CONFIG_VERSION}" \
+        MANEUVER_SELECTION_EXHAUSTIVE_TEST_MODE="${EXHAUSTIVE_TEST_MODE}" \
+        V4_SAFE_CONTROL_ENABLED="${V4_SAFE_CONTROL_ENABLED}" \
+        V4_SHADOW_ONLY="${V4_SHADOW_ONLY}" \
+        V4_CONTROL_ARCHITECTURE="${V4_CONTROL_ARCHITECTURE}" \
+        POSITIVE_MARGIN_FILTER_ENABLED="${POSITIVE_MARGIN_FILTER_ENABLED}" \
+        "$@" "${launcher}" "${vehicle}" 5 \
         > "${LOG_DIR}/guidance_${vehicle}.log" 2>&1 &
     GUIDANCE_PIDS+=($!)
+}
+
+for vehicle in "${LOCAL_GUIDANCE_IDS[@]}"; do
+    launch_guidance "${vehicle}" "${GUIDANCE_RUNNER}" \
+        GUIDANCE_CONFIG="${GUIDANCE_CONFIG}" \
+        AMAC_POLICY_CONFIG="${AMAC_POLICY_CONFIG}"
 done
+if [[ -n "${REMOTE_GUIDANCE_ID}" ]]; then
+    launch_guidance "${REMOTE_GUIDANCE_ID}" "${REMOTE_GUIDANCE_LAUNCHER}" \
+        GUIDANCE_CONFIG_NAME="$(basename "${GUIDANCE_CONFIG}")" \
+        AMAC_POLICY_CONFIG_NAME="$(basename "${AMAC_POLICY_CONFIG}")"
+fi
 
 echo "[run] waiting for all five guidance nodes to register"
 REGISTERED=0

@@ -400,6 +400,7 @@ install(DIRECTORY config/
 )
 install(PROGRAMS
     tools/plot_formation_range_closure.py
+    tools/run_guidance_vehicle.sh
     DESTINATION lib/${PROJECT_NAME}
 )
 
