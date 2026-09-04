@@ -260,6 +260,11 @@ add_library(maneuver_selection_worker STATIC
     src/selection/ManeuverActivationController.cpp
     src/selection/HeuristicCandidateSelector.cpp
     src/selection/ManeuverSelectionWorker.cpp
+    src/selection/ManeuverSelectionWorkerActivation.cpp
+    src/selection/ManeuverSelectionWorkerCoordination.cpp
+    src/selection/ManeuverSelectionWorkerInteractionGraph.cpp
+    src/selection/ManeuverSelectionWorkerTrajectory.cpp
+    src/selection/ManeuverSelectionWorkerV4.cpp
 )
 add_library(collision_avoidance::maneuver_selection_worker ALIAS
     maneuver_selection_worker

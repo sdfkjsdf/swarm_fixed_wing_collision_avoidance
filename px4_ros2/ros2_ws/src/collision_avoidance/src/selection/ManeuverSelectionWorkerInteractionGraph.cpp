@@ -1,0 +1,295 @@
+#include "ManeuverSelectionWorkerInternal.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <limits>
+
+namespace collision_avoidance::selection
+{
+using namespace worker_detail;
+
+void ManeuverSelectionWorker::evaluateInteractionGraph(
+    std::uint64_t now_us)
+{
+    if (!m_params.interaction_graph_params.enabled) {
+        return;
+    }
+
+    using Clock = std::chrono::steady_clock;
+    const auto total_start = Clock::now();
+    InteractionGraphDiagnostics diagnostics;
+    diagnostics.vehicle_id = m_params.vehicle_id;
+    diagnostics.enabled = true;
+    const std::size_t aircraft_count = static_cast<std::size_t>(
+        m_params.total_agent_count);
+    std::fill_n(
+        diagnostics.assembled_candidate_ids.begin(),
+        aircraft_count,
+        kRollZeroId);
+    diagnostics.assembled_candidate_valid_mask =
+        candidateMaskForAircraftCount(aircraft_count);
+    const bool frozen_library_complete =
+        m_epoch_certification_candidate_sets != nullptr
+        && std::all_of(
+            m_epoch_certification_candidate_ready.begin(),
+            m_epoch_certification_candidate_ready.begin()
+                + static_cast<std::ptrdiff_t>(aircraft_count),
+            [](bool ready) { return ready; })
+        && std::all_of(
+            m_epoch_certification_candidate_counts.begin(),
+            m_epoch_certification_candidate_counts.begin()
+                + static_cast<std::ptrdiff_t>(aircraft_count),
+            [](std::size_t count) {
+                return count == kExhaustiveCandidatesPerAircraft;
+            });
+    if (!frozen_library_complete) {
+        diagnostics.graph.status =
+            InteractionGraphStatus::InvalidCertification;
+        diagnostics.graph.evaluation_timestamp_us = now_us;
+        diagnostics.graph.selection_epoch = m_selection_epoch;
+        diagnostics.graph.aircraft_count = aircraft_count;
+        diagnostics.status =
+            InteractionGraphEvaluationStatus::CandidateSetsIncomplete;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - total_start).count());
+        m_pending_interaction_graph_diagnostics =
+            std::make_shared<InteractionGraphDiagnostics>(diagnostics);
+        return;
+    }
+    const auto & certified_candidate_sets =
+        *m_epoch_certification_candidate_sets;
+
+    auto certifications = std::make_unique<PairwiseAdCertificationSet>();
+    if (!m_pairwise_ad_certifier.evaluate(
+            now_us,
+            m_selection_epoch,
+            m_params.interaction_graph_params.trajectory_library_version,
+            m_params.interaction_graph_params.ad_masd_config_version,
+            certified_candidate_sets,
+            aircraft_count,
+            *certifications)) {
+        m_epoch_pairwise_ad_certifications.reset();
+        diagnostics.graph.status =
+            InteractionGraphStatus::InvalidCertification;
+        diagnostics.graph.evaluation_timestamp_us = now_us;
+        diagnostics.graph.selection_epoch = m_selection_epoch;
+        diagnostics.graph.aircraft_count = aircraft_count;
+        diagnostics.status =
+            InteractionGraphEvaluationStatus::GraphInvalid;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - total_start).count());
+        m_pending_interaction_graph_diagnostics =
+            std::make_shared<InteractionGraphDiagnostics>(diagnostics);
+        return;
+    }
+    m_epoch_pairwise_ad_certifications = std::move(certifications);
+    const PairwiseAdCertificationSet & certified_pairs =
+        *m_epoch_pairwise_ad_certifications;
+
+    // Rejoin is a fleet/component objective, so its activation and values
+    // must come from the same frozen distributed library as the graph. Using
+    // this worker's local activation latch here would let identical graphs
+    // produce different component solutions on different aircraft.
+    ManeuverRejoinObjective common_rejoin_objective;
+    bool safe_rejoin_requested = false;
+    bool common_rejoin_objective_valid = true;
+    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
+        const auto & intent = certified_candidate_sets[aircraft][0];
+        safe_rejoin_requested = safe_rejoin_requested
+            || intent.safe_rejoin_requested;
+        common_rejoin_objective
+            .nominal_lateral_acceleration_mps2[aircraft] =
+            intent.nominal_lateral_acceleration_mps2;
+        common_rejoin_objective_valid = common_rejoin_objective_valid
+            && std::isfinite(intent.nominal_lateral_acceleration_mps2);
+    }
+    if (safe_rejoin_requested && !common_rejoin_objective_valid) {
+        diagnostics.graph.status =
+            InteractionGraphStatus::InvalidCertification;
+        diagnostics.graph.evaluation_timestamp_us = now_us;
+        diagnostics.graph.selection_epoch = m_selection_epoch;
+        diagnostics.graph.aircraft_count = aircraft_count;
+        diagnostics.status =
+            InteractionGraphEvaluationStatus::ComponentEvaluationFailed;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - total_start).count());
+        m_pending_interaction_graph_diagnostics =
+            std::make_shared<InteractionGraphDiagnostics>(diagnostics);
+        return;
+    }
+    common_rejoin_objective.enabled = safe_rejoin_requested;
+    const ManeuverRejoinObjective * rejoin_objective =
+        safe_rejoin_requested ? &common_rejoin_objective : nullptr;
+
+    diagnostics.graph = m_interaction_graph_builder.build(certified_pairs);
+    if (!diagnostics.graph.valid()) {
+        diagnostics.status = InteractionGraphEvaluationStatus::GraphInvalid;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - total_start).count());
+        m_pending_interaction_graph_diagnostics =
+            std::make_shared<InteractionGraphDiagnostics>(diagnostics);
+        return;
+    }
+
+    const auto search_start = Clock::now();
+    bool component_search_valid = true;
+    std::uint32_t actual_evaluation_count = 0;
+    for (std::size_t component = 0;
+        component < diagnostics.graph.component_count; ++component) {
+        std::array<std::size_t, kMaximumSelectionAircraft> members{};
+        std::size_t member_count = 0;
+        for (std::size_t aircraft = 0; aircraft < aircraft_count;
+             ++aircraft) {
+            if (diagnostics.graph.component_ids[aircraft] == component) {
+                members[member_count++] = aircraft;
+            }
+        }
+        if (member_count == 1) {
+            // An isolated aircraft adds no search dimension. Select its
+            // deterministic nominal/rejoin candidate from the same frozen
+            // library used by every worker; without a rejoin request the
+            // neutral RollZero candidate remains the bootstrap value.
+            if (rejoin_objective != nullptr) {
+                const std::size_t aircraft = members[0];
+                const double nominal = rejoin_objective
+                    ->nominal_lateral_acceleration_mps2[aircraft];
+                double best_error = std::numeric_limits<double>::infinity();
+                std::uint8_t best_id = kRollZeroId;
+                for (const auto & intent : certified_candidate_sets[aircraft]) {
+                    const double error = std::abs(
+                        intent.candidate_input.a_lat_cmd - nominal);
+                    if (error < best_error) {
+                        best_error = error;
+                        best_id = intent.candidate_id;
+                    }
+                }
+                diagnostics.assembled_candidate_ids[aircraft] = best_id;
+            }
+            continue;
+        }
+        CertifiedComponentEvaluation component_evaluation;
+        if (!m_certified_component_evaluator.evaluate(
+                certified_pairs,
+                certified_candidate_sets,
+                members,
+                member_count,
+                component_evaluation,
+                rejoin_objective)
+            || !component_evaluation.has_best) {
+            component_search_valid = false;
+            break;
+        }
+        actual_evaluation_count += static_cast<std::uint32_t>(
+            component_evaluation.combination_count);
+        diagnostics.component_valid_evaluation_count +=
+            component_evaluation.valid_combination_count;
+        diagnostics.component_safe_evaluation_count +=
+            component_evaluation.safe_combination_count;
+        for (std::size_t member = 0; member < member_count; ++member) {
+            const std::size_t aircraft = members[member];
+            const std::uint8_t candidate_slot =
+                component_evaluation.best_combination.candidate_slots[member];
+            diagnostics.assembled_candidate_ids[aircraft] =
+                certified_candidate_sets[aircraft][candidate_slot]
+                    .candidate_id;
+        }
+    }
+    diagnostics.component_search_time_ns = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            Clock::now() - search_start).count());
+    if (!component_search_valid
+        || actual_evaluation_count
+            != diagnostics.graph.component_evaluation_count) {
+        diagnostics.status =
+            InteractionGraphEvaluationStatus::ComponentEvaluationFailed;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - total_start).count());
+        m_pending_interaction_graph_diagnostics =
+            std::make_shared<InteractionGraphDiagnostics>(diagnostics);
+        return;
+    }
+    diagnostics.component_search_evaluated = true;
+    diagnostics.assembled_candidate_hash = assembledCandidateHash(
+        diagnostics.graph.graph_hash,
+        diagnostics.assembled_candidate_ids,
+        diagnostics.assembled_candidate_valid_mask,
+        aircraft_count);
+    diagnostics.component_solution_hash = assembledCandidateHash(
+        diagnostics.graph.component_hash,
+        diagnostics.assembled_candidate_ids,
+        diagnostics.assembled_candidate_valid_mask,
+        aircraft_count);
+
+    const auto crosscheck_start = Clock::now();
+    JointCombinationEvaluation crosscheck;
+    diagnostics.global_crosscheck_evaluated =
+        m_certified_component_evaluator.evaluateTuple(
+            certified_pairs,
+            certified_candidate_sets,
+            diagnostics.assembled_candidate_ids,
+            crosscheck,
+            rejoin_objective);
+    diagnostics.global_crosscheck_time_ns = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            Clock::now() - crosscheck_start).count());
+    if (diagnostics.global_crosscheck_evaluated) {
+        bool cross_component_pairs_safe = true;
+        for (std::size_t first = 0; first < aircraft_count; ++first) {
+            for (std::size_t second = first + 1;
+                 second < aircraft_count; ++second) {
+                if (diagnostics.graph.component_ids[first]
+                    == diagnostics.graph.component_ids[second]) {
+                    continue;
+                }
+                const auto * pair = certified_pairs.findPair(first, second);
+                const auto * evaluation = pair == nullptr ? nullptr
+                    : pair->find(
+                        crosscheck.candidate_slots[first],
+                        crosscheck.candidate_slots[second]);
+                if (evaluation == nullptr
+                    || evaluation->validity != CombinationValidity::Valid
+                    || !evaluation->feasible) {
+                    cross_component_pairs_safe = false;
+                    break;
+                }
+            }
+            if (!cross_component_pairs_safe) {
+                break;
+            }
+        }
+        diagnostics.global_crosscheck_minimum_ad_m = crosscheck.minimum_ad_m;
+        diagnostics.global_crosscheck_pass =
+            crosscheck.valid && cross_component_pairs_safe;
+        diagnostics.global_crosscheck_evaluation = crosscheck;
+    }
+    diagnostics.status = diagnostics.global_crosscheck_pass
+        ? InteractionGraphEvaluationStatus::Evaluated
+        : InteractionGraphEvaluationStatus::GlobalCrosscheckFailed;
+    diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            Clock::now() - total_start).count());
+    m_pending_interaction_graph_diagnostics =
+        std::make_shared<InteractionGraphDiagnostics>(diagnostics);
+}
+
+void ManeuverSelectionWorker::publishPendingInteractionGraphDiagnostics()
+    noexcept
+{
+    if (!m_pending_interaction_graph_diagnostics) {
+        return;
+    }
+    const std::shared_ptr<const InteractionGraphDiagnostics> diagnostics =
+        m_pending_interaction_graph_diagnostics;
+    m_interaction_graph_diagnostics_queue.try_push(diagnostics);
+    m_pending_interaction_graph_diagnostics.reset();
+}
+
+
+}  // namespace collision_avoidance::selection
+

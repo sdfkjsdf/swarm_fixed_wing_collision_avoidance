@@ -651,6 +651,7 @@ private:
         bool resolved{false};
     };
 
+    // Core event loop and input-cache ownership.
     void workerLoop();
     bool processPending();
     bool acceptOwnshipBelief(const ManeuverSelectionBeliefSnapshot & snapshot);
@@ -664,6 +665,8 @@ private:
     bool acceptRemoteDecision(
         int remote_vehicle_id,
         const ManeuverSelectionPeerDecision & decision);
+
+    // Legacy trajectory candidate generation and evaluation.
     void initializeCandidateSet(std::uint64_t now_us);
     void refreshCandidateSet(std::uint64_t now_us);
     void chooseAlternates(std::uint64_t now_us);
@@ -672,6 +675,8 @@ private:
     bool buildCurrentIntentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
+
+    // V4 candidate generation, evaluation and horizon gating.
     bool buildV4IntentSet(
         std::uint64_t now_us,
         const SafeControlCandidateAdapterResult & candidates,
@@ -679,11 +684,17 @@ private:
     void evaluateV4(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
+
+    // Current legacy candidate-set evaluation.
     void evaluateCurrentSet(
         std::uint64_t now_us,
         ManeuverSelectionWorkerOutput & output);
+
+    // Interaction-graph component search and diagnostics.
     void evaluateInteractionGraph(std::uint64_t now_us);
     void publishPendingInteractionGraphDiagnostics() noexcept;
+
+    // V4 horizon supervision.
     bool evaluateV4HorizonGate(
         std::uint64_t now_us,
         const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
@@ -696,6 +707,8 @@ private:
         MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
         const std::array<std::size_t, kMaximumSelectionAircraft>
             & candidate_counts) const;
+
+    // Distributed proposal comparison and commit.
     bool evaluateSelectedTuple(
         std::uint64_t evaluation_timestamp_us,
         const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
@@ -713,11 +726,6 @@ private:
         const std::array<std::uint8_t, kMaximumSelectionAircraft>
             & candidate_ids,
         JointCombinationEvaluation & evaluation) const;
-    bool buildNominalIntentSet(
-        std::uint64_t now_us,
-        MultiAircraftCandidateIntentSets & candidate_sets,
-        std::array<std::size_t, kMaximumSelectionAircraft>
-            & candidate_counts);
     bool proposalChangesActiveCommand(
         const std::array<std::uint8_t, kMaximumSelectionAircraft>
             & candidate_ids,
@@ -730,6 +738,13 @@ private:
     bool allRevisionSensitiveParticipantsReady() const noexcept;
     bool finalizePendingCoordination(
         ManeuverSelectionWorkerOutput & output);
+
+    // Activation, CPA termination, formation gate and post-release checks.
+    bool buildNominalIntentSet(
+        std::uint64_t now_us,
+        MultiAircraftCandidateIntentSets & candidate_sets,
+        std::array<std::size_t, kMaximumSelectionAircraft>
+            & candidate_counts);
     bool buildActivationSample(
         std::uint64_t now_us,
         ManeuverActivationSample & sample,
@@ -754,12 +769,15 @@ private:
         std::uint64_t now_us,
         bool force_decision_output,
         ManeuverSelectionWorkerOutput & output);
+
+    // Small core queries and output transport.
     std::size_t activeCandidateCount() const noexcept;
     bool v4CutoverMode() const noexcept;
     bool allV4CutoverParticipantsReady(
         const ManeuverSelectionDecision & local_decision) const noexcept;
     bool publishOutput(const ManeuverSelectionWorkerOutput & output) noexcept;
 
+    // Algorithm configuration and stateless evaluators.
     ManeuverSelectionWorkerParams m_params;
     estimation::TrajectoryPredict m_predictor;
     estimation::ManeuverCandidateTable m_candidate_table;
@@ -782,6 +800,7 @@ private:
     std::optional<formation::FormationDiscriminator>
         m_formation_discriminator;
 
+    // Worker-thread transport and lifecycle.
     common::SpscQueue<WorkerInput, kSelectionWorkerInputCapacity> m_input_queue{};
     common::SpscQueue<
         ManeuverSelectionWorkerOutput, kSelectionWorkerOutputCapacity> m_output_queue{};
@@ -796,6 +815,7 @@ private:
     std::atomic<std::uint64_t> m_dropped_inputs{0};
     std::atomic<std::uint64_t> m_dropped_outputs{0};
 
+    // Latest accepted ownship inputs.
     estimation::PredictState m_latest_state{};
     estimation::PredictStateCovariance m_latest_covariance{};
     std::uint64_t m_latest_state_timestamp_us{0};
@@ -806,6 +826,7 @@ private:
     ManeuverSelectionNominalSetpointSnapshot m_latest_nominal{};
     bool m_has_latest_nominal{false};
 
+    // Selected command, activation and epoch state.
     std::array<std::uint8_t, kExhaustiveCandidatesPerAircraft>
         m_held_candidate_ids{};
     std::uint8_t m_current_best_id{
@@ -839,6 +860,7 @@ private:
     std::array<bool, kMaximumSelectionAircraft>
         m_epoch_certification_candidate_ready{};
 
+    // Current candidate sets and V4 supervision state.
     ExhaustiveCandidateIntentSet m_ownship_candidates{};
     bool m_ownship_candidates_complete{false};
     std::size_t m_ownship_candidate_count{0};
@@ -860,6 +882,7 @@ private:
     std::uint64_t m_v4_horizon_latched_input_revision{0};
     estimation::PredictInput m_v4_horizon_latched_input{};
     bool m_v4_horizon_latch_valid{false};
+    // Remote intent/decision caches and pending distributed proposal.
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
         m_remote_caches{};
     std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
