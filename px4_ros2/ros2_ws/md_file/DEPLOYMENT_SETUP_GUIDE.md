@@ -48,7 +48,11 @@ PX4 SITL을 사용할 경우에는 별도로 다음이 필요하다.
 - `MicroXRCEAgent` 실행 파일.
 - GUI를 쓸 경우 X11 표시 권한.
 
-PX4, `px4_msgs`, `px4-ros2-interface-lib`는 같은 release 계열을 써야 한다. 메시지 불일치가 있으면 외부 모드 등록 시 실패할 수 있다. 배포 전 아래 검사를 권장한다.
+PX4, `px4_msgs`, `px4-ros2-interface-lib`는 같은 release 계열을 써야 한다. 이
+프로젝트의 `px4_dependencies.repos`는 `EstimatorTrajectoryBelief`가 추가된
+프로젝트 `px4_msgs` fork를 고정한다. 공식 upstream 버전으로 대체하면
+`collision_avoidance`가 빌드되지 않는다. 메시지 불일치가 있으면 외부 모드
+등록 시 실패할 수 있다. 배포 전 아래 검사를 권장한다.
 
 ```bash
 cd <WS>/src/px4-ros2-interface-lib

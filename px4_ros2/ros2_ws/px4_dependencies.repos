@@ -1,8 +1,8 @@
 repositories:
   src/px4_msgs:
     type: git
-    url: https://github.com/PX4/px4_msgs.git
-    version: 3a7c790eaee5284f4e48091dd77f697e4fd828d3
+    url: https://github.com/sdfkjsdf/px4_msgs.git
+    version: f7741616e14c8330b54acdaf8daf382750896081
   src/px4_ros_com:
     type: git
     url: https://github.com/PX4/px4_ros_com.git

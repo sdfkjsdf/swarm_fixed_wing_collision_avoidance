@@ -39,12 +39,13 @@ ROS 2 워크스페이스의 자세한 설명은
 | Simulator | Gazebo Classic 11.10 |
 | PX4-Autopilot | `ffd670b54cf33fe2eb3ed3f97adc40790ea05235` |
 | Micro XRCE-DDS Agent | `v2.4.2` |
-| `px4_msgs` | `3a7c790eaee5284f4e48091dd77f697e4fd828d3` |
+| `px4_msgs` | `f7741616e14c8330b54acdaf8daf382750896081` |
 | `px4_ros_com` | `86e9aeb20e55a4673fa8a9f1c29ea06a6c5ad1af` |
 | `px4-ros2-interface-lib` | `365dd8807869fd81813de0415ec99e85ea021d59` |
 
-PX4와 `px4_msgs`는 메시지 정의가 일치해야 한다. 임의로 한쪽 저장소만
-업데이트하지 않는다.
+PX4와 `px4_msgs`는 메시지 정의가 일치해야 한다. 위 `px4_msgs` 커밋은
+trajectory-cone 입력에 필요한 `EstimatorTrajectoryBelief` 메시지를 포함한
+프로젝트 fork이므로 공식 upstream 커밋으로 임의 교체하지 않는다.
 
 ## 권장 로컬 구조
 
