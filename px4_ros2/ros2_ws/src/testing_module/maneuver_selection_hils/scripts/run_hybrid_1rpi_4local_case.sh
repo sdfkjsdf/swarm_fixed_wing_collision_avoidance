@@ -9,13 +9,13 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 : "${REMOTE_SSH_TARGET:?Set REMOTE_SSH_TARGET, for example ubuntu@192.168.1.50}"
 
-# Keep the base ROS/PX4 workspace as the dependency underlay, but force the
-# guidance binary, configuration, and test scripts to come from this worktree.
-# This prevents a hybrid run from silently picking up the main checkout's
-# collision_avoidance install when the wrapper is launched from a worktree.
-DISTRIBUTED_ROS2_WS=$(cd "${SCRIPT_DIR}/../../../.." && pwd)
-export COLLISION_WS=${COLLISION_WS:-${DISTRIBUTED_ROS2_WS}}
-export FORMATION_HILS=${FORMATION_HILS:-${DISTRIBUTED_ROS2_WS}/src/testing_module/formation_hils}
+# Test scripts come from this source checkout, while ROS interfaces and the
+# production node come from the canonical built workspace. A worktree test can
+# still select its own overlay by setting ROS2_WS/COLLISION_WS explicitly.
+SOURCE_ROS2_WS=$(cd "${SCRIPT_DIR}/../../../.." && pwd)
+export ROS2_WS=${ROS2_WS:-/home/hmcl/workspace/swarm-fixed-wing/ros2_ws}
+export COLLISION_WS=${COLLISION_WS:-${ROS2_WS}}
+export FORMATION_HILS=${FORMATION_HILS:-${SOURCE_ROS2_WS}/src/testing_module/formation_hils}
 export ROS_LOCALHOST_ONLY=0
 
 export LOCAL_GUIDANCE_IDS_CSV=1,2,3,4
