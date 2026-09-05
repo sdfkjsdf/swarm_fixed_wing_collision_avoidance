@@ -95,16 +95,14 @@ public:
         const std::array<std::size_t, kMaximumSelectionAircraft>
             & member_aircraft,
         std::size_t member_count,
-        CertifiedComponentEvaluation & result,
-        const ManeuverRejoinObjective * rejoin_objective = nullptr) const;
+        CertifiedComponentEvaluation & result) const;
 
     bool evaluateTuple(
         const PairwiseAdCertificationSet & certifications,
         const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
         const std::array<std::uint8_t, kMaximumSelectionAircraft>
             & candidate_ids,
-        JointCombinationEvaluation & result,
-        const ManeuverRejoinObjective * rejoin_objective = nullptr) const;
+        JointCombinationEvaluation & result) const;
 };
 
 std::uint64_t trajectoryCandidateLibraryHash(

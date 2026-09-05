@@ -269,8 +269,7 @@ bool CertifiedComponentManeuverEvaluator::evaluate(
     const std::array<std::size_t, kMaximumSelectionAircraft>
         & member_aircraft,
     std::size_t member_count,
-    CertifiedComponentEvaluation & result,
-    const ManeuverRejoinObjective * rejoin_objective) const
+    CertifiedComponentEvaluation & result) const
 {
     CertifiedComponentEvaluation candidate;
     candidate.member_aircraft = member_aircraft;
@@ -294,7 +293,6 @@ bool CertifiedComponentManeuverEvaluator::evaluate(
 
     bool has_safe = false;
     double best_safe_cost = std::numeric_limits<double>::infinity();
-    double best_safe_rejoin_cost = std::numeric_limits<double>::infinity();
     double best_unsafe_minimum_ad = -std::numeric_limits<double>::infinity();
     for (std::size_t combination_index = 0;
          combination_index < combination_count; ++combination_index) {
@@ -365,44 +363,13 @@ bool CertifiedComponentManeuverEvaluator::evaluate(
             ++candidate.safe_combination_count;
         }
 
-        const bool use_rejoin = rejoin_objective != nullptr
-            && rejoin_objective->enabled;
-        if (use_rejoin) {
-            combination.nominal_rejoin_cost = 0.0;
-            for (std::size_t member = 0; member < member_count; ++member) {
-                const std::size_t aircraft = member_aircraft[member];
-                const double nominal = rejoin_objective
-                    ->nominal_lateral_acceleration_mps2[aircraft];
-                const double command = candidate_sets[aircraft][
-                    combination.candidate_slots[member]]
-                        .candidate_input.a_lat_cmd;
-                if (!std::isfinite(nominal) || !std::isfinite(command)) {
-                    combination.nominal_rejoin_cost =
-                        std::numeric_limits<double>::infinity();
-                    break;
-                }
-                const double error = command - nominal;
-                combination.nominal_rejoin_cost += error * error;
-            }
-        }
-
         bool select = false;
         if (combination.all_pairs_feasible) {
-            const bool lower_rejoin = use_rejoin
-                && combination.nominal_rejoin_cost
-                    < best_safe_rejoin_cost - kComparisonTolerance;
-            const bool tied_rejoin = use_rejoin
-                && std::abs(
-                    combination.nominal_rejoin_cost
-                    - best_safe_rejoin_cost) <= kComparisonTolerance;
-            if (!has_safe || lower_rejoin
-                || ((!use_rejoin || tied_rejoin)
-                    && combination.reciprocal_cost_sum
-                        < best_safe_cost - kComparisonTolerance)) {
+            if (!has_safe || combination.reciprocal_cost_sum
+                < best_safe_cost - kComparisonTolerance) {
                 select = true;
                 has_safe = true;
                 best_safe_cost = combination.reciprocal_cost_sum;
-                best_safe_rejoin_cost = combination.nominal_rejoin_cost;
             }
         } else if (!has_safe
             && (!candidate.has_best
@@ -426,8 +393,7 @@ bool CertifiedComponentManeuverEvaluator::evaluateTuple(
     const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
     const std::array<std::uint8_t, kMaximumSelectionAircraft>
         & candidate_ids,
-    JointCombinationEvaluation & result,
-    const ManeuverRejoinObjective * rejoin_objective) const
+    JointCombinationEvaluation & result) const
 {
     JointCombinationEvaluation candidate;
     candidate.aircraft_count = certifications.aircraft_count;
@@ -491,24 +457,6 @@ bool CertifiedComponentManeuverEvaluator::evaluateTuple(
         }
     }
 
-    if (rejoin_objective != nullptr && rejoin_objective->enabled) {
-        candidate.nominal_rejoin_cost = 0.0;
-        for (std::size_t aircraft = 0;
-             aircraft < certifications.aircraft_count; ++aircraft) {
-            const double nominal = rejoin_objective
-                ->nominal_lateral_acceleration_mps2[aircraft];
-            const double command = candidate_sets[aircraft][
-                candidate.candidate_slots[aircraft]]
-                    .candidate_input.a_lat_cmd;
-            if (!std::isfinite(nominal) || !std::isfinite(command)) {
-                candidate.nominal_rejoin_cost =
-                    std::numeric_limits<double>::infinity();
-                break;
-            }
-            const double error = command - nominal;
-            candidate.nominal_rejoin_cost += error * error;
-        }
-    }
     result = candidate;
     return result.valid;
 }

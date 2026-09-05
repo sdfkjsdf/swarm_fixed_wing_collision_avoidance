@@ -71,11 +71,7 @@ public:
     void updateSetpoint(float dt_s) override;
 
     void setManeuverSelectionDecision(
-        const collision_avoidance::selection::ManeuverSelectionDecision & decision)
-    {
-        m_maneuver_decision_mt = decision;
-        m_has_maneuver_decision_mt = true;
-    }
+        const collision_avoidance::selection::ManeuverSelectionDecision & decision);
 
     void setCollisionAvoidanceShadowOnly(bool shadow_only)
     {
@@ -116,6 +112,8 @@ public:
 
 private:
     void rt_loop();
+    bool avoidanceOverrideRequested() const;
+    void publishAvoidanceSetpoint();
     void traceSetpoint(std::uint64_t begin_wall_ns, std::uint64_t begin_steady_ns,
                        bool avoidance, float lateral_acceleration,
                        float ground_speed, float eas);

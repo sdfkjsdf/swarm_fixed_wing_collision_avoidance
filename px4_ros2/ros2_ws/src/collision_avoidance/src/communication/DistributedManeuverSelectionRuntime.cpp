@@ -391,6 +391,7 @@ void DistributedManeuverSelectionRuntime::onAirspeed(
 
 void DistributedManeuverSelectionRuntime::drainWorkerOutput()
 {
+    std::optional<selection::ManeuverSelectionDecision> latest_control_decision;
     while (const auto trace = m_worker.tryPopBudgetTrace()) {
         if (m_budget_trace_publisher) m_budget_trace_publisher->publish(budgetTraceMessage(*trace));
     }
@@ -812,9 +813,7 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 }
                 m_decision_publisher->publish(message);
             }
-            if (m_decision_callback) {
-                m_decision_callback(output->decision);
-            }
+            latest_control_decision = output->decision;
             RCLCPP_INFO(
                 m_node.get_logger(),
                 "[maneuver-selection] vehicle=%d selected_epoch=%llu "
@@ -853,6 +852,14 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 output->decision.activation_just_ended ? 1 : 0,
                 static_cast<unsigned>(output->decision.deactivation_reason));
         }
+    }
+
+    // Preserve every peer/diagnostic publication, but apply only the newest
+    // local decision. Replaying a queued active->inactive or L->R sequence
+    // here would issue superseded commands now that delivery can publish
+    // a setpoint immediately instead of merely updating a held value.
+    if (latest_control_decision && m_decision_callback) {
+        m_decision_callback(*latest_control_decision);
     }
 
     if (m_worker.droppedInputCount() > 0 || m_worker.droppedOutputCount() > 0) {

@@ -132,42 +132,6 @@ void ManeuverSelectionWorker::evaluateInteractionGraph(
     const PairwiseAdCertificationSet & certified_pairs =
         *m_epoch_pairwise_ad_certifications;
 
-    // Rejoin is a fleet/component objective, so its activation and values
-    // must come from the same frozen distributed library as the graph. Using
-    // this worker's local activation latch here would let identical graphs
-    // produce different component solutions on different aircraft.
-    ManeuverRejoinObjective common_rejoin_objective;
-    bool safe_rejoin_requested = false;
-    bool common_rejoin_objective_valid = true;
-    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft) {
-        const auto & intent = certified_candidate_sets[aircraft][0];
-        safe_rejoin_requested = safe_rejoin_requested
-            || intent.safe_rejoin_requested;
-        common_rejoin_objective
-            .nominal_lateral_acceleration_mps2[aircraft] =
-            intent.nominal_lateral_acceleration_mps2;
-        common_rejoin_objective_valid = common_rejoin_objective_valid
-            && std::isfinite(intent.nominal_lateral_acceleration_mps2);
-    }
-    if (safe_rejoin_requested && !common_rejoin_objective_valid) {
-        diagnostics.graph.status =
-            InteractionGraphStatus::InvalidCertification;
-        diagnostics.graph.evaluation_timestamp_us = now_us;
-        diagnostics.graph.selection_epoch = m_selection_epoch;
-        diagnostics.graph.aircraft_count = aircraft_count;
-        diagnostics.status =
-            InteractionGraphEvaluationStatus::ComponentEvaluationFailed;
-        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                Clock::now() - total_start).count());
-        m_pending_interaction_graph_diagnostics =
-            std::make_shared<InteractionGraphDiagnostics>(diagnostics);
-        return;
-    }
-    common_rejoin_objective.enabled = safe_rejoin_requested;
-    const ManeuverRejoinObjective * rejoin_objective =
-        safe_rejoin_requested ? &common_rejoin_objective : nullptr;
-
     diagnostics.graph = m_interaction_graph_builder.build(certified_pairs);
     if (!diagnostics.graph.valid()) {
         diagnostics.status = InteractionGraphEvaluationStatus::GraphInvalid;
@@ -193,26 +157,6 @@ void ManeuverSelectionWorker::evaluateInteractionGraph(
             }
         }
         if (member_count == 1) {
-            // An isolated aircraft adds no search dimension. Select its
-            // deterministic nominal/rejoin candidate from the same frozen
-            // library used by every worker; without a rejoin request the
-            // neutral RollZero candidate remains the bootstrap value.
-            if (rejoin_objective != nullptr) {
-                const std::size_t aircraft = members[0];
-                const double nominal = rejoin_objective
-                    ->nominal_lateral_acceleration_mps2[aircraft];
-                double best_error = std::numeric_limits<double>::infinity();
-                std::uint8_t best_id = kRollZeroId;
-                for (const auto & intent : certified_candidate_sets[aircraft]) {
-                    const double error = std::abs(
-                        intent.candidate_input.a_lat_cmd - nominal);
-                    if (error < best_error) {
-                        best_error = error;
-                        best_id = intent.candidate_id;
-                    }
-                }
-                diagnostics.assembled_candidate_ids[aircraft] = best_id;
-            }
             continue;
         }
         CertifiedComponentEvaluation component_evaluation;
@@ -221,8 +165,7 @@ void ManeuverSelectionWorker::evaluateInteractionGraph(
                 certified_candidate_sets,
                 members,
                 member_count,
-                component_evaluation,
-                rejoin_objective)
+                component_evaluation)
             || !component_evaluation.has_best) {
             component_search_valid = false;
             break;
@@ -276,8 +219,7 @@ void ManeuverSelectionWorker::evaluateInteractionGraph(
             certified_pairs,
             certified_candidate_sets,
             diagnostics.assembled_candidate_ids,
-            crosscheck,
-            rejoin_objective);
+            crosscheck);
     diagnostics.global_crosscheck_time_ns = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             Clock::now() - crosscheck_start).count());

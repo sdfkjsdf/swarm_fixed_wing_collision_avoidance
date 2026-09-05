@@ -2726,6 +2726,7 @@ TEST(ManeuverSelectionWorker,
 
     workers[1]->setActivationEnabled(true);
     auto matching_trigger = peerDecision(commits[0].decision);
+    matching_trigger.activation_requested = true;
     matching_trigger.activation_just_started = true;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
     ASSERT_TRUE(workers[1]->processPendingForTest());
@@ -2737,6 +2738,92 @@ TEST(ManeuverSelectionWorker,
     EXPECT_EQ(
         coordinated.decision.ownship_candidate_id,
         commits[1].decision.selected_candidate_ids[1]);
+}
+
+static void verifyDeferredComponentActivation(bool peer_ended)
+{
+    constexpr std::uint64_t start = 15'500'000ULL;
+    std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, 2> workers;
+    std::array<cs::ManeuverSelectionWorkerOutput, 2> outputs{};
+    for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
+        auto worker_params = params(static_cast<int>(aircraft), 2);
+        worker_params.exhaustive_test_mode = true;
+        worker_params.evaluator_params.stale_timeout_s = 0.275;
+        worker_params.interaction_graph_params.enabled = true;
+        worker_params.interaction_graph_params.ad_screen_m = 0.0;
+        workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
+            worker_params);
+        workers[aircraft]->setActivationEnabled(false);
+        ASSERT_TRUE(workers[aircraft]->pushNominalSetpoint(
+            nominalSnapshot(start)));
+        outputs[aircraft] = pushBeliefAndProcess(
+            *workers[aircraft],
+            beliefSnapshot(
+                start,
+                5.0 * static_cast<double>(aircraft),
+                0.0,
+                20.0,
+                0.0));
+    }
+
+    exchangePackets(*workers[0], *workers[1], outputs[0], outputs[1]);
+    ASSERT_TRUE(workers[0]->pushRemoteDecision(
+        1, nominalPeerDecision(1, start)));
+    ASSERT_TRUE(workers[1]->pushRemoteDecision(
+        0, nominalPeerDecision(0, start)));
+    for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
+        outputs[aircraft] = pushBeliefAndProcess(
+            *workers[aircraft],
+            beliefSnapshot(
+                start + 250'000ULL,
+                5.0 + 5.0 * static_cast<double>(aircraft),
+                0.0,
+                20.0,
+                0.0));
+    }
+    auto commits = confirmTwoAircraftProposal(
+        *workers[0], *workers[1], outputs[0], outputs[1]);
+    ASSERT_FALSE(commits[1].decision.activation_requested);
+
+    workers[1]->setActivationEnabled(true);
+    auto matching_trigger = peerDecision(commits[0].decision);
+    matching_trigger.activation_requested = true;
+    matching_trigger.activation_just_started = true;
+    ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
+    ASSERT_TRUE(workers[1]->processPendingForTest());
+    const auto unavailable = pushBeliefAndProcess(
+        *workers[1], beliefSnapshot(start + 300'000ULL, 500.0, 0.0, 20.0, 0.0));
+    ASSERT_FALSE(unavailable.decision.activation_requested);
+    auto heartbeat = matching_trigger;
+    heartbeat.activation_just_started = false;
+    heartbeat.activation_requested = !peer_ended;
+    ++heartbeat.local_selection_epoch;  // Must not relabel the saved event.
+    ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+    const auto fresh_peer = pushBeliefAndProcess(
+        *workers[0], beliefSnapshot(start + 350'000ULL, 7.0, 0.0, 20.0, 0.0));
+    for (std::size_t i = 0; i < fresh_peer.intent_packet_count; ++i) {
+        ASSERT_TRUE(workers[1]->pushRemoteIntent(0, fresh_peer.intent_packets[i]));
+    }
+    const auto coordinated = pushBeliefAndProcess(
+        *workers[1],
+        beliefSnapshot(start + 350'000ULL, 500.0, 0.0, 20.0, 0.0));
+    EXPECT_EQ(coordinated.decision.activation_requested, !peer_ended);
+    EXPECT_EQ(coordinated.decision.activation_just_started, !peer_ended);
+    EXPECT_EQ(
+        coordinated.decision.ownship_candidate_id,
+        commits[1].decision.selected_candidate_ids[1]);
+}
+
+TEST(ManeuverSelectionWorker,
+    ComponentActivationEdgeSurvivesInvalidSampleAndHeartbeat)
+{
+    verifyDeferredComponentActivation(false);
+}
+
+TEST(ManeuverSelectionWorker,
+    EndedPeerActivationIsNotReplayedAfterInputRecovery)
+{
+    verifyDeferredComponentActivation(true);
 }
 
 TEST(ManeuverSelectionWorker,
@@ -2786,6 +2873,7 @@ TEST(ManeuverSelectionWorker,
 
     workers[1]->setActivationEnabled(true);
     auto other_component_trigger = peerDecision(commits[0].decision);
+    other_component_trigger.activation_requested = true;
     other_component_trigger.activation_just_started = true;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, other_component_trigger));
     ASSERT_TRUE(workers[1]->processPendingForTest());

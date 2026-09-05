@@ -203,7 +203,7 @@ TEST(PairwiseAdCertification, CachedTupleMatchesDirectTupleEvaluation)
     EXPECT_NEAR(cached.reciprocal_cost_sum, direct.reciprocal_cost_sum, 1.0e-12);
 }
 
-TEST(PairwiseAdCertification, ComponentSearchHonorsSafeRejoinObjective)
+TEST(PairwiseAdCertification, ComponentSearchCannotUseRejoinInsteadOfAdCost)
 {
     constexpr std::uint64_t epoch = 5;
     auto sets = twoAircraftLibrary(epoch);
@@ -223,19 +223,24 @@ TEST(PairwiseAdCertification, ComponentSearchHonorsSafeRejoinObjective)
     std::array<std::size_t, cs::kMaximumSelectionAircraft> members{};
     members[0] = 0;
     members[1] = 1;
-    cs::ManeuverRejoinObjective objective;
-    objective.enabled = true;
-    objective.nominal_lateral_acceleration_mps2[0] = 1.0;
-    objective.nominal_lateral_acceleration_mps2[1] = 5.0;
-
     cs::CertifiedComponentManeuverEvaluator evaluator;
+    cs::CertifiedComponentEvaluation baseline;
+    ASSERT_TRUE(evaluator.evaluate(certifications, sets, members, 2, baseline));
+    for (std::size_t aircraft = 0; aircraft < 2; ++aircraft) {
+        for (auto & intent : sets[aircraft]) {
+            intent.safe_rejoin_requested = true;
+            intent.nominal_lateral_acceleration_mps2 = aircraft == 0 ? 1.0 : 5.0;
+        }
+    }
+    ASSERT_TRUE(certifier.evaluate(1'000'000, epoch, 1, 1, sets, 2, certifications));
     cs::CertifiedComponentEvaluation result;
     ASSERT_TRUE(evaluator.evaluate(
-        certifications, sets, members, 2, result, &objective));
+        certifications, sets, members, 2, result));
     ASSERT_TRUE(result.best_combination.all_pairs_feasible);
-    EXPECT_EQ(result.best_combination.candidate_slots[0], 1U);
-    EXPECT_EQ(result.best_combination.candidate_slots[1], 5U);
-    EXPECT_DOUBLE_EQ(result.best_combination.nominal_rejoin_cost, 0.0);
+    EXPECT_EQ(result.best_combination.candidate_slots, baseline.best_combination.candidate_slots);
+    EXPECT_DOUBLE_EQ(result.best_combination.reciprocal_cost_sum,
+        baseline.best_combination.reciprocal_cost_sum);
+    EXPECT_TRUE(std::isnan(result.best_combination.nominal_rejoin_cost));
 }
 
 }  // namespace

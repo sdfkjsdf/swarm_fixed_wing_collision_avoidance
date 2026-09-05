@@ -173,12 +173,6 @@ struct JointCombinationEvaluation
     bool selected_best{false};
 };
 
-struct ManeuverRejoinObjective
-{
-    bool enabled{false};
-    std::array<double, kMaximumSelectionAircraft>
-        nominal_lateral_acceleration_mps2{};
-};
 
 class PositiveMarginBarrierEvaluator
 {
@@ -273,8 +267,7 @@ public:
         std::uint64_t evaluation_timestamp_us,
         const MultiAircraftCandidateIntentSets & candidate_sets,
         std::size_t aircraft_count,
-        JointManeuverEvaluation & evaluation,
-        const ManeuverRejoinObjective * rejoin_objective = nullptr) const;
+        JointManeuverEvaluation & evaluation) const;
 
     bool evaluate(
         std::uint64_t evaluation_timestamp_us,
@@ -282,8 +275,7 @@ public:
         const std::array<std::size_t, kMaximumSelectionAircraft>
             & candidate_counts,
         std::size_t aircraft_count,
-        JointManeuverEvaluation & evaluation,
-        const ManeuverRejoinObjective * rejoin_objective = nullptr) const;
+        JointManeuverEvaluation & evaluation) const;
 
 private:
     ManeuverCombinationEvaluator m_pair_evaluator;
@@ -302,8 +294,7 @@ public:
         std::uint64_t evaluation_timestamp_us,
         const MultiAircraftExhaustiveCandidateIntentSets & candidate_sets,
         std::size_t aircraft_count,
-        ExhaustiveManeuverEvaluation & evaluation,
-        const ManeuverRejoinObjective * rejoin_objective = nullptr) const;
+        ExhaustiveManeuverEvaluation & evaluation) const;
 
 private:
     ManeuverCombinationEvaluator m_pair_evaluator;

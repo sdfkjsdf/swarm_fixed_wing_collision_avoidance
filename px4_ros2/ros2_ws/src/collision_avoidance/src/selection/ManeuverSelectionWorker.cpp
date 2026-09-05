@@ -870,11 +870,16 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
         && !decision.selected_v4_cutover
         && cache.decision.v4_control_architecture
             == decision.v4_control_architecture;
-    if (decision.activation_just_started) {
+    if (!decision.activation_requested) {
+        cache.activation_start_pending = false;
+    } else if (decision.activation_just_started) {
         // Preserve the edge until the next local 20 Hz belief update. A newer
         // peer heartbeat may otherwise overwrite this one-shot event before
         // the component activation roll-up consumes it.
         cache.activation_start_pending = true;
+        cache.activation_start_epoch = decision.local_selection_epoch;
+        cache.activation_start_valid_mask = decision.selected_candidate_valid_mask;
+        cache.activation_start_candidate_ids = decision.selected_candidate_ids;
     }
     cache.decision = decision;
     // Readiness advertises that this peer has demonstrated the selected V4

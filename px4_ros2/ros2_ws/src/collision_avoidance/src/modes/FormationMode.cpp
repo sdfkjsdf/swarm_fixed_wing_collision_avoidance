@@ -303,44 +303,8 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
         m_nominal_setpoint_callback_mt(snapshot);
     }
 
-    const bool avoidance_override =
-        !m_collision_avoidance_shadow_only_mt
-        && m_has_maneuver_decision_mt
-        && m_maneuver_decision_mt.coordination_qualified
-        && m_maneuver_decision_mt.command_execution_requested;
-    if (avoidance_override) {
-        float course = m_initial_course;
-        if (m_vehicle_id >= 0
-            && m_vehicle_id < static_cast<int>(m_state_for_control_mt.size())) {
-            const auto & velocity = m_state_for_control_mt[m_vehicle_id].velocity;
-            if (std::isfinite(velocity[0]) && std::isfinite(velocity[1])
-                && std::hypot(velocity[0], velocity[1]) > 1.0e-3F) {
-                course = std::atan2(velocity[1], velocity[0]);
-            }
-        }
-        const auto & input = m_maneuver_decision_mt.ownship_input;
-        const float lateral_acceleration =
-            static_cast<float>(input.a_lat_cmd);
-        const float v_cmd_ground = static_cast<float>(input.V_cmd);
-        const float v_cmd_eas = to_eas(
-            v_cmd_ground, course, 0.0F, lateral_acceleration);
-        px4_ros2::FwLateralLongitudinalSetpoint sp;
-        sp.withLateralAcceleration(lateral_acceleration)
-          .withEquivalentAirspeed(v_cmd_eas);
-        collision_avoidance::selection::ManeuverBudgetTrace trace;
-        if (m_budget_trace_publisher) collision_avoidance::selection::stampBudgetTrace(trace);
-        _fw_setpoint->update(sp);
-        recordPublishedSetpoint(v_cmd_ground, lateral_acceleration, true);
-        traceSetpoint(trace.wall_ns, trace.steady_ns, true, lateral_acceleration,
-                      v_cmd_ground, v_cmd_eas);
-        RCLCPP_WARN_THROTTLE(
-            _node.get_logger(), *_node.get_clock(), 1000,
-            "[Formation] collision-avoidance override: candidate=%u AD=%.2f "
-            "a_lat=%.2f v_ground=%.2f",
-            static_cast<unsigned>(m_maneuver_decision_mt.ownship_candidate_id),
-            m_maneuver_decision_mt.ad_m,
-            lateral_acceleration,
-            v_cmd_ground);
+    if (avoidanceOverrideRequested()) {
+        publishAvoidanceSetpoint();
         return;
     }
 
@@ -398,10 +362,76 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
     }
 }
 
-/* ──────────────────────────────────────────────────────────────
-   rt_loop — snapshot 을 FlockingGuidance 에 넘기고 결과를 output_queue 로.
-   모든 계산(가속도, 적분, saturation, 변환, fallback) 은 FlockingGuidance 안.
-   ────────────────────────────────────────────────────────────── */
+// Executor-thread command delivery shared by decision events and the
+// existing periodic setpoint refresh. No guidance recomputation here.
+bool FormationMode::avoidanceOverrideRequested() const
+{
+    return !m_collision_avoidance_shadow_only_mt
+        && m_has_maneuver_decision_mt
+        && m_maneuver_decision_mt.coordination_qualified
+        && m_maneuver_decision_mt.command_execution_requested;
+}
+
+void FormationMode::setManeuverSelectionDecision(
+    const collision_avoidance::selection::ManeuverSelectionDecision & decision)
+{
+    const bool previously_requested = avoidanceOverrideRequested();
+    const auto previous_input = m_maneuver_decision_mt.ownship_input;
+    m_maneuver_decision_mt = decision;
+    m_has_maneuver_decision_mt = true;
+
+    // Runs on the same executor as updateSetpoint. An executable new command
+    // need not wait for the next periodic setpoint tick. Decision heartbeats
+    // still use the existing periodic publisher, not extra immediate writes.
+    if (isActive() && avoidanceOverrideRequested()
+        && (!previously_requested
+            || previous_input.a_lat_cmd != decision.ownship_input.a_lat_cmd
+            || previous_input.V_cmd != decision.ownship_input.V_cmd)) {
+        publishAvoidanceSetpoint();
+    }
+}
+
+void FormationMode::publishAvoidanceSetpoint()
+{
+    float course = m_initial_course;
+    if (m_vehicle_id >= 0
+        && m_vehicle_id < static_cast<int>(m_state_for_control_mt.size())) {
+        const auto & velocity = m_state_for_control_mt[m_vehicle_id].velocity;
+        if (std::isfinite(velocity[0]) && std::isfinite(velocity[1])
+            && std::hypot(velocity[0], velocity[1]) > 1.0e-3F) {
+            course = std::atan2(velocity[1], velocity[0]);
+        }
+    }
+    const float lateral_acceleration =
+        static_cast<float>(m_maneuver_decision_mt.ownship_input.a_lat_cmd);
+    const float v_cmd_ground =
+        static_cast<float>(m_maneuver_decision_mt.ownship_input.V_cmd);
+    const float raw_eas =
+        collision_avoidance::control::computeRequiredEquivalentAirspeed(
+            v_cmd_ground, course, 0.0F,
+            m_wind_n_mt2rt.load(std::memory_order_relaxed),
+            m_wind_e_mt2rt.load(std::memory_order_relaxed),
+            0.0F, m_air_density_mt);
+    const float v_cmd_eas =
+        collision_avoidance::control::applyTurnMinimumEquivalentAirspeed(
+            raw_eas, m_minimum_level_eas, lateral_acceleration, m_gravity);
+    px4_ros2::FwLateralLongitudinalSetpoint sp;
+    sp.withLateralAcceleration(lateral_acceleration)
+      .withEquivalentAirspeed(v_cmd_eas);
+    collision_avoidance::selection::ManeuverBudgetTrace trace;
+    if (m_budget_trace_publisher) collision_avoidance::selection::stampBudgetTrace(trace);
+    _fw_setpoint->update(sp);
+    recordPublishedSetpoint(v_cmd_ground, lateral_acceleration, true);
+    traceSetpoint(trace.wall_ns, trace.steady_ns, true, lateral_acceleration,
+                  v_cmd_ground, v_cmd_eas);
+    RCLCPP_WARN_THROTTLE(
+        _node.get_logger(), *_node.get_clock(), 1000,
+        "[Formation] collision-avoidance override: candidate=%u AD=%.2f "
+        "a_lat=%.2f v_ground=%.2f",
+        static_cast<unsigned>(m_maneuver_decision_mt.ownship_candidate_id),
+        m_maneuver_decision_mt.ad_m, lateral_acceleration, v_cmd_ground);
+}
+
 void FormationMode::recordPublishedSetpoint(
     float ground_speed, float lateral_acceleration, bool valid)
 {

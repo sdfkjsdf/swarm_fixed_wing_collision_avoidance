@@ -434,17 +434,6 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
 
     evaluateInteractionGraph(now_us);
 
-    // Component search obtains its fleet-wide rejoin objective from the
-    // certified candidate library.  A local objective is only meaningful on
-    // the legacy evaluator path.
-    ManeuverRejoinObjective legacy_rejoin_objective;
-    const ManeuverRejoinObjective * legacy_rejoin_objective_ptr = nullptr;
-    if (!m_params.interaction_graph_params.enabled
-        && m_safe_rejoin_active
-        && buildManeuverRejoinObjective(now_us, legacy_rejoin_objective)) {
-        legacy_rejoin_objective_ptr = &legacy_rejoin_objective;
-    }
-
     // Active component search must execute from the exact candidate library
     // that was certified. The 20 Hz live cache may already contain a newer
     // trajectory revision from the same 4 Hz epoch.
@@ -471,32 +460,6 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
         bool evaluated = false;
         const bool component_cutover =
             m_params.interaction_graph_params.enabled;
-        ManeuverRejoinObjective component_rejoin_objective;
-        const ManeuverRejoinObjective * selection_rejoin_objective_ptr =
-            legacy_rejoin_objective_ptr;
-        if (component_cutover) {
-            bool rejoin_requested = false;
-            bool rejoin_values_valid = true;
-            for (int aircraft = 0;
-                 aircraft < m_params.total_agent_count; ++aircraft) {
-                const std::size_t aircraft_index =
-                    static_cast<std::size_t>(aircraft);
-                const auto & intent = candidate_sets[aircraft_index][0];
-                rejoin_requested = rejoin_requested
-                    || intent.safe_rejoin_requested;
-                component_rejoin_objective
-                    .nominal_lateral_acceleration_mps2[aircraft_index] =
-                    intent.nominal_lateral_acceleration_mps2;
-                rejoin_values_valid = rejoin_values_valid
-                    && std::isfinite(
-                        intent.nominal_lateral_acceleration_mps2);
-            }
-            if (rejoin_requested && rejoin_values_valid) {
-                component_rejoin_objective.enabled = true;
-                selection_rejoin_objective_ptr =
-                    &component_rejoin_objective;
-            }
-        }
         std::array<std::uint8_t, kMaximumSelectionAircraft>
             component_candidate_ids{};
         std::uint32_t component_candidate_valid_mask{0};
@@ -530,8 +493,7 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                 now_us,
                 candidate_sets,
                 static_cast<std::size_t>(m_params.total_agent_count),
-                evaluation,
-                legacy_rejoin_objective_ptr);
+                evaluation);
             combination_count = evaluation.combination_count;
             valid_combination_count = evaluation.valid_combination_count;
             safe_combination_count = evaluation.safe_combination_count;
@@ -563,8 +525,7 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                 reduced_candidate_sets,
                 candidate_counts,
                 static_cast<std::size_t>(m_params.total_agent_count),
-                evaluation,
-                legacy_rejoin_objective_ptr);
+                evaluation);
             combination_count = evaluation.combination_count;
             valid_combination_count = evaluation.valid_combination_count;
             safe_combination_count = evaluation.safe_combination_count;
@@ -697,53 +658,13 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
             }
             const bool current_evaluation_valid =
                 current_evaluation_available && current_evaluation.valid;
-            if (current_evaluation_valid
-                && selection_rejoin_objective_ptr != nullptr) {
-                current_evaluation.nominal_rejoin_cost = 0.0;
-                for (int aircraft = 0;
-                     aircraft < m_params.total_agent_count; ++aircraft) {
-                    const std::size_t aircraft_index =
-                        static_cast<std::size_t>(aircraft);
-                    const auto begin = candidate_sets[aircraft_index].begin();
-                    const auto end = begin + static_cast<std::ptrdiff_t>(
-                        candidate_counts[aircraft_index]);
-                    const std::uint8_t selected_id =
-                        incumbent_candidate_ids[aircraft_index];
-                    const auto found = std::find_if(
-                        begin, end, [selected_id](const auto & candidate) {
-                            return candidate.candidate_id == selected_id;
-                        });
-                    if (found == end) {
-                        current_evaluation.nominal_rejoin_cost =
-                            std::numeric_limits<double>::infinity();
-                        break;
-                    }
-                    const double error = found->candidate_input.a_lat_cmd
-                        - selection_rejoin_objective_ptr
-                            ->nominal_lateral_acceleration_mps2[
-                                aircraft_index];
-                    current_evaluation.nominal_rejoin_cost += error * error;
-                }
-            }
             const bool mode_b_role_recertification = active_command_change
                 && m_selected_v4_cutover
                 && m_params.execution_policy
                     == ManeuverExecutionPolicy::ContinuousV4;
-            const bool rejoin_improves = active_command_change
-                && selection_rejoin_objective_ptr != nullptr
-                && best.valid && best.all_pairs_feasible
-                && (!current_evaluation_valid
-                    || !current_evaluation.all_pairs_feasible
-                    || (std::isfinite(best.nominal_rejoin_cost)
-                        && std::isfinite(
-                            current_evaluation.nominal_rejoin_cost)
-                        && best.nominal_rejoin_cost
-                            < current_evaluation.nominal_rejoin_cost
-                                - 1.0e-12));
             const bool superiority_evaluated = active_command_change
                 && (current_evaluation_available
-                    || mode_b_role_recertification
-                    || rejoin_improves);
+                    || mode_b_role_recertification);
             const bool clearly_superior = superiority_evaluated
                 && m_params.active_switching_enabled
                 && ((!current_evaluation_valid
@@ -753,7 +674,6 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                         && best.valid)
                     || (!current_evaluation_valid
                         && mode_b_role_recertification)
-                    || rejoin_improves
                     || clearlySuperior(current_evaluation, best));
             decision.switch_superiority_evaluated = superiority_evaluated;
             decision.switch_clearly_superior = clearly_superior;

@@ -53,11 +53,11 @@ bool ManeuverSelectionWorker::selectedComponentActivationRequested(
             m_remote_decision_caches[aircraft_index];
         if (peer.valid && peer.decision.coordination_qualified
             && (ownship_component_mask & aircraft_bit) != 0U
-            && peer.decision.local_selection_epoch
+            && peer.activation_start_epoch
                 == m_latest_selection_decision.local_selection_epoch
-            && peer.decision.selected_candidate_valid_mask
+            && peer.activation_start_valid_mask
                 == m_selected_candidate_valid_mask
-            && peer.decision.selected_candidate_ids
+            && peer.activation_start_candidate_ids
                 == m_selected_candidate_ids
             && peer.activation_start_pending) {
             return true;
@@ -498,58 +498,6 @@ bool ManeuverSelectionWorker::evaluateNominalPostRelease(
     return evaluation.valid;
 }
 
-bool ManeuverSelectionWorker::buildManeuverRejoinObjective(
-    std::uint64_t now_us,
-    ManeuverRejoinObjective & objective) const noexcept
-{
-    ManeuverRejoinObjective candidate{};
-    estimation::PredictInput input{};
-    if (!m_has_latest_nominal
-        || !nominalPredictInput(
-            m_latest_nominal,
-            now_us,
-            m_params.v4_maximum_nominal_age_us,
-            input)) {
-        return false;
-    }
-    candidate.nominal_lateral_acceleration_mps2[
-        static_cast<std::size_t>(m_params.vehicle_id)] = input.a_lat_cmd;
-
-    for (int aircraft = 0;
-         aircraft < m_params.total_agent_count; ++aircraft) {
-        if (aircraft == m_params.vehicle_id) {
-            continue;
-        }
-        const RemoteDecisionCache & cache = m_remote_decision_caches[
-            static_cast<std::size_t>(aircraft)];
-        if (!cache.valid) {
-            return false;
-        }
-        ManeuverSelectionNominalSetpointSnapshot peer_nominal;
-        peer_nominal.timestamp_us =
-            cache.decision.nominal_setpoint_timestamp_us;
-        peer_nominal.ground_speed_command_mps =
-            cache.decision.nominal_ground_speed_command_mps;
-        peer_nominal.altitude_command_m =
-            cache.decision.nominal_altitude_command_m;
-        peer_nominal.lateral_acceleration_px4_mps2 =
-            cache.decision.nominal_lateral_acceleration_mps2;
-        peer_nominal.valid = cache.decision.nominal_setpoint_available;
-        if (!nominalPredictInput(
-                peer_nominal,
-                now_us,
-                m_params.v4_maximum_nominal_age_us,
-                input)) {
-            return false;
-        }
-        candidate.nominal_lateral_acceleration_mps2[
-            static_cast<std::size_t>(aircraft)] = input.a_lat_cmd;
-    }
-    candidate.enabled = true;
-    objective = candidate;
-    return true;
-}
-
 bool ManeuverSelectionWorker::allPeersConfirmPostRelease(
     std::uint64_t now_us) const noexcept
 {
@@ -832,11 +780,15 @@ void ManeuverSelectionWorker::updateActivationState(
             }
         }
     }
-    // activation_just_started is an edge, not a level. Consume every received
-    // edge exactly once at the next local state update; an edge that does not
-    // match the currently committed component tuple must not be reused later.
-    for (RemoteDecisionCache & peer : m_remote_decision_caches) {
-        peer.activation_start_pending = false;
+    // An invalid sample cannot execute the activation request. Preserve the
+    // original event identity until a valid evaluation can consume it; later
+    // heartbeats must not re-label the edge with a different tuple/epoch.
+    // A valid evaluation still discards non-matching events, preventing replay
+    // after a changed selection or component.
+    if (sample.valid) {
+        for (RemoteDecisionCache & peer : m_remote_decision_caches) {
+            peer.activation_start_pending = false;
+        }
     }
     JointCombinationEvaluation post_release_evaluation;
     if (evaluateNominalPostRelease(now_us, post_release_evaluation)) {

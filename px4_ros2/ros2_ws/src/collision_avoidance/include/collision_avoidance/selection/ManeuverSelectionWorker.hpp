@@ -636,6 +636,10 @@ private:
     {
         ManeuverSelectionPeerDecision decision{};
         bool activation_start_pending{false};
+        std::uint64_t activation_start_epoch{0};
+        std::uint32_t activation_start_valid_mask{0};
+        std::array<std::uint8_t, kMaximumSelectionAircraft>
+            activation_start_candidate_ids{};
         bool valid{false};
     };
 
@@ -794,9 +798,6 @@ private:
     bool evaluateNominalPostRelease(
         std::uint64_t now_us,
         JointCombinationEvaluation & evaluation);
-    bool buildManeuverRejoinObjective(
-        std::uint64_t now_us,
-        ManeuverRejoinObjective & objective) const noexcept;
     bool allPeersConfirmPostRelease(
         std::uint64_t now_us) const noexcept;
     void applyFormationActivationGate(
