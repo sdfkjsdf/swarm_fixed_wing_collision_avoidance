@@ -55,6 +55,9 @@ done
 if [[ -n "${RMW_IMPLEMENTATION:-}" ]]; then
     docker_args+=(-e "RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION}")
 fi
+if [[ -n "${ROS_DISCOVERY_SERVER:-}" ]]; then
+    docker_args+=(-e "ROS_DISCOVERY_SERVER=${ROS_DISCOVERY_SERVER}")
+fi
 docker_args+=(
     --entrypoint /bin/bash
     "${REMOTE_DOCKER_IMAGE}"

@@ -106,6 +106,33 @@ are reused without a hybrid-only analysis path. Both hosts must use the same
 `ROS_DOMAIN_ID`, `ROS_LOCALHOST_ONLY=0`, compatible RMW implementations, and a
 network that carries the required DDS discovery and data traffic.
 
+If the LAN blocks multicast discovery, run a Fast DDS Discovery Server on the
+local PC and pass its unicast address to the hybrid runner. The remote launcher
+forwards both variables into the temporary Raspberry Pi container:
+
+```bash
+# Local terminal 1: leave this process running during the test.
+source /opt/ros/humble/setup.bash
+fastdds discovery -i 0 -l 192.168.50.25 -p 11811
+
+# Local terminal 2: use the same server for all local and remote workers.
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_DISCOVERY_SERVER=192.168.50.25:11811
+export ROS_DOMAIN_ID=0
+export ROS_LOCALHOST_ONLY=0
+
+REMOTE_SSH_TARGET=agent0@192.168.50.73 \
+REMOTE_DOCKER_IMAGE=collision-avoidance:distributed \
+FLOCKING_LAYOUT=pentagon \
+RUN_ID=hybrid_1rpi_4local_formation_smoke \
+RUN_DURATION_SECONDS=55 \
+scripts/run_hybrid_1rpi_4local_case.sh avoidance
+```
+
+`ROS_DISCOVERY_SERVER` changes discovery only; DDS data still uses the normal
+host-network interfaces. The Docker image does not need to be rebuilt when
+only this runtime variable changes.
+
 The evaluation epoch is the latest of those five activation timestamps. All
 odometry, decisions, plots, metrics, and video before that common
 point-convergence epoch are excluded. The `FormationMode` class name is only
