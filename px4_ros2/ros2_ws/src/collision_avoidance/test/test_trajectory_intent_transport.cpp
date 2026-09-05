@@ -5,6 +5,25 @@
 namespace ce = collision_avoidance::estimation;
 namespace cc = collision_avoidance::communication;
 
+TEST(TrajectoryIntentTransport, UsesReliableVolatileBatchQos)
+{
+    const auto qos = cc::trajectoryIntentQos(42).get_rmw_qos_profile();
+    EXPECT_EQ(qos.history, RMW_QOS_POLICY_HISTORY_KEEP_LAST);
+    EXPECT_EQ(qos.depth, 42U);
+    EXPECT_EQ(qos.reliability, RMW_QOS_POLICY_RELIABILITY_RELIABLE);
+    EXPECT_EQ(qos.durability, RMW_QOS_POLICY_DURABILITY_VOLATILE);
+}
+
+TEST(TrajectoryIntentTransport, SizesHistoryForEveryRefreshInCoordinationWindow)
+{
+    EXPECT_EQ(cc::requiredTrajectoryIntentHistoryDepth(
+        7, 250'000, 50'000), 42U);
+    EXPECT_EQ(cc::requiredTrajectoryIntentHistoryDepth(
+        3, 250'000, 50'000), 18U);
+    EXPECT_EQ(cc::requiredTrajectoryIntentHistoryDepth(
+        0, 250'000, 50'000), 1U);
+}
+
 TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
 {
     ce::TrajectoryIntentPacket source{};

@@ -151,6 +151,14 @@ struct InteractionGraphDiagnostics
     InteractionGraphEvaluationStatus status{
         InteractionGraphEvaluationStatus::Disabled};
     bool component_search_evaluated{false};
+    std::uint32_t candidate_ready_mask{0};
+    std::array<std::uint8_t, kMaximumSelectionAircraft>
+        candidate_counts{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        candidate_source_timestamps_us{};
+    std::uint64_t dropped_ownship_belief_count{0};
+    std::uint64_t dropped_remote_intent_count{0};
+    std::uint64_t dropped_remote_decision_count{0};
     std::array<std::uint8_t, kMaximumSelectionAircraft>
         assembled_candidate_ids{};
     std::uint32_t assembled_candidate_valid_mask{0};
@@ -662,6 +670,8 @@ private:
     bool acceptRemoteIntent(
         int remote_vehicle_id,
         const estimation::TrajectoryIntentPacket & packet);
+    void freezeRemoteCertificationCandidatesForCurrentEpoch(
+        int remote_vehicle_id);
     bool acceptRemoteDecision(
         int remote_vehicle_id,
         const ManeuverSelectionPeerDecision & decision);
@@ -814,6 +824,9 @@ private:
     std::atomic<bool> m_activation_enabled{true};
     std::atomic<std::uint64_t> m_dropped_inputs{0};
     std::atomic<std::uint64_t> m_dropped_outputs{0};
+    std::atomic<std::uint64_t> m_dropped_ownship_beliefs{0};
+    std::atomic<std::uint64_t> m_dropped_remote_intents{0};
+    std::atomic<std::uint64_t> m_dropped_remote_decisions{0};
 
     // Latest accepted ownship inputs.
     estimation::PredictState m_latest_state{};

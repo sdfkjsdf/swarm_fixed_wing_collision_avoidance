@@ -2235,6 +2235,108 @@ TEST(ManeuverSelectionWorker, ExhaustiveTestModeEvaluatesAllFiveAircraftRollTupl
 }
 
 TEST(ManeuverSelectionWorker,
+    InteractionGraphReportsWhichCandidateLibraryIsIncomplete)
+{
+    constexpr std::uint64_t start = 13'750'000ULL;
+    auto worker_params = params(0, 2);
+    worker_params.exhaustive_test_mode = true;
+    worker_params.interaction_graph_params.enabled = true;
+    cs::ManeuverSelectionWorker worker(worker_params);
+    ASSERT_TRUE(worker.pushNominalSetpoint(nominalSnapshot(start)));
+
+    const auto first_output = pushBeliefAndProcess(
+        worker, beliefSnapshot(start, 0.0, 0.0, 20.0, 0.0));
+    ASSERT_EQ(first_output.intent_packet_count, 7U);
+    static_cast<void>(pushBeliefAndProcess(
+        worker,
+        beliefSnapshot(start + 250'000ULL, 5.0, 0.0, 20.0, 0.0)));
+
+    const auto diagnostics_message =
+        worker.tryPopInteractionGraphDiagnostics();
+    ASSERT_TRUE(diagnostics_message.has_value());
+    ASSERT_TRUE(diagnostics_message.value());
+    const auto & diagnostics = *diagnostics_message.value();
+    EXPECT_EQ(
+        diagnostics.status,
+        cs::InteractionGraphEvaluationStatus::CandidateSetsIncomplete);
+    EXPECT_EQ(diagnostics.candidate_ready_mask, 0b01U);
+    EXPECT_EQ(diagnostics.candidate_counts[0], 7U);
+    EXPECT_EQ(diagnostics.candidate_counts[1], 0U);
+    EXPECT_GT(diagnostics.candidate_source_timestamps_us[0], 0U);
+    EXPECT_EQ(diagnostics.dropped_remote_intent_count, 0U);
+}
+
+TEST(ManeuverSelectionWorker,
+    InteractionGraphFreezesFutureEpochLibraryAcceptedBeforeLocalEpochAdvance)
+{
+    constexpr std::uint64_t start = 16'000'000ULL;
+    auto ownship_params = params(0, 2);
+    ownship_params.exhaustive_test_mode = true;
+    ownship_params.interaction_graph_params.enabled = true;
+    auto remote_params = params(1, 2);
+    remote_params.exhaustive_test_mode = true;
+    remote_params.interaction_graph_params.enabled = true;
+    cs::ManeuverSelectionWorker ownship(ownship_params);
+    cs::ManeuverSelectionWorker remote(remote_params);
+    ASSERT_TRUE(ownship.pushNominalSetpoint(nominalSnapshot(start)));
+    ASSERT_TRUE(remote.pushNominalSetpoint(nominalSnapshot(start)));
+
+    static_cast<void>(pushBeliefAndProcess(
+        ownship, beliefSnapshot(start, 0.0, 0.0, 20.0, 0.0)));
+    static_cast<void>(pushBeliefAndProcess(
+        remote, beliefSnapshot(start, 80.0, 0.0, -20.0, 0.0)));
+    for (std::uint64_t offset : {
+            50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        static_cast<void>(pushBeliefAndProcess(
+            ownship,
+            beliefSnapshot(
+                start + offset, 20.0e-6 * offset,
+                0.0, 20.0, 0.0)));
+    }
+
+    const auto future_epoch_output = pushBeliefAndProcess(
+        remote,
+        beliefSnapshot(start + 250'000ULL, 75.0, 0.0, -20.0, 0.0));
+    ASSERT_EQ(future_epoch_output.selection_epoch, 65U);
+    ASSERT_EQ(future_epoch_output.intent_packet_count, 7U);
+    for (std::size_t index = 0;
+         index < future_epoch_output.intent_packet_count; ++index) {
+        ASSERT_TRUE(ownship.pushRemoteIntent(
+            1, future_epoch_output.intent_packets[index]));
+    }
+    ASSERT_TRUE(ownship.processPendingForTest());
+
+    static_cast<void>(pushBeliefAndProcess(
+        ownship,
+        beliefSnapshot(start + 250'000ULL, 5.0, 0.0, 20.0, 0.0)));
+    const auto old_epoch_diagnostics =
+        ownship.tryPopInteractionGraphDiagnostics();
+    ASSERT_TRUE(old_epoch_diagnostics.has_value());
+    for (std::uint64_t offset : {
+            300'000ULL, 350'000ULL, 400'000ULL, 450'000ULL}) {
+        static_cast<void>(pushBeliefAndProcess(
+            ownship,
+            beliefSnapshot(
+                start + offset, 20.0e-6 * offset,
+                0.0, 20.0, 0.0)));
+    }
+    static_cast<void>(pushBeliefAndProcess(
+        ownship,
+        beliefSnapshot(start + 500'000ULL, 10.0, 0.0, 20.0, 0.0)));
+
+    const auto diagnostics_message =
+        ownship.tryPopInteractionGraphDiagnostics();
+    ASSERT_TRUE(diagnostics_message.has_value());
+    ASSERT_TRUE(diagnostics_message.value());
+    const auto & diagnostics = *diagnostics_message.value();
+    EXPECT_EQ(diagnostics.graph.selection_epoch, 65U);
+    EXPECT_TRUE(diagnostics.graph.valid());
+    EXPECT_EQ(diagnostics.candidate_ready_mask, 0b11U);
+    EXPECT_EQ(diagnostics.candidate_counts[0], 7U);
+    EXPECT_EQ(diagnostics.candidate_counts[1], 7U);
+}
+
+TEST(ManeuverSelectionWorker,
     InteractionGraphGlobalCrosscheckRejectsMissedUnsafePair)
 {
     constexpr std::uint64_t start = 14'000'000ULL;
@@ -2281,6 +2383,9 @@ TEST(ManeuverSelectionWorker,
         ASSERT_TRUE(diagnostics_message.value());
         const auto & diagnostics = *diagnostics_message.value();
         ASSERT_TRUE(diagnostics.graph.valid());
+        EXPECT_EQ(diagnostics.candidate_ready_mask, 0b11U);
+        EXPECT_EQ(diagnostics.candidate_counts[0], 7U);
+        EXPECT_EQ(diagnostics.candidate_counts[1], 7U);
         EXPECT_TRUE(diagnostics.component_search_evaluated);
         EXPECT_TRUE(diagnostics.global_crosscheck_evaluated);
         EXPECT_FALSE(diagnostics.global_crosscheck_pass);

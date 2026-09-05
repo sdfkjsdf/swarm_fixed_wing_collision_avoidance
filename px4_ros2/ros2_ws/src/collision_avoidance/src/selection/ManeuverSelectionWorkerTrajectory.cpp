@@ -33,6 +33,11 @@ void ManeuverSelectionWorker::refreshCandidateSet(std::uint64_t now_us)
     m_epoch_pairwise_ad_certifications.reset();
     m_epoch_certification_candidate_counts.fill(0);
     m_epoch_certification_candidate_ready.fill(false);
+    for (int remote_vehicle_id = 0;
+         remote_vehicle_id < m_params.total_agent_count;
+         ++remote_vehicle_id) {
+        freezeRemoteCertificationCandidatesForCurrentEpoch(remote_vehicle_id);
+    }
 }
 
 void ManeuverSelectionWorker::chooseAlternates(std::uint64_t now_us)
@@ -884,4 +889,3 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
 
 
 }  // namespace collision_avoidance::selection
-

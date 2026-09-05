@@ -35,6 +35,12 @@ uint64 component_hash
 
 uint8 evaluation_status
 bool component_search_evaluated
+uint32 candidate_ready_mask
+uint8[5] candidate_counts
+uint64[5] candidate_source_timestamps_us
+uint64 dropped_ownship_belief_count
+uint64 dropped_remote_intent_count
+uint64 dropped_remote_decision_count
 uint8[5] assembled_candidate_ids
 uint32 assembled_candidate_valid_mask
 uint64 assembled_candidate_hash

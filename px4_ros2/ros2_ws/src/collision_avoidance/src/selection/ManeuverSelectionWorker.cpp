@@ -84,6 +84,7 @@ bool ManeuverSelectionWorker::pushOwnshipBelief(
     input.belief = snapshot;
     if (!m_input_queue.try_push(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
+        m_dropped_ownship_beliefs.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     return true;
@@ -125,6 +126,7 @@ bool ManeuverSelectionWorker::pushRemoteIntent(
     input.packet = packet;
     if (!m_input_queue.try_push(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
+        m_dropped_remote_intents.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     return true;
@@ -140,6 +142,7 @@ bool ManeuverSelectionWorker::pushRemoteDecision(
     input.decision = decision;
     if (!m_input_queue.try_push(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
+        m_dropped_remote_decisions.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     return true;
@@ -584,39 +587,8 @@ bool ManeuverSelectionWorker::acceptRemoteIntent(
                     }
                 }
                 remote_cache = staging_cache;
-                const std::size_t remote_index = static_cast<std::size_t>(
+                freezeRemoteCertificationCandidatesForCurrentEpoch(
                     remote_vehicle_id);
-                const std::uint64_t delivery_budget_us =
-                    3 * m_params.trajectory_refresh_period_us;
-                const std::uint64_t freeze_offset_us =
-                    m_params.coordination_delay_us > delivery_budget_us
-                    ? m_params.coordination_delay_us - delivery_budget_us
-                    : 0;
-                const std::uint64_t freeze_cutoff_timestamp_us =
-                    m_epoch_generation_timestamp_us + freeze_offset_us;
-                if (m_params.interaction_graph_params.enabled
-                    && remote_cache.selection_epoch == m_selection_epoch
-                    && remote_cache.candidate_set_kind
-                        == estimation::CandidateSetKind::LegacyRoll
-                    && remote_cache.count
-                        == kExhaustiveCandidatesPerAircraft
-                    && remote_cache.source_timestamp_us
-                        <= freeze_cutoff_timestamp_us
-                    && (!m_epoch_certification_candidate_ready[remote_index]
-                        || remote_cache.source_timestamp_us
-                            > (*m_epoch_certification_candidate_sets)
-                                [remote_index][0].source_timestamp_us)) {
-                    if (!m_epoch_certification_candidate_sets) {
-                        m_epoch_certification_candidate_sets =
-                            std::make_unique<
-                                MultiAircraftExhaustiveCandidateIntentSets>();
-                    }
-                    (*m_epoch_certification_candidate_sets)[remote_index] =
-                        remote_cache.candidates;
-                    m_epoch_certification_candidate_counts[remote_index] =
-                        remote_cache.count;
-                    m_epoch_certification_candidate_ready[remote_index] = true;
-                }
                 const RemoteDecisionCache & peer =
                     m_remote_decision_caches[
                         static_cast<std::size_t>(remote_vehicle_id)];
@@ -649,6 +621,62 @@ bool ManeuverSelectionWorker::acceptRemoteIntent(
         }
     }
     return false;
+}
+
+void ManeuverSelectionWorker::freezeRemoteCertificationCandidatesForCurrentEpoch(
+    int remote_vehicle_id)
+{
+    if (!m_params.interaction_graph_params.enabled
+        || remote_vehicle_id < 0
+        || remote_vehicle_id >= m_params.total_agent_count
+        || remote_vehicle_id == m_params.vehicle_id) {
+        return;
+    }
+    const std::uint64_t delivery_budget_us =
+        3 * m_params.trajectory_refresh_period_us;
+    const std::uint64_t freeze_offset_us =
+        m_params.coordination_delay_us > delivery_budget_us
+        ? m_params.coordination_delay_us - delivery_budget_us
+        : 0;
+    const std::uint64_t freeze_cutoff_timestamp_us =
+        m_epoch_generation_timestamp_us + freeze_offset_us;
+    const std::size_t remote_index = static_cast<std::size_t>(
+        remote_vehicle_id);
+    const RemoteCandidateCache * selected_cache = nullptr;
+    for (const RemoteCandidateCache * cache : {
+            &m_remote_caches[remote_index],
+            &m_remote_previous_caches[remote_index]}) {
+        if (cache->selection_epoch != m_selection_epoch
+            || cache->candidate_set_kind
+                != estimation::CandidateSetKind::LegacyRoll
+            || cache->count != kExhaustiveCandidatesPerAircraft
+            || cache->source_timestamp_us > freeze_cutoff_timestamp_us) {
+            continue;
+        }
+        if (selected_cache == nullptr
+            || cache->source_timestamp_us
+                > selected_cache->source_timestamp_us) {
+            selected_cache = cache;
+        }
+    }
+    if (selected_cache == nullptr) {
+        return;
+    }
+    if (!m_epoch_certification_candidate_sets) {
+        m_epoch_certification_candidate_sets = std::make_unique<
+            MultiAircraftExhaustiveCandidateIntentSets>();
+    }
+    if (m_epoch_certification_candidate_ready[remote_index]
+        && selected_cache->source_timestamp_us
+            <= (*m_epoch_certification_candidate_sets)[remote_index][0]
+                .source_timestamp_us) {
+        return;
+    }
+    (*m_epoch_certification_candidate_sets)[remote_index] =
+        selected_cache->candidates;
+    m_epoch_certification_candidate_counts[remote_index] =
+        selected_cache->count;
+    m_epoch_certification_candidate_ready[remote_index] = true;
 }
 
 bool ManeuverSelectionWorker::acceptRemoteDecision(

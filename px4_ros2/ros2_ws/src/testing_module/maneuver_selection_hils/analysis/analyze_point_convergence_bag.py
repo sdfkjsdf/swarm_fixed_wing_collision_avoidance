@@ -164,6 +164,38 @@ def interaction_graph_summary(messages, start_ns):
     for message in valid:
         for index in range(int(message.component_count)):
             component_size_histogram[int(message.component_sizes[index])] += 1
+    incomplete = [
+        message for message in records
+        if int(message.evaluation_status) == 2]
+    missing_candidate_aircraft = Counter()
+    observed_candidate_counts = {
+        vehicle: Counter() for vehicle in range(AIRCRAFT_COUNT)}
+    for message in incomplete:
+        ready_mask = int(getattr(message, "candidate_ready_mask", 0))
+        counts = getattr(message, "candidate_counts", [0] * AIRCRAFT_COUNT)
+        for vehicle in range(AIRCRAFT_COUNT):
+            if not ready_mask & (1 << vehicle):
+                missing_candidate_aircraft[vehicle] += 1
+            observed_candidate_counts[vehicle][int(counts[vehicle])] += 1
+    input_drop_counts_by_vehicle = []
+    for vehicle in range(AIRCRAFT_COUNT):
+        vehicle_records = [
+            message for message in records
+            if int(message.vehicle_id) == vehicle]
+        input_drop_counts_by_vehicle.append({
+            "vehicle_id": vehicle,
+            "ownship_belief": max(
+                (int(getattr(
+                    message, "dropped_ownship_belief_count", 0))
+                 for message in vehicle_records), default=0),
+            "remote_intent": max(
+                (int(getattr(message, "dropped_remote_intent_count", 0))
+                 for message in vehicle_records), default=0),
+            "remote_decision": max(
+                (int(getattr(
+                    message, "dropped_remote_decision_count", 0))
+                 for message in vehicle_records), default=0),
+        })
     return {
         "available": True,
         "record_count": len(records),
@@ -174,6 +206,28 @@ def interaction_graph_summary(messages, start_ns):
             for status, count in sorted(Counter(
                 int(message.evaluation_status)
                 for message in records).items())},
+        "candidate_sets_incomplete_count": len(incomplete),
+        "missing_candidate_aircraft_counts": {
+            str(vehicle): missing_candidate_aircraft[vehicle]
+            for vehicle in range(AIRCRAFT_COUNT)},
+        "observed_candidate_count_histograms_on_incomplete": {
+            str(vehicle): {
+                str(count): occurrences
+                for count, occurrences in sorted(
+                    observed_candidate_counts[vehicle].items())}
+            for vehicle in range(AIRCRAFT_COUNT)},
+        "maximum_input_drop_counts": {
+            "ownship_belief": max(
+                (int(getattr(message, "dropped_ownship_belief_count", 0))
+                 for message in records), default=0),
+            "remote_intent": max(
+                (int(getattr(message, "dropped_remote_intent_count", 0))
+                 for message in records), default=0),
+            "remote_decision": max(
+                (int(getattr(message, "dropped_remote_decision_count", 0))
+                 for message in records), default=0),
+        },
+        "input_drop_counts_by_vehicle": input_drop_counts_by_vehicle,
         "global_crosscheck_pass_count": sum(
             bool(message.global_crosscheck_pass) for message in records),
         "global_crosscheck_failure_count": sum(

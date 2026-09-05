@@ -12,13 +12,6 @@ namespace
 using estimation::TrajectorySample;
 using estimation::Vec3;
 
-rclcpp::SensorDataQoS intentQos(std::size_t history_depth)
-{
-    rclcpp::SensorDataQoS qos;
-    qos.keep_last(history_depth);
-    return qos;
-}
-
 std::array<float, 18> encodeCompressedMean(
     const TrajectorySample & sample) noexcept
 {
@@ -44,6 +37,33 @@ TrajectorySample decodeCompressedMean(
 }
 
 }  // namespace
+
+std::size_t requiredTrajectoryIntentHistoryDepth(
+    std::size_t candidate_count,
+    std::uint64_t coordination_delay_us,
+    std::uint64_t trajectory_refresh_period_us) noexcept
+{
+    if (candidate_count == 0) {
+        return 1;
+    }
+    if (trajectory_refresh_period_us == 0) {
+        return candidate_count;
+    }
+    const std::uint64_t refresh_count =
+        coordination_delay_us / trajectory_refresh_period_us + 1;
+    return candidate_count * static_cast<std::size_t>(refresh_count);
+}
+
+rclcpp::QoS trajectoryIntentQos(std::size_t history_depth)
+{
+    // All candidate messages from one refresh form one logical library.  A
+    // missing member must be recovered by DDS rather than silently turning a
+    // complete published library into CandidateSetsIncomplete downstream.
+    rclcpp::QoS qos(rclcpp::KeepLast(std::max<std::size_t>(history_depth, 1)));
+    qos.reliable();
+    qos.durability_volatile();
+    return qos;
+}
 
 collision_avoidance::msg::TrajectoryIntent toRosMessage(
     const estimation::TrajectoryIntentPacket & packet)
@@ -119,7 +139,7 @@ TrajectoryIntentPublisher::TrajectoryIntentPublisher(
     const std::string & topic_name,
     std::size_t history_depth)
 : m_publisher(node.create_publisher<collision_avoidance::msg::TrajectoryIntent>(
-      topic_name, intentQos(history_depth)))
+      topic_name, trajectoryIntentQos(history_depth)))
 {
 }
 
@@ -138,7 +158,7 @@ TrajectoryIntentSubscription::TrajectoryIntentSubscription(
     m_subscription =
         node.create_subscription<collision_avoidance::msg::TrajectoryIntent>(
             topic_name,
-            intentQos(history_depth),
+            trajectoryIntentQos(history_depth),
             [callback = std::move(callback)](
                 collision_avoidance::msg::TrajectoryIntent::ConstSharedPtr message) {
                 if (callback) {

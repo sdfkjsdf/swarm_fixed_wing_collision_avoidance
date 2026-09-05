@@ -1,7 +1,8 @@
 #pragma once
 
-#include <functional>
 #include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -19,13 +20,20 @@ collision_avoidance::msg::TrajectoryIntent toRosMessage(
 estimation::TrajectoryIntentPacket fromRosMessage(
     const collision_avoidance::msg::TrajectoryIntent & message);
 
+std::size_t requiredTrajectoryIntentHistoryDepth(
+    std::size_t candidate_count,
+    std::uint64_t coordination_delay_us,
+    std::uint64_t trajectory_refresh_period_us) noexcept;
+
+rclcpp::QoS trajectoryIntentQos(std::size_t history_depth);
+
 class TrajectoryIntentPublisher
 {
 public:
     TrajectoryIntentPublisher(
         rclcpp::Node & node,
         const std::string & topic_name,
-        std::size_t history_depth = 5);
+        std::size_t history_depth);
 
     void publish(const estimation::TrajectoryIntentPacket & packet);
 
@@ -44,7 +52,7 @@ public:
         rclcpp::Node & node,
         const std::string & topic_name,
         PacketCallback callback,
-        std::size_t history_depth = 5);
+        std::size_t history_depth);
 
 private:
     rclcpp::Subscription<collision_avoidance::msg::TrajectoryIntent>::SharedPtr

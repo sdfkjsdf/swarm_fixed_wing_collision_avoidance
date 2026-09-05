@@ -61,8 +61,14 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
     const std::string airspeed_topic =
         "/px4_" + std::to_string(m_vehicle_id)
         + "/fmu/out/airspeed_validated_v1";
+    const std::size_t candidate_count = worker_params.exhaustive_test_mode
+        ? selection::kExhaustiveCandidatesPerAircraft
+        : selection::kCandidatesPerAircraft;
     const std::size_t intent_history_depth =
-        worker_params.exhaustive_test_mode ? 16U : 5U;
+        requiredTrajectoryIntentHistoryDepth(
+            candidate_count,
+            worker_params.coordination_delay_us,
+            worker_params.trajectory_refresh_period_us);
 
     m_intent_publisher = std::make_unique<TrajectoryIntentPublisher>(
         m_node, own_intent_topic, intent_history_depth);
@@ -448,6 +454,21 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 diagnostics.status);
             message.component_search_evaluated =
                 diagnostics.component_search_evaluated;
+            message.candidate_ready_mask = diagnostics.candidate_ready_mask;
+            std::copy(
+                diagnostics.candidate_counts.begin(),
+                diagnostics.candidate_counts.end(),
+                message.candidate_counts.begin());
+            std::copy(
+                diagnostics.candidate_source_timestamps_us.begin(),
+                diagnostics.candidate_source_timestamps_us.end(),
+                message.candidate_source_timestamps_us.begin());
+            message.dropped_ownship_belief_count =
+                diagnostics.dropped_ownship_belief_count;
+            message.dropped_remote_intent_count =
+                diagnostics.dropped_remote_intent_count;
+            message.dropped_remote_decision_count =
+                diagnostics.dropped_remote_decision_count;
             std::copy(
                 diagnostics.assembled_candidate_ids.begin(),
                 diagnostics.assembled_candidate_ids.end(),
