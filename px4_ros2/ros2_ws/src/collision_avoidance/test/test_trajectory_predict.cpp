@@ -139,8 +139,8 @@ TEST(Accuracy, FirstOrderResponseAtTau)
 }
 
 /* Large roll reversals must respect PX4 FW_R_RMAX.  At -13 deg with a
-   +50 deg command and tau_phi=0.5 s, the unconstrained model requests
-   126 deg/s.  The configured 70 deg/s limit permits exactly 7 deg of roll
+   +50 deg command, the unconstrained model exceeds the configured 70 deg/s
+   limit, which permits exactly 7 deg of roll
    change during this 0.1 s interval because every RK4 stage remains
    saturated. */
 TEST(Accuracy, RollRateSaturationMatchesPx4Limit)

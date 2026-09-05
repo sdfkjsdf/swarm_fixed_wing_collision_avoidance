@@ -851,6 +851,18 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
             m_pending_proposal.maximum_minimum_ad_m = maximum_minimum_ad_m;
             m_pending_proposal.valid = true;
             m_pending_proposal.resolved = false;
+            if (m_params.masd_diagnostics_enabled) {
+                ManeuverBudgetTrace trace;
+                trace.event = 1;
+                trace.epoch = m_pending_proposal.epoch;
+                trace.evaluation_timestamp_us = m_pending_proposal.timestamp_us;
+                const auto index = static_cast<std::size_t>(m_params.vehicle_id);
+                trace.candidate_id = proposed_candidate_ids[index];
+                trace.input_revision = proposed_candidate_input_revisions[index];
+                trace.source_timestamp_us = proposed_candidate_source_timestamps_us[index];
+                trace.ad_m = best.minimum_ad_m;
+                recordBudgetTrace(trace);
+            }
 
             decision.proposed_candidate_ids = proposed_candidate_ids;
             decision.proposed_candidate_valid_mask =

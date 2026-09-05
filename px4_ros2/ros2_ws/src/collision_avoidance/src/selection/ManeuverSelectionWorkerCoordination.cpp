@@ -418,6 +418,18 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
     m_selected_component_count = m_pending_proposal.component_graph
         ? m_pending_proposal.component_count : 0;
     m_has_selected_combination = true;
+    if (m_params.masd_diagnostics_enabled) {
+        ManeuverBudgetTrace trace;
+        trace.event = 2;
+        trace.epoch = m_pending_proposal.epoch;
+        trace.evaluation_timestamp_us = m_pending_proposal.timestamp_us;
+        trace.candidate_id = m_selected_candidate_ids[ownship_index];
+        trace.input_revision = m_selected_candidate_input_revisions[ownship_index];
+        trace.source_timestamp_us = m_selected_candidate_source_timestamps_us[ownship_index];
+        trace.active = m_activation_controller.status().active;
+        trace.ad_m = m_pending_proposal.evaluation.minimum_ad_m;
+        recordBudgetTrace(trace);
+    }
     const ManeuverActivationStatus committed_activation =
         m_activation_controller.status();
     m_current_best_id = committed_activation.active

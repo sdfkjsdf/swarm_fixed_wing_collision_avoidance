@@ -27,6 +27,7 @@ int main(int argc, char * argv[])
     int total_agent_num = node->get_parameter("total_agent_num").as_int();
 
     node->declare_parameter<bool>("maneuver_selection_enabled", true);
+    node->declare_parameter<bool>("masd_diagnostics_enabled", false);
     node->declare_parameter<bool>("collision_avoidance_shadow_only", true);
     node->declare_parameter<double>("maneuver_ground_speed_command", 20.0);
     node->declare_parameter<double>("desired_separation_distance", 10.0);
@@ -60,6 +61,8 @@ int main(int argc, char * argv[])
     node->declare_parameter<std::string>(
         "v4_control_architecture", "legacy_safe_control_set");
     node->declare_parameter<double>("airspeed_cruise", 15.0);
+    node->declare_parameter<double>(
+        "roll_response_time_constant_s", 0.415);
     node->declare_parameter<double>("max_roll_rate_deg_per_s", 70.0);
     node->declare_parameter<double>("max_yaw_rate_deg_per_s", 50.0);
     node->declare_parameter<double>("v4_margin_time_constant_s", 5.0);
@@ -133,6 +136,8 @@ int main(int argc, char * argv[])
                 std::llround(seconds * 1.0e6));
         };
         collision_avoidance::selection::ManeuverSelectionWorkerParams params;
+        params.masd_diagnostics_enabled = node->get_parameter(
+            "masd_diagnostics_enabled").as_bool();
         const std::string execution_policy = node->get_parameter(
             "avoidance_execution_policy").as_string();
         if (execution_policy == "amac_ad_threshold") {
@@ -167,6 +172,8 @@ int main(int argc, char * argv[])
             * std::acos(-1.0) / 180.0;
         params.predictor_params.a_lat_max =
             params.gravity_mps2 * std::tan(maximum_roll_radians);
+        params.predictor_params.tau_phi = node->get_parameter(
+            "roll_response_time_constant_s").as_double();
         params.predictor_params.phi_rate_max =
             node->get_parameter("max_roll_rate_deg_per_s").as_double()
             * std::acos(-1.0) / 180.0;
@@ -447,6 +454,13 @@ int main(int argc, char * argv[])
                 if (const auto runtime = weak_runtime.lock()) {
                     static_cast<void>(
                         runtime->pushNominalSetpoint(snapshot));
+                }
+            });
+        formation->setPublishedSetpointCallback(
+            [weak_runtime](const collision_avoidance::selection::
+                ManeuverSelectionPublishedSetpointSnapshot & snapshot) {
+                if (const auto runtime = weak_runtime.lock()) {
+                    static_cast<void>(runtime->pushPublishedSetpoint(snapshot));
                 }
             });
         RCLCPP_INFO(

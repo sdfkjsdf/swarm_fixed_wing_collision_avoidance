@@ -15,6 +15,33 @@
 namespace ce = collision_avoidance::estimation;
 namespace cs = collision_avoidance::selection;
 
+// Past-state compensation must not use any of the hypothetical future inputs.
+// These fixtures use the existing public worker queue and production propagator.
+namespace {
+cs::ManeuverSelectionPublishedSetpointSnapshot publishedInput(
+    std::uint64_t stamp, double alat, double speed = 20.0, bool valid = true)
+{
+    return {stamp, {speed, std::numeric_limits<double>::quiet_NaN(), 0.0, alat}, valid};
+}
+
+void expectPacketInitialState(
+    const cs::ManeuverSelectionWorkerOutput & output,
+    const ce::PredictState & state, const ce::PredictStateCovariance & covariance)
+{
+    ASSERT_GT(output.intent_packet_count, 0U);
+    const std::array<double, 7> mean{state.p_n,state.p_e,state.h,state.V,
+                                   state.psi,state.h_dot,state.phi};
+    for (std::size_t i = 0; i < output.intent_packet_count; ++i) {
+        for (std::size_t k = 0; k < mean.size(); ++k)
+            EXPECT_FLOAT_EQ(output.intent_packets[i].initial_state[k], float(mean[k]));
+        for (std::size_t k = 0; k < covariance.size(); ++k)
+            EXPECT_NEAR(output.intent_packets[i].initial_covariance[k], covariance[k],
+                1.0e-10 + 4.0 * std::numeric_limits<float>::epsilon()
+                    * std::abs(covariance[k]));
+    }
+}
+} // namespace
+
 TEST(ManeuverExecutionPolicy, SeparatesAmacActivationFromContinuousV4)
 {
     cs::ManeuverSelectionDecision decision;
@@ -583,8 +610,12 @@ TEST(ManeuverSelectionWorker,
         return value;
     };
 
-    cs::ManeuverSelectionWorker first(mode_b_params(0));
-    cs::ManeuverSelectionWorker second(mode_b_params(1));
+    // Match runtime ownership: two large worker objects must not share the
+    // test thread's 8 MiB stack with nested trajectory-evaluation scratch data.
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(mode_b_params(0));
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(mode_b_params(1));
+    auto & first = *first_storage;
+    auto & second = *second_storage;
     constexpr std::uint64_t start = 1'000'000ULL;
 
     cs::ManeuverSelectionWorkerOutput first_output;
@@ -1364,11 +1395,81 @@ TEST(ManeuverSelectionWorker, RetainsLastCompleteSetUntilNewRefreshIsComplete)
     EXPECT_EQ(decision_output.decision.remote_selection_epoch, 0U);
 }
 
+TEST(ManeuverSelectionWorker, BudgetTracingDoesNotChangeControlResults)
+{
+    const auto replay = [](bool enabled) {
+        auto p0 = params(0);
+        auto p1 = params(1);
+        p0.masd_diagnostics_enabled = enabled;
+        p1.masd_diagnostics_enabled = enabled;
+        auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(p0);
+        auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(p1);
+        auto & first = *first_storage;
+        auto & second = *second_storage;
+        std::vector<cs::ManeuverSelectionWorkerOutput> history;
+        cs::ManeuverSelectionWorkerOutput a, b;
+        for (std::uint64_t offset = 0; offset <= 250'000; offset += 50'000) {
+            const double elapsed = offset * 1.0e-6;
+            a = pushBeliefAndProcess(first, beliefSnapshot(
+                3'000'000 + offset, -45.0 + 20.0 * elapsed, 0, 20, 0));
+            b = pushBeliefAndProcess(second, beliefSnapshot(
+                3'000'000 + offset, 45.0 - 20.0 * elapsed, 0, -20, 0));
+            history.push_back(a);
+            history.push_back(b);
+            if (offset < 250'000) exchangePackets(first, second, a, b);
+        }
+        const auto committed = confirmTwoAircraftProposal(first, second, a, b);
+        history.insert(history.end(), committed.begin(), committed.end());
+        std::vector<cs::ManeuverBudgetTrace> traces;
+        while (auto t = first.tryPopBudgetTrace()) traces.push_back(*t);
+        while (auto t = second.tryPopBudgetTrace()) traces.push_back(*t);
+        return std::make_pair(history, traces);
+    };
+    const auto ordinary_result = replay(false);
+    const auto traced_result = replay(true);
+    const auto & ordinary = ordinary_result.first;
+    const auto & traced = traced_result.first;
+    EXPECT_TRUE(ordinary_result.second.empty());
+    ASSERT_EQ(ordinary.size(), traced.size());
+    std::array<bool, 4> observed{};
+    for (std::size_t k = 0; k < ordinary.size(); ++k) {
+        const auto & a = ordinary[k];
+        const auto & b = traced[k];
+        EXPECT_EQ(a.intent_packet_count, b.intent_packet_count);
+        for (std::size_t n = 0; n < a.intent_packet_count; ++n) {
+            EXPECT_EQ(a.intent_packets[n].initial_state, b.intent_packets[n].initial_state);
+            EXPECT_EQ(a.intent_packets[n].initial_covariance, b.intent_packets[n].initial_covariance);
+            EXPECT_EQ(a.intent_packets[n].candidate_input_revision, b.intent_packets[n].candidate_input_revision);
+        }
+        EXPECT_EQ(a.decision.selected_candidate_ids, b.decision.selected_candidate_ids);
+        EXPECT_EQ(a.decision.proposed_candidate_ids, b.decision.proposed_candidate_ids);
+        EXPECT_EQ(a.decision.coordination_qualified, b.decision.coordination_qualified);
+        EXPECT_EQ(a.decision.activation_requested, b.decision.activation_requested);
+        EXPECT_EQ(a.decision.command_execution_requested, b.decision.command_execution_requested);
+        EXPECT_EQ(a.decision.deactivation_reason, b.decision.deactivation_reason);
+        if (std::isfinite(a.decision.ad_m)) EXPECT_DOUBLE_EQ(a.decision.ad_m, b.decision.ad_m);
+    }
+    for (const auto & trace : traced_result.second) {
+        ASSERT_LT(trace.event, observed.size());
+        observed[trace.event] = true;
+        EXPECT_GT(trace.wall_ns, 0U);
+        EXPECT_GT(trace.steady_ns, 0U);
+        EXPECT_EQ(trace.dropped_trace_count, 0U);
+        EXPECT_LE(trace.state_sample_timestamp_us, trace.state_timestamp_us);
+        if (trace.event == 3) EXPECT_DOUBLE_EQ(trace.pmr_m - trace.masd_m, trace.ad_m);
+    }
+    EXPECT_TRUE(observed[1]);
+    EXPECT_TRUE(observed[2]);
+    EXPECT_TRUE(observed[3]);
+}
+
 TEST(ManeuverSelectionWorker, IndependentlySelectsAndRequestsActivation)
 {
     const auto worker_params = params();
-    cs::ManeuverSelectionWorker first(worker_params);
-    cs::ManeuverSelectionWorker second(params(1));
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(worker_params);
+    auto & first = *first_storage;
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(params(1));
+    auto & second = *second_storage;
     constexpr std::uint64_t start = 3'000'000ULL;
 
     cs::ManeuverSelectionWorkerOutput first_output;
@@ -1441,8 +1542,10 @@ TEST(ManeuverSelectionWorker, FormationGateSuppressesOnlyNewAmacActivation)
         return value;
     };
 
-    cs::ManeuverSelectionWorker first(formation_params(0));
-    cs::ManeuverSelectionWorker second(formation_params(1));
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(formation_params(0));
+    auto & first = *first_storage;
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(formation_params(1));
+    auto & second = *second_storage;
     constexpr std::uint64_t start = 4'000'000ULL;
     cs::ManeuverSelectionWorkerOutput first_output;
     cs::ManeuverSelectionWorkerOutput second_output;
@@ -1510,8 +1613,10 @@ TEST(ManeuverSelectionWorker,
 
 TEST(ManeuverSelectionWorker, DoesNotActivateWhileCurrentPlanIsSafe)
 {
-    cs::ManeuverSelectionWorker first(params());
-    cs::ManeuverSelectionWorker second(params(1));
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(params());
+    auto & first = *first_storage;
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(params(1));
+    auto & second = *second_storage;
     constexpr std::uint64_t start = 5'000'000ULL;
 
     cs::ManeuverSelectionWorkerOutput first_output;
@@ -1554,8 +1659,10 @@ TEST(ManeuverSelectionWorker, DoesNotActivateWhileCurrentPlanIsSafe)
 
 TEST(ManeuverSelectionWorker, MonitorsActivationBetweenSelectionEvents)
 {
-    cs::ManeuverSelectionWorker first(params());
-    cs::ManeuverSelectionWorker second(params(1));
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(params());
+    auto & first = *first_storage;
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(params(1));
+    auto & second = *second_storage;
     constexpr std::uint64_t start = 6'000'000ULL;
 
     cs::ManeuverSelectionWorkerOutput first_output;
@@ -1613,8 +1720,10 @@ TEST(ManeuverSelectionWorker,
     auto second_params = params(1);
     ASSERT_FALSE(first_params.v4_safe_control_enabled);
     ASSERT_FALSE(second_params.v4_safe_control_enabled);
-    cs::ManeuverSelectionWorker first(first_params);
-    cs::ManeuverSelectionWorker second(second_params);
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(first_params);
+    auto & first = *first_storage;
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(second_params);
+    auto & second = *second_storage;
     constexpr std::uint64_t start = 6'500'000ULL;
 
     cs::ManeuverSelectionWorkerOutput first_output;
@@ -1718,8 +1827,10 @@ TEST(ManeuverSelectionWorker,
 
 TEST(ManeuverSelectionWorker, WarmsSelectionButDoesNotActivateBeforeGateOpens)
 {
-    cs::ManeuverSelectionWorker first(params());
-    cs::ManeuverSelectionWorker second(params(1));
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(params());
+    auto & first = *first_storage;
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(params(1));
+    auto & second = *second_storage;
     first.setActivationEnabled(false);
     second.setActivationEnabled(false);
     constexpr std::uint64_t start = 7'000'000ULL;
@@ -1770,8 +1881,10 @@ TEST(ManeuverSelectionWorker, WarmsSelectionButDoesNotActivateBeforeGateOpens)
 TEST(ManeuverSelectionWorker,
     AmacAcceptsSameManeuverTupleDespitePeerRevisionMismatch)
 {
-    cs::ManeuverSelectionWorker first(params());
-    cs::ManeuverSelectionWorker second(params(1));
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(params());
+    auto & first = *first_storage;
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(params(1));
+    auto & second = *second_storage;
     first.setActivationEnabled(false);
     second.setActivationEnabled(false);
     constexpr std::uint64_t start = 8'000'000ULL;
@@ -1858,8 +1971,10 @@ TEST(ManeuverSelectionWorker,
     first_params.evaluator_params.desired_separation_distance_m = 1'000.0;
     auto second_params = params(1);
     second_params.evaluator_params.desired_separation_distance_m = 1'000.0;
-    cs::ManeuverSelectionWorker first(first_params);
-    cs::ManeuverSelectionWorker second(second_params);
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(first_params);
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(second_params);
+    auto & first = *first_storage;
+    auto & second = *second_storage;
     constexpr std::uint64_t start = 12'000'000ULL;
 
     cs::ManeuverSelectionWorkerOutput first_output;
@@ -1927,8 +2042,10 @@ TEST(ManeuverSelectionWorker,
     first_params.active_switching_enabled = true;
     first_params.active_switch_cost_margin = 1.0e-9;
     first_params.active_switch_minimum_ad_margin_m = 1.0e-9;
-    cs::ManeuverSelectionWorker first(first_params);
-    cs::ManeuverSelectionWorker second(params(1));
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(first_params);
+    auto & first = *first_storage;
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(params(1));
+    auto & second = *second_storage;
     constexpr std::uint64_t start = 14'000'000ULL;
 
     cs::ManeuverSelectionWorkerOutput first_output;
@@ -2016,8 +2133,10 @@ TEST(ManeuverSelectionWorker,
 
 TEST(ManeuverSelectionWorker, StartsStopsAndKeepsInstancesIndependent)
 {
-    cs::ManeuverSelectionWorker first(params());
-    cs::ManeuverSelectionWorker second(params());
+    auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(params());
+    auto & first = *first_storage;
+    auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(params());
+    auto & second = *second_storage;
     ASSERT_TRUE(first.start());
     ASSERT_TRUE(second.start());
     EXPECT_TRUE(first.running());
@@ -2675,4 +2794,145 @@ TEST(ManeuverSelectionWorker,
         beliefSnapshot(start + 300'000ULL, 1'005.0, 0.0, 20.0, 0.0));
     EXPECT_FALSE(unaffected.decision.activation_requested);
     EXPECT_FALSE(unaffected.decision.activation_just_started);
+}
+
+TEST(FusionInputHistory, UsesPublishedInputForAllCandidateStartingStates)
+{
+    auto p = params(); p.exhaustive_test_mode = true;
+    cs::ManeuverSelectionWorker worker(p);
+    auto b = beliefSnapshot(1'152'000, 0, 0, 20, 0);
+    b.timestamp_sample_us = 1'000'000;
+    const auto actual = publishedInput(1'000'000, 3.0, 22.0);
+    ASSERT_TRUE(worker.pushPublishedSetpoint(actual));
+    // Nominal metadata is not the executed command either, e.g. during override.
+    ASSERT_TRUE(worker.pushNominalSetpoint(nominalSnapshot(1'000'000, 20.0, -8.0)));
+    const auto result = pushBeliefAndProcess(worker, b);
+    ce::TrajectoryUncertainty uncertainty(p.uncertainty_params);
+    ce::TrajectoryPredict predictor(p.predictor_params);
+    ce::PredictState state; ce::PredictStateCovariance covariance;
+    ASSERT_TRUE(uncertainty.initializeFromEstimatorBelief(b.belief, state, covariance));
+    ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
+        predictor, actual.input, .152, state, covariance));
+    EXPECT_GT(state.phi, 0.0);
+    EXPECT_GT(state.V, 20.0);
+    expectPacketInitialState(result, state, covariance);
+    ASSERT_EQ(result.intent_packet_count, 7U);
+    EXPECT_LT(result.intent_packets.front().candidate_input[3], 0.0F);
+    EXPECT_GT(result.intent_packets.back().candidate_input[3], 0.0F);
+}
+
+TEST(FusionInputHistory, SplitsMeanAndCovarianceAtActualCommandSwitch)
+{
+    auto p = params(); cs::ManeuverSelectionWorker worker(p);
+    auto b = beliefSnapshot(1'152'000, 0, 0, 20, 0);
+    b.timestamp_sample_us = 1'000'000;
+    const auto first = publishedInput(990'000, 5.0);
+    const auto second = publishedInput(1'070'000, -8.0);
+    ASSERT_TRUE(worker.pushPublishedSetpoint(first));
+    ASSERT_TRUE(worker.pushPublishedSetpoint(second));
+    // An input starting exactly at the endpoint must not be applied to the past.
+    ASSERT_TRUE(worker.pushPublishedSetpoint(publishedInput(b.timestamp_us, 11.0)));
+    const auto result = pushBeliefAndProcess(worker, b);
+    ce::TrajectoryUncertainty uncertainty(p.uncertainty_params);
+    ce::TrajectoryPredict predictor(p.predictor_params);
+    ce::PredictState state; ce::PredictStateCovariance covariance;
+    ASSERT_TRUE(uncertainty.initializeFromEstimatorBelief(b.belief, state, covariance));
+    ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
+        predictor, first.input, .070, state, covariance));
+    ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
+        predictor, second.input, .082, state, covariance));
+    expectPacketInitialState(result, state, covariance);
+}
+
+TEST(FusionInputHistory, DoesNotBackfillMissingHistoryWithAFutureCommand)
+{
+    auto p = params(); cs::ManeuverSelectionWorker worker(p);
+    auto b = beliefSnapshot(1'152'000, 0, 0, 20, 0);
+    b.timestamp_sample_us = 1'000'000;
+    ASSERT_TRUE(worker.pushPublishedSetpoint(publishedInput(1'050'000, 5.0)));
+    ASSERT_TRUE(worker.pushOwnshipBelief(b));
+    ASSERT_TRUE(worker.processPendingForTest());
+    EXPECT_FALSE(worker.tryPopOutput().has_value());
+    // Resume normally once the entire delayed interval has a known command.
+    b.timestamp_sample_us = 1'050'000; b.timestamp_us = 1'202'000;
+    const auto result = pushBeliefAndProcess(worker, b);
+    EXPECT_GT(result.intent_packet_count, 0U);
+}
+
+TEST(FusionInputHistory, RejectsModeGapEvenIfAValidCommandArrivesLater)
+{
+    auto p = params(); cs::ManeuverSelectionWorker worker(p);
+    auto b = beliefSnapshot(1'152'000, 0, 0, 20, 0);
+    b.timestamp_sample_us = 1'000'000;
+    ASSERT_TRUE(worker.pushPublishedSetpoint(publishedInput(990'000, 5.0)));
+    ASSERT_TRUE(worker.pushPublishedSetpoint(publishedInput(1'040'000, 0, 20, false)));
+    ASSERT_TRUE(worker.pushPublishedSetpoint(publishedInput(1'100'000, -5.0)));
+    ASSERT_TRUE(worker.pushOwnshipBelief(b));
+    ASSERT_TRUE(worker.processPendingForTest());
+    EXPECT_FALSE(worker.tryPopOutput().has_value());
+}
+
+TEST(FusionInputHistory, IgnoresStaleInputAndCoalescesUnchangedPublications)
+{
+    auto p = params(); cs::ManeuverSelectionWorker worker(p);
+    const auto actual = publishedInput(900'000, 3.0);
+    ASSERT_TRUE(worker.pushPublishedSetpoint(actual));
+    for (std::uint64_t t = 910'000; t < 1'050'000; t += 10'000)
+        ASSERT_TRUE(worker.pushPublishedSetpoint(publishedInput(t, 3.0)));
+    ASSERT_TRUE(worker.pushPublishedSetpoint(publishedInput(950'000, -10.0)));
+    auto b = beliefSnapshot(1'152'000, 0, 0, 20, 0);
+    b.timestamp_sample_us = 1'000'000;
+    const auto result = pushBeliefAndProcess(worker, b);
+    ce::TrajectoryUncertainty uncertainty(p.uncertainty_params);
+    ce::TrajectoryPredict predictor(p.predictor_params);
+    ce::PredictState state; ce::PredictStateCovariance covariance;
+    ASSERT_TRUE(uncertainty.initializeFromEstimatorBelief(b.belief, state, covariance));
+    ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
+        predictor, actual.input, .152, state, covariance));
+    expectPacketInitialState(result, state, covariance);
+}
+
+TEST(FusionInputHistory, UndelayedBeliefNeedsNoCommandHistory)
+{
+    cs::ManeuverSelectionWorker worker(params());
+    const auto result = pushBeliefAndProcess(
+        worker, beliefSnapshot(1'000'000, 0, 0, 20, 0));
+    ASSERT_GT(result.intent_packet_count, 0U);
+    EXPECT_FLOAT_EQ(result.intent_packets[0].initial_state[6], 0.0F);
+}
+
+TEST(FusionInputHistory, OverwrittenHistoryCannotBeUsedForAnOlderBelief)
+{
+    cs::ManeuverSelectionWorker worker(params());
+    for (std::uint64_t i = 0; i < 300; ++i) {
+        ASSERT_TRUE(worker.pushPublishedSetpoint(
+            publishedInput(1'000'000 + i * 1'000, i % 2 ? 3.0 : -3.0)));
+        ASSERT_TRUE(worker.processPendingForTest());
+    }
+    auto b = beliefSnapshot(1'152'000, 0, 0, 20, 0);
+    b.timestamp_sample_us = 1'000'000;
+    ASSERT_TRUE(worker.pushOwnshipBelief(b));
+    ASSERT_TRUE(worker.processPendingForTest());
+    EXPECT_FALSE(worker.tryPopOutput().has_value());
+    b.timestamp_sample_us = 1'200'000; b.timestamp_us = 1'352'000;
+    const auto result = pushBeliefAndProcess(worker, b);
+    EXPECT_GT(result.intent_packet_count, 0U);
+}
+
+TEST(FusionInputHistory, DroppedPublicationInvalidatesTheHistory)
+{
+    cs::ManeuverSelectionWorker worker(params());
+    bool dropped = false;
+    for (std::uint64_t i = 0; i < 10'000; ++i) {
+        if (!worker.pushPublishedSetpoint(publishedInput(1'000'000 + i, 3.0))) {
+            dropped = true; break;
+        }
+    }
+    ASSERT_TRUE(dropped);
+    ASSERT_TRUE(worker.processPendingForTest());
+    auto b = beliefSnapshot(1'152'000, 0, 0, 20, 0);
+    b.timestamp_sample_us = 1'000'000;
+    ASSERT_TRUE(worker.pushOwnshipBelief(b));
+    ASSERT_TRUE(worker.processPendingForTest());
+    EXPECT_FALSE(worker.tryPopOutput().has_value());
 }

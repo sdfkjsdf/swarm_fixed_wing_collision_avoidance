@@ -13,6 +13,15 @@ for vehicle in 0 1 2 3 4; do
         "/px4_${vehicle}/fmu/out/vehicle_attitude"
         "/px4_${vehicle}/fmu/out/vtol_vehicle_status"
     )
+    if [[ "${MASD_DIAGNOSTICS_ENABLED:-false}" == "true" ]]; then
+        TOPICS+=(
+            "/common/px4_${vehicle}/maneuver_budget_trace"
+            "/common/px4_${vehicle}/trans_estimator_trajectory_belief"
+            "/px4_${vehicle}/fmu/out/timesync_status"
+            "/px4_${vehicle}/fmu/in/fixed_wing_lateral_setpoint"
+            "/px4_${vehicle}/fmu/in/fixed_wing_longitudinal_setpoint"
+        )
+    fi
 done
 
 exec ros2 bag record \

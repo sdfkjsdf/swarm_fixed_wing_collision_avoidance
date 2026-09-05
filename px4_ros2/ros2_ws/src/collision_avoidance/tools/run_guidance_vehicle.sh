@@ -34,6 +34,14 @@ for required_file in "${GUIDANCE_BIN}" "${GUIDANCE_CONFIG}" "${AMAC_POLICY_CONFI
     fi
 done
 
+MEASUREMENT_ARGS=()
+if [[ -n "${MASD_DIAGNOSTICS_ENABLED:-}" ]]; then
+    MEASUREMENT_ARGS+=(-p "masd_diagnostics_enabled:=${MASD_DIAGNOSTICS_ENABLED}")
+fi
+if [[ -n "${ROLL_RESPONSE_TIME_CONSTANT_S:-}" ]]; then
+    MEASUREMENT_ARGS+=(-p "roll_response_time_constant_s:=${ROLL_RESPONSE_TIME_CONSTANT_S}")
+fi
+
 exec "${GUIDANCE_BIN}" \
     --ros-args \
     --params-file "${GUIDANCE_CONFIG}" \
@@ -57,4 +65,5 @@ exec "${GUIDANCE_BIN}" \
     -p "v4_safe_control_enabled:=${V4_SAFE_CONTROL_ENABLED:-false}" \
     -p "v4_shadow_only:=${V4_SHADOW_ONLY:-true}" \
     -p "v4_control_architecture:=${V4_CONTROL_ARCHITECTURE:-legacy_safe_control_set}" \
-    -p "positive_margin_filter_enabled:=${POSITIVE_MARGIN_FILTER_ENABLED:-false}"
+    -p "positive_margin_filter_enabled:=${POSITIVE_MARGIN_FILTER_ENABLED:-false}" \
+    "${MEASUREMENT_ARGS[@]}"

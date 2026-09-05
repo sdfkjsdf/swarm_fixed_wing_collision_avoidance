@@ -1,8 +1,10 @@
 #include <collision_avoidance/modes/FormationMode.hpp>
 
 #include <collision_avoidance/control/GroundToEasAdapter.hpp>
+#include <collision_avoidance/communication/ManeuverBudgetTraceMessage.hpp>
 
 #include <limits>
+#include <chrono>
 
 using namespace px4_msgs::msg;
 
@@ -13,6 +15,13 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
 {
     m_vehicle_id      = vehicle_id;
     m_total_agent_num = total_agent_num;
+    if (_node.has_parameter("masd_diagnostics_enabled")
+        && _node.get_parameter("masd_diagnostics_enabled").as_bool()) {
+        m_budget_trace_publisher = _node.create_publisher<
+            collision_avoidance::msg::ManeuverBudgetTrace>(
+            "/common/px4_" + std::to_string(vehicle_id) + "/maneuver_budget_trace",
+            rclcpp::QoS(128).best_effort());
+    }
 
     _fw_setpoint = std::make_shared<px4_ros2::FwLateralLongitudinalSetpointType>(*this);
     _vtol_status = std::make_shared<px4_ros2::VtolStatus>(*this);
@@ -51,6 +60,9 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
                 m_state_for_control_mt[n].timestamp         = 0.0;
                 if (n == m_vehicle_id) {
                     m_latest_self_state_timestamp_us_mt = msg->timestamp;
+                    m_latest_self_state_received_steady_us_mt =
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
                 }
 
                 /* ── alt_hold P-제어 reference 캡처 ──
@@ -204,6 +216,7 @@ void FormationMode::onActivate()
 
 void FormationMode::onDeactivate()
 {
+    recordPublishedSetpoint(0.0F, 0.0F, false);
     RCLCPP_INFO(_node.get_logger(), "[Formation] 비활성화");
     if (m_maneuver_activation_gate_callback_mt) {
         m_maneuver_activation_gate_callback_mt(false);
@@ -314,7 +327,12 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
         px4_ros2::FwLateralLongitudinalSetpoint sp;
         sp.withLateralAcceleration(lateral_acceleration)
           .withEquivalentAirspeed(v_cmd_eas);
+        collision_avoidance::selection::ManeuverBudgetTrace trace;
+        if (m_budget_trace_publisher) collision_avoidance::selection::stampBudgetTrace(trace);
         _fw_setpoint->update(sp);
+        recordPublishedSetpoint(v_cmd_ground, lateral_acceleration, true);
+        traceSetpoint(trace.wall_ns, trace.steady_ns, true, lateral_acceleration,
+                      v_cmd_ground, v_cmd_eas);
         RCLCPP_WARN_THROTTLE(
             _node.get_logger(), *_node.get_clock(), 1000,
             "[Formation] collision-avoidance override: candidate=%u AD=%.2f "
@@ -327,6 +345,7 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
     }
 
     if (!m_has_last_output_mt) {
+        recordPublishedSetpoint(0.0F, 0.0F, false);
         /* (3) 활성화 직후 rt_thread 가 아직 첫 결과를 push 못함 → cruise fallback */
         const float v_cmd_eas = to_eas(
             m_initial_ground_speed, m_initial_course, 0.0F, 0.0F);
@@ -342,6 +361,7 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
 
     /* (4) m_last_output_mt 값 인가. is_fallback 이면 cruise. */
     if (m_last_output_mt.is_fallback) {
+        recordPublishedSetpoint(0.0F, 0.0F, false);
         const float v_cmd_eas = to_eas(
             m_initial_ground_speed, m_initial_course, 0.0F, 0.0F);
         if (std::isfinite(m_cruise_altitude_amsl)) {
@@ -368,7 +388,13 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
         px4_ros2::FwLateralLongitudinalSetpoint sp;
         sp.withLateralAcceleration(m_last_output_mt.lateral_acceleration)
           .withEquivalentAirspeed(v_cmd_eas);
+        collision_avoidance::selection::ManeuverBudgetTrace trace;
+        if (m_budget_trace_publisher) collision_avoidance::selection::stampBudgetTrace(trace);
         _fw_setpoint->update(sp);
+        recordPublishedSetpoint(horizontal_ground_speed,
+                               m_last_output_mt.lateral_acceleration, true);
+        traceSetpoint(trace.wall_ns, trace.steady_ns, false,
+                      m_last_output_mt.lateral_acceleration, horizontal_ground_speed, v_cmd_eas);
     }
 }
 
@@ -376,6 +402,56 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
    rt_loop — snapshot 을 FlockingGuidance 에 넘기고 결과를 output_queue 로.
    모든 계산(가속도, 적분, saturation, 변환, fallback) 은 FlockingGuidance 안.
    ────────────────────────────────────────────────────────────── */
+void FormationMode::recordPublishedSetpoint(
+    float ground_speed, float lateral_acceleration, bool valid)
+{
+    if (!m_published_setpoint_callback_mt
+        || m_latest_self_state_timestamp_us_mt == 0) return;
+    const auto now_us = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    collision_avoidance::selection::ManeuverSelectionPublishedSetpointSnapshot snapshot;
+    // Stay in the ownship/common-state clock on ARM and x86. Local wall clocks
+    // need not agree. This receive-time anchor is approximate: odometry
+    // transport age and subsequent PX4 command receipt are not measured here.
+    snapshot.timestamp_us = m_latest_self_state_timestamp_us_mt
+        + (now_us - m_latest_self_state_received_steady_us_mt);
+    // Receive jitter must not reverse the order of actual publications.
+    snapshot.timestamp_us = std::max(snapshot.timestamp_us,
+        m_last_published_setpoint_timestamp_us_mt + 1);
+    m_last_published_setpoint_timestamp_us_mt = snapshot.timestamp_us;
+    // These lateral paths publish EAS, not an altitude/height-rate command.
+    // Retain the predictor's existing ground-speed and level-flight convention.
+    snapshot.input = {ground_speed, std::numeric_limits<double>::quiet_NaN(),
+                      0.0, lateral_acceleration};
+    snapshot.valid = valid;
+    m_published_setpoint_callback_mt(snapshot);
+}
+
+void FormationMode::traceSetpoint(
+    std::uint64_t begin_wall_ns, std::uint64_t begin_steady_ns, bool avoidance,
+    float lateral_acceleration, float ground_speed, float eas)
+{
+    if (!m_budget_trace_publisher) return;
+    collision_avoidance::selection::ManeuverBudgetTrace trace;
+    collision_avoidance::selection::stampBudgetTrace(trace);
+    trace.publish_end_wall_ns = trace.wall_ns;
+    trace.wall_ns = begin_wall_ns;
+    trace.steady_ns = begin_steady_ns;
+    trace.event = 4;
+    trace.vehicle_id = m_vehicle_id;
+    trace.state_timestamp_us = m_latest_self_state_timestamp_us_mt;
+    trace.epoch = m_maneuver_decision_mt.local_selection_epoch;
+    trace.candidate_id = m_maneuver_decision_mt.ownship_candidate_id;
+    trace.input_revision = m_maneuver_decision_mt.selected_candidate_input_revisions[m_vehicle_id];
+    trace.active = avoidance;
+    trace.lateral_acceleration_mps2 = lateral_acceleration;
+    trace.ground_speed_command_mps = ground_speed;
+    trace.equivalent_airspeed_command_mps = eas;
+    m_budget_trace_publisher->publish(
+        collision_avoidance::communication::budgetTraceMessage(trace));
+}
+
 void FormationMode::rt_loop()
 {
     bool first_push_done = false;

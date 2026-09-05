@@ -28,14 +28,15 @@
        stepRK4() entry, not per ODE evaluation.
      - Altitude channel: PD form reduced to 1st-order lag (b_h = 0).
 
-   PX4 parameter mapping:
+   PX4 parameter relationship:
      tau_V    <-> FW_T_TAS_TC
      tau_hdot <-> FW_T_ALT_TC
-     tau_phi  <-> FW_R_TC (default 0.5s) ★ direct mapping ★
+     phi_rate_max <-> FW_R_RMAX
 
-   Caveat: PX4 time constants are "error convergence" TCs.
-     tau_phi maps most directly to the roll loop and can typically
-     adopt FW_R_TC value without further identification.
+   tau_phi is an effective reduced-order response constant, not a direct copy
+   of FW_R_TC.  FW_R_TC maps roll-attitude error to a body-rate setpoint;
+   the inner rate controller and airframe then determine measured roll.
+   Identify tau_phi from PX4 roll-setpoint/attitude logs for the airframe.
    ────────────────────────────────────────────────────────────────────
    설계 원칙 (명세 §1, §4, §6):
      - rt_thread (1ms) 컨텍스트 안에서 직접 호출 가능 — stateless / heap-free / lock-free

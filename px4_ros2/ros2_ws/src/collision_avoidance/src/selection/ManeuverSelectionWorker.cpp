@@ -36,6 +36,10 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
   m_mode_b_intent_adapter(params.mode_b_intent_adapter_params),
   m_v4_candidate_adapter(params.v4_candidate_adapter_params)
 {
+    if (m_params.masd_diagnostics_enabled) {
+        m_budget_trace_queue = std::make_unique<
+            common::SpscQueue<ManeuverBudgetTrace, 256>>();
+    }
     if (m_params.formation_discrimination_enabled) {
         m_formation_discriminator.emplace(
             m_params.formation_boundary_config);
@@ -127,6 +131,20 @@ bool ManeuverSelectionWorker::pushRemoteIntent(
     if (!m_input_queue.try_push(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
         m_dropped_remote_intents.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
+
+bool ManeuverSelectionWorker::pushPublishedSetpoint(
+    const ManeuverSelectionPublishedSetpointSnapshot & snapshot) noexcept
+{
+    WorkerInput input;
+    input.kind = InputKind::PublishedSetpoint;
+    input.published = snapshot;
+    if (!m_input_queue.try_push(input)) {
+        m_published_input_history_lost.store(true, std::memory_order_release);
+        m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     return true;
@@ -240,6 +258,8 @@ bool ManeuverSelectionWorker::processPending()
             acceptAirspeed(input->airspeed);
         } else if (input->kind == InputKind::NominalSetpoint) {
             acceptNominalSetpoint(input->nominal);
+        } else if (input->kind == InputKind::PublishedSetpoint) {
+            acceptPublishedSetpoint(input->published);
         } else if (input->kind == InputKind::RemoteIntent) {
             acceptRemoteIntent(input->remote_vehicle_id, input->packet);
         } else {
@@ -247,6 +267,13 @@ bool ManeuverSelectionWorker::processPending()
         }
     }
 
+    if (m_published_input_history_lost.exchange(false, std::memory_order_acq_rel)) {
+        // A dropped command could be a switch; never propagate through that
+        // unknown interval using the previous command as if it were confirmed.
+        m_published_input_head = 0;
+        m_published_input_count = 0;
+        m_has_latest_state = false;
+    }
     if (!m_has_latest_state) {
         return consumed_input;
     }
@@ -385,23 +412,89 @@ bool ManeuverSelectionWorker::acceptOwnshipBelief(
         return false;
     }
 
-    const estimation::PredictInput * compensation_input =
-        m_candidate_table.find(m_current_best_id);
-    if (compensation_input == nullptr
-        || !m_uncertainty.compensateFusionHorizonDelay(
-            m_predictor,
-            *compensation_input,
-            static_cast<double>(delay_us) * 1.0e-6,
-            state,
-            covariance)) {
+    if (!compensateUsingPublishedInputs(
+            snapshot.timestamp_sample_us, snapshot.timestamp_us,
+            state, covariance)) {
         return false;
     }
 
     m_latest_state = state;
     m_latest_covariance = covariance;
     m_latest_state_timestamp_us = snapshot.timestamp_us;
+    m_latest_state_sample_timestamp_us = snapshot.timestamp_sample_us;
     m_has_latest_state = true;
     return true;
+}
+
+bool ManeuverSelectionWorker::acceptPublishedSetpoint(
+    const ManeuverSelectionPublishedSetpointSnapshot & snapshot)
+{
+    if (snapshot.timestamp_us == 0
+        || snapshot.timestamp_us < m_latest_published_input_timestamp_us) return false;
+    m_latest_published_input_timestamp_us = snapshot.timestamp_us;
+    auto entry = snapshot;
+    const auto & u = entry.input;
+    entry.valid = entry.valid && std::isfinite(u.V_cmd) && u.V_cmd > 0.0
+        && (std::isfinite(u.h_cmd) || std::isnan(u.h_cmd))
+        && std::isfinite(u.h_dot_cmd) && std::isfinite(u.a_lat_cmd);
+    if (m_published_input_count > 0) {
+        auto & last = (*m_published_inputs)[(m_published_input_head
+            + m_published_inputs->size() - 1) % m_published_inputs->size()];
+        if (entry.timestamp_us < last.timestamp_us) return false;
+        if (entry.timestamp_us == last.timestamp_us) {
+            last = entry;
+            return true;
+        }
+        const auto & previous = last.input;
+        if (entry.valid == last.valid && (!entry.valid
+            || (u.V_cmd == previous.V_cmd
+                && (u.h_cmd == previous.h_cmd
+                    || (std::isnan(u.h_cmd) && std::isnan(previous.h_cmd)))
+                && u.h_dot_cmd == previous.h_dot_cmd
+                && u.a_lat_cmd == previous.a_lat_cmd))) {
+            return true; // Store changes, not identical publication heartbeats.
+        }
+    }
+    (*m_published_inputs)[m_published_input_head] = entry;
+    m_published_input_head =
+        (m_published_input_head + 1) % m_published_inputs->size();
+    m_published_input_count = std::min(
+        m_published_input_count + 1, m_published_inputs->size());
+    return true;
+}
+
+bool ManeuverSelectionWorker::compensateUsingPublishedInputs(
+    std::uint64_t start_us, std::uint64_t end_us,
+    estimation::PredictState & state,
+    estimation::PredictStateCovariance & covariance)
+{
+    if (start_us == end_us) return true;
+    const ManeuverSelectionPublishedSetpointSnapshot * held = nullptr;
+    auto cursor_us = start_us;
+    const auto oldest = (m_published_input_head + m_published_inputs->size()
+        - m_published_input_count) % m_published_inputs->size();
+    const auto advance = [&](std::uint64_t until_us) {
+        if (until_us == cursor_us) return true;
+        if (!held || !held->valid) return false;
+        return m_uncertainty.compensateFusionHorizonDelay(
+            m_predictor, held->input,
+            static_cast<double>(until_us - cursor_us) * 1.0e-6,
+            state, covariance);
+    };
+    for (std::size_t i = 0; i < m_published_input_count; ++i) {
+        const auto & entry = (*m_published_inputs)[
+            (oldest + i) % m_published_inputs->size()];
+        if (entry.timestamp_us <= start_us) {
+            held = &entry;
+        } else if (entry.timestamp_us < end_us) {
+            if (!advance(entry.timestamp_us)) return false;
+            cursor_us = entry.timestamp_us;
+            held = &entry;
+        } else {
+            break;
+        }
+    }
+    return advance(end_us);
 }
 
 bool ManeuverSelectionWorker::acceptAirspeed(
@@ -832,6 +925,17 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
         }
     }
     return true;
+}
+
+void ManeuverSelectionWorker::recordBudgetTrace(ManeuverBudgetTrace trace)
+{
+    if (!m_budget_trace_queue) return;
+    stampBudgetTrace(trace);
+    trace.vehicle_id = m_params.vehicle_id;
+    trace.state_timestamp_us = m_latest_state_timestamp_us;
+    trace.state_sample_timestamp_us = m_latest_state_sample_timestamp_us;
+    trace.dropped_trace_count = m_dropped_budget_traces;
+    if (!m_budget_trace_queue->try_push(trace)) ++m_dropped_budget_traces;
 }
 
 bool ManeuverSelectionWorker::publishOutput(

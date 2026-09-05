@@ -13,6 +13,7 @@
 #include <collision_avoidance/communication/TrajectoryIntentTransport.hpp>
 #include <collision_avoidance/msg/maneuver_selection_decision.hpp>
 #include <collision_avoidance/msg/interaction_graph_diagnostics.hpp>
+#include <collision_avoidance/msg/maneuver_budget_trace.hpp>
 #include <collision_avoidance/selection/ManeuverSelectionWorker.hpp>
 
 namespace collision_avoidance::communication
@@ -42,6 +43,9 @@ public:
     bool pushNominalSetpoint(
         const selection::ManeuverSelectionNominalSetpointSnapshot & snapshot)
         noexcept;
+    bool pushPublishedSetpoint(
+        const selection::ManeuverSelectionPublishedSetpointSnapshot & snapshot)
+        noexcept;
 
 private:
     void onBelief(
@@ -55,6 +59,8 @@ private:
     bool m_enabled{false};
     DecisionCallback m_decision_callback;
     selection::ManeuverSelectionWorker m_worker;
+    rclcpp::Publisher<collision_avoidance::msg::ManeuverBudgetTrace>::SharedPtr
+        m_budget_trace_publisher;
 
     std::unique_ptr<TrajectoryIntentPublisher> m_intent_publisher;
     rclcpp::Publisher<

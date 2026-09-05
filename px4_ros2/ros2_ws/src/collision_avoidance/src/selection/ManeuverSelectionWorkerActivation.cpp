@@ -280,6 +280,26 @@ bool ManeuverSelectionWorker::buildActivationSample(
             return false;
         }
         ++evaluated_threat_count;
+        if (m_params.masd_diagnostics_enabled) {
+            ManeuverBudgetTrace trace;
+            trace.event = 3;
+            trace.epoch = m_latest_selection_decision.local_selection_epoch;
+            trace.evaluation_timestamp_us = now_us;
+            trace.peer_id = remote_id;
+            trace.candidate_id = ownship_candidate_id;
+            trace.peer_candidate_id = remote_candidate_id;
+            trace.input_revision = ownship_intent->candidate_input_revision;
+            trace.peer_input_revision = remote_intent->candidate_input_revision;
+            trace.source_timestamp_us = ownship_intent->source_timestamp_us;
+            trace.peer_source_timestamp_us = remote_intent->source_timestamp_us;
+            trace.active = monitor_actual_execution;
+            trace.pmr_m = pair.pmr_m;
+            trace.masd_m = pair.masd_m;
+            trace.u95_m = pair.uncertainty_margin_95_m;
+            trace.ad_m = pair.ad_m;
+            trace.pmr_horizon_s = pair.pmr_time_offset_s;
+            recordBudgetTrace(trace);
+        }
         if (pair.ad_m < minimum_ad) {
             minimum_ad = pair.ad_m;
             decision.pmr_m = pair.pmr_m;
@@ -880,4 +900,3 @@ void ManeuverSelectionWorker::updateActivationState(
 
 
 }  // namespace collision_avoidance::selection
-

@@ -1,4 +1,5 @@
 #include <collision_avoidance/communication/DistributedManeuverSelectionRuntime.hpp>
+#include <collision_avoidance/communication/ManeuverBudgetTraceMessage.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -38,6 +39,12 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
     // Candidate generation and exchange may warm up before Formation, but the
     // AMAC execution state is armed only by the Formation lifecycle.
     m_worker.setActivationEnabled(false);
+    if (worker_params.masd_diagnostics_enabled) {
+        m_budget_trace_publisher = m_node.create_publisher<
+            collision_avoidance::msg::ManeuverBudgetTrace>(
+            "/common/px4_" + std::to_string(vehicle_id) + "/maneuver_budget_trace",
+            rclcpp::QoS(128).best_effort());
+    }
 
     if (total_agent_count < 2
         || total_agent_count
@@ -315,6 +322,18 @@ bool DistributedManeuverSelectionRuntime::pushNominalSetpoint(
     return accepted;
 }
 
+bool DistributedManeuverSelectionRuntime::pushPublishedSetpoint(
+    const selection::ManeuverSelectionPublishedSetpointSnapshot & snapshot) noexcept
+{
+    const bool accepted = m_worker.pushPublishedSetpoint(snapshot);
+    if (!accepted) {
+        RCLCPP_WARN_THROTTLE(
+            m_node.get_logger(), *m_node.get_clock(), 1000,
+            "[maneuver-selection] published setpoint history input queue full");
+    }
+    return accepted;
+}
+
 void DistributedManeuverSelectionRuntime::onBelief(
     const px4_msgs::msg::EstimatorTrajectoryBelief & message)
 {
@@ -372,6 +391,9 @@ void DistributedManeuverSelectionRuntime::onAirspeed(
 
 void DistributedManeuverSelectionRuntime::drainWorkerOutput()
 {
+    while (const auto trace = m_worker.tryPopBudgetTrace()) {
+        if (m_budget_trace_publisher) m_budget_trace_publisher->publish(budgetTraceMessage(*trace));
+    }
     while (const auto output = m_worker.tryPopOutput()) {
         if (m_intent_publisher) {
             for (std::size_t index = 0;

@@ -54,7 +54,9 @@ struct PredictParams {
     /* 1차 지연 시정수 [s]  (§2.4 표) */
     double tau_V       = 4.0;     /* FW_T_TAS_TC */
     double tau_hdot    = 2.0;     /* FW_T_ALT_TC (rate term inner loop) */
-    double tau_phi     = 0.5;     /* FW_R_TC (default 0.5s) — roll loop 직접 매핑 */
+    double tau_phi     = 0.415;   /* effective roll response [s]; identify from
+                                      roll setpoint -> measured roll, using
+                                      FW_R_TC only as the outer-loop anchor */
     double phi_rate_max = 1.2217304763960306; /* FW_R_RMAX = 70 deg/s [rad/s] */
 
     /* ★ 신규 — 종 채널 PD 의 altitude P 게인 [1/s].

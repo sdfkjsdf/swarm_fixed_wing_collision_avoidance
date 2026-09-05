@@ -27,6 +27,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "msg/TrajectoryIntent.msg"
     "msg/ManeuverSelectionDecision.msg"
     "msg/InteractionGraphDiagnostics.msg"
+    "msg/ManeuverBudgetTrace.msg"
 )
 rosidl_get_typesupport_target(collision_avoidance_typesupport_target
     ${PROJECT_NAME} rosidl_typesupport_cpp)

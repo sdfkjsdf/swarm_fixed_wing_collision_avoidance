@@ -19,6 +19,7 @@
 #include <collision_avoidance/selection/BackupThreatIntentAdapterV4.hpp>
 #include <collision_avoidance/selection/ManeuverActivationController.hpp>
 #include <collision_avoidance/selection/ManeuverCombinationEvaluator.hpp>
+#include <collision_avoidance/selection/ManeuverBudgetTrace.hpp>
 #include <collision_avoidance/selection/SafeControlCandidateAdapter.hpp>
 
 namespace collision_avoidance::selection
@@ -71,6 +72,7 @@ enum class V4ControlArchitecture : std::uint8_t
 
 struct ManeuverSelectionWorkerParams
 {
+    bool masd_diagnostics_enabled{false};
     int vehicle_id{0};
     int total_agent_count{2};
     estimation::PredictParams predictor_params{};
@@ -199,6 +201,18 @@ struct ManeuverSelectionNominalSetpointSnapshot
     // Predictor convention: altitude is positive Up.
     double altitude_command_m{0.0};
     double lateral_acceleration_px4_mps2{0.0};
+    bool valid{false};
+};
+
+// Final command actually published by the local mode (not a selected candidate).
+// timestamp_us is in the ownship/common-state clock. Publication is NOT an
+// acknowledgement of PX4 receipt or physical actuator response.
+struct ManeuverSelectionPublishedSetpointSnapshot
+{
+    std::uint64_t timestamp_us{0};
+    estimation::PredictInput input{};
+    // false marks a gap, e.g. mode exit or a course-controlled fallback whose
+    // realized lateral-acceleration command is not available here.
     bool valid{false};
 };
 
@@ -548,6 +562,10 @@ public:
     bool start();
     void stop();
     bool running() const noexcept;
+    std::optional<ManeuverBudgetTrace> tryPopBudgetTrace() noexcept
+    {
+        return m_budget_trace_queue ? m_budget_trace_queue->try_pop() : std::nullopt;
+    }
 
     bool pushOwnshipBelief(
         const ManeuverSelectionBeliefSnapshot & snapshot) noexcept;
@@ -555,6 +573,8 @@ public:
         const ManeuverSelectionAirspeedSnapshot & snapshot) noexcept;
     bool pushNominalSetpoint(
         const ManeuverSelectionNominalSetpointSnapshot & snapshot) noexcept;
+    bool pushPublishedSetpoint(
+        const ManeuverSelectionPublishedSetpointSnapshot & snapshot) noexcept;
     bool pushRemoteIntent(
         int remote_vehicle_id,
         const estimation::TrajectoryIntentPacket & packet) noexcept;
@@ -583,6 +603,7 @@ private:
         OwnshipBelief,
         Airspeed,
         NominalSetpoint,
+        PublishedSetpoint,
         RemoteIntent,
         RemoteDecision,
     };
@@ -594,6 +615,7 @@ private:
         ManeuverSelectionBeliefSnapshot belief{};
         ManeuverSelectionAirspeedSnapshot airspeed{};
         ManeuverSelectionNominalSetpointSnapshot nominal{};
+        ManeuverSelectionPublishedSetpointSnapshot published{};
         estimation::TrajectoryIntentPacket packet{};
         ManeuverSelectionPeerDecision decision{};
     };
@@ -663,6 +685,12 @@ private:
     void workerLoop();
     bool processPending();
     bool acceptOwnshipBelief(const ManeuverSelectionBeliefSnapshot & snapshot);
+    bool acceptPublishedSetpoint(
+        const ManeuverSelectionPublishedSetpointSnapshot & snapshot);
+    bool compensateUsingPublishedInputs(
+        std::uint64_t start_us, std::uint64_t end_us,
+        estimation::PredictState & state,
+        estimation::PredictStateCovariance & covariance);
     bool acceptAirspeed(
         const ManeuverSelectionAirspeedSnapshot & snapshot);
     bool acceptNominalSetpoint(
@@ -832,12 +860,29 @@ private:
     estimation::PredictState m_latest_state{};
     estimation::PredictStateCovariance m_latest_covariance{};
     std::uint64_t m_latest_state_timestamp_us{0};
+    std::uint64_t m_latest_state_sample_timestamp_us{0};
+    std::unique_ptr<common::SpscQueue<ManeuverBudgetTrace, 256>>
+        m_budget_trace_queue;
+    std::uint64_t m_dropped_budget_traces{0};
+    void recordBudgetTrace(ManeuverBudgetTrace trace);
     bool m_has_latest_state{false};
 
     ManeuverSelectionAirspeedSnapshot m_latest_airspeed{};
     bool m_has_latest_airspeed{false};
     ManeuverSelectionNominalSetpointSnapshot m_latest_nominal{};
     bool m_has_latest_nominal{false};
+
+    // Bounded history, allocated once at construction (not on the control stack):
+    // 256 entries cover >1 s at 100 Hz, with no allocations during propagation.
+    // Overwritten/missing history is rejected, never filled with a candidate.
+    using PublishedInputHistory =
+        std::array<ManeuverSelectionPublishedSetpointSnapshot, 256>;
+    std::unique_ptr<PublishedInputHistory> m_published_inputs{
+        std::make_unique<PublishedInputHistory>()};
+    std::size_t m_published_input_head{0};
+    std::size_t m_published_input_count{0};
+    std::uint64_t m_latest_published_input_timestamp_us{0};
+    std::atomic<bool> m_published_input_history_lost{false};
 
     // Selected command, activation and epoch state.
     std::array<std::uint8_t, kExhaustiveCandidatesPerAircraft>

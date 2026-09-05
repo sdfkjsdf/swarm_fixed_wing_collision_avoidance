@@ -27,6 +27,7 @@
     gravity: 9.80665                # 중력가속도 [m/s^2]
 
     max_roll_deg: 50.0              # PX4 FW_R_LIM (coordinated turn 계산용)
+    roll_response_time_constant_s: 0.415 # 5-aircraft SITL ULog effective phi response; FW_R_TC=0.4 s
     max_roll_rate_deg_per_s: 70.0   # PX4 FW_R_RMAX (predictor roll-rate clamp)
     amac_communication_delay_margin_m: 0.0 # residual-only MASD term; calibrate before enabling
     # Project-defined swarm interaction graph. When enabled, its globally
