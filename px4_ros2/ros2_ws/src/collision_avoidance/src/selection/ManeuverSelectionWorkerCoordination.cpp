@@ -260,27 +260,24 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
         authoritative_input_revisions[aircraft_index] =
             cache.decision.proposed_candidate_input_revisions[
                 aircraft_index];
-        const bool component_graph_match = m_pending_proposal.component_graph
-            && cache.decision.proposed_component_graph
-            && cache.decision.proposed_candidate_library_hash
-                == m_pending_proposal.candidate_library_hash
-            && cache.decision.proposed_graph_hash
-                == m_pending_proposal.graph_hash
-            && cache.decision.proposed_component_hash
-                == m_pending_proposal.component_hash
-            && cache.decision.proposed_component_solution_hash
-                == m_pending_proposal.component_solution_hash
-            && cache.decision.proposed_candidate_valid_mask
-                == m_pending_proposal.candidate_valid_mask;
-        const bool legacy_proposal_match = !m_pending_proposal.component_graph
-            && !cache.decision.proposed_component_graph
-            && cache.decision.proposed_candidate_ids
+        const bool candidate_tuple_match =
+            cache.decision.proposed_candidate_ids
                 == m_pending_proposal.candidate_ids
             && cache.decision.proposed_candidate_valid_mask
                 == m_pending_proposal.candidate_valid_mask
             && (!require_revision_consensus
                 || cache.decision.proposed_candidate_input_revisions
                     == m_pending_proposal.candidate_input_revisions);
+        // The graph hashes include raw floating-point trajectory and AD bytes.
+        // They are useful diagnostics, but are not a portable consensus key
+        // across heterogeneous CPUs.  Coordinate execution on the discrete
+        // candidate tuple that every participant will actually apply.
+        const bool component_graph_match = m_pending_proposal.component_graph
+            && cache.decision.proposed_component_graph
+            && candidate_tuple_match;
+        const bool legacy_proposal_match = !m_pending_proposal.component_graph
+            && !cache.decision.proposed_component_graph
+            && candidate_tuple_match;
         if ((!component_graph_match && !legacy_proposal_match)
             || cache.decision.proposed_v4_cutover
                 != m_pending_proposal.v4_cutover
@@ -512,4 +509,3 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
 
 
 }  // namespace collision_avoidance::selection
-

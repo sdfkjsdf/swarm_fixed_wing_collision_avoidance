@@ -278,7 +278,12 @@ SIM_PID=$!
 echo "[run] waiting for all five PX4 odometry topics"
 READY=0
 for attempt in $(seq 1 100); do
-    topic_list=$(ros2 topic list 2>/dev/null || true)
+    if [[ -n "${ROS_DISCOVERY_SERVER:-}" ]]; then
+        topic_list=$(ROS_SUPER_CLIENT=TRUE ros2 topic list \
+            --no-daemon --spin-time 1 2>/dev/null || true)
+    else
+        topic_list=$(ros2 topic list 2>/dev/null || true)
+    fi
     ready_count=0
     for vehicle in 0 1 2 3 4; do
         if grep -q "^/px4_${vehicle}/fmu/out/vehicle_odometry$" \
@@ -303,8 +308,14 @@ if [[ ${READY} -ne 1 ]]; then
     exit 1
 fi
 
-bash "${SCRIPT_DIR}/record_point_convergence_bag.sh" "${BAG_DIR}" \
-    > "${LOG_DIR}/rosbag.log" 2>&1 &
+if [[ -n "${ROS_DISCOVERY_SERVER:-}" ]]; then
+    ROS_SUPER_CLIENT=TRUE \
+        bash "${SCRIPT_DIR}/record_point_convergence_bag.sh" "${BAG_DIR}" \
+        > "${LOG_DIR}/rosbag.log" 2>&1 &
+else
+    bash "${SCRIPT_DIR}/record_point_convergence_bag.sh" "${BAG_DIR}" \
+        > "${LOG_DIR}/rosbag.log" 2>&1 &
+fi
 BAG_PID=$!
 sleep 2
 

@@ -2425,11 +2425,28 @@ TEST(ManeuverSelectionWorker,
         outputs[0].decision.proposed_component_solution_hash,
         outputs[1].decision.proposed_component_solution_hash);
 
-    auto commits = confirmTwoAircraftProposal(
-        *workers[0], *workers[1], outputs[0], outputs[1]);
-    // Matching component identities from every participant are the existing
-    // proposal/peer-awareness qualification.  No additional all-peer
-    // acknowledgement protocol is introduced for component proposals.
+    auto peer_for_first = peerDecision(outputs[1].decision);
+    auto peer_for_second = peerDecision(outputs[0].decision);
+    ++peer_for_first.proposed_candidate_library_hash;
+    ++peer_for_first.proposed_graph_hash;
+    ++peer_for_first.proposed_component_hash;
+    ++peer_for_first.proposed_component_solution_hash;
+    ++peer_for_second.proposed_candidate_library_hash;
+    ++peer_for_second.proposed_graph_hash;
+    ++peer_for_second.proposed_component_hash;
+    ++peer_for_second.proposed_component_solution_hash;
+    ASSERT_TRUE(workers[0]->pushRemoteDecision(1, peer_for_first));
+    ASSERT_TRUE(workers[1]->pushRemoteDecision(0, peer_for_second));
+    ASSERT_TRUE(workers[0]->processPendingForTest());
+    ASSERT_TRUE(workers[1]->processPendingForTest());
+    const auto first_commit = workers[0]->tryPopOutput();
+    const auto second_commit = workers[1]->tryPopOutput();
+    ASSERT_TRUE(first_commit.has_value());
+    ASSERT_TRUE(second_commit.has_value());
+    const std::array<cs::ManeuverSelectionWorkerOutput, 2> commits{
+        first_commit.value(), second_commit.value()};
+    // Raw floating-point graph hashes may differ across CPU architectures.
+    // Matching discrete candidate tuples remain the execution consensus key.
     EXPECT_TRUE(commits[0].decision.coordination_qualified);
     EXPECT_TRUE(commits[1].decision.coordination_qualified);
     EXPECT_TRUE(commits[0].decision.ownship_candidate_valid);
