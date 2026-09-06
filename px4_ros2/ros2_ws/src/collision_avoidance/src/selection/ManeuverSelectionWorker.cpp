@@ -259,7 +259,10 @@ void ManeuverSelectionWorker::workerLoop()
 bool ManeuverSelectionWorker::processPending()
 {
     bool consumed_input = false;
-    while (const auto input = m_input_queue.try_pop()) {
+    const auto input_count = m_input_queue.sizeForConsumer();
+    for (std::size_t index = 0; index < input_count; ++index) {
+        const auto input = m_input_queue.try_pop();
+        if (!input) break;
         consumed_input = true;
         if (input->kind == InputKind::OwnshipBelief) {
             acceptOwnshipBelief(input->belief);
@@ -613,26 +616,27 @@ bool ManeuverSelectionWorker::acceptRemoteIntent(
         return false;
     }
 
-    estimation::ReceivedTrajectoryIntent received;
-    if (!m_receiver.receive(packet, received)) {
-        return false;
-    }
-
     const bool staging_key_matches =
         staging_cache.selection_epoch == packet.selection_epoch
         && staging_cache.source_timestamp_us
             == packet.source_timestamp_us
         && staging_cache.candidate_set_kind == packet.candidate_set_kind
         && staging_cache.expected_count == required_candidate_count;
-    if (!staging_key_matches) {
-        if (staging_cache.count > 0
+    // Reject an obsolete staging key before spline/covariance reconstruction.
+    // Do not reset staging until the incoming packet has passed validation.
+    if (!staging_key_matches && staging_cache.count > 0
             && keyLess(
                 packet.selection_epoch,
                 packet.source_timestamp_us,
                 staging_cache.selection_epoch,
                 staging_cache.source_timestamp_us)) {
-            return false;
-        }
+        return false;
+    }
+    estimation::ReceivedTrajectoryIntent received;
+    if (!m_receiver.receive(packet, received)) {
+        return false;
+    }
+    if (!staging_key_matches) {
         staging_cache = RemoteCandidateCache{};
         staging_cache.selection_epoch = packet.selection_epoch;
         staging_cache.source_timestamp_us = packet.source_timestamp_us;

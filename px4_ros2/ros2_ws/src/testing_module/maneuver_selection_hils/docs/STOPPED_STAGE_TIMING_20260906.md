@@ -1,5 +1,11 @@
 # Stopped-only stage timing (baseline fd1698b)
 
+Historical scope: the byte-identical output-drain claims and the SILS results
+below describe the timing-only anchor `b1e15d4`. The subsequent user-authorized
+queue/metadata correction intentionally changes drain bounds and detailed log
+level; see `BOUNDED_INPUT_AND_REJOIN_AUDIT_20260906.md`. Do not attribute the
+earlier SILS timing/performance numbers to that later correction without a run.
+
 Optional `stopped_stage_timing_enabled` (default false), independently enabled
 with `STOPPED_STAGE_TIMING_ENABLED=true` by the shared guidance launcher. The
 hybrid launcher passes the same variable to Pi. Existing MASD diagnostics are

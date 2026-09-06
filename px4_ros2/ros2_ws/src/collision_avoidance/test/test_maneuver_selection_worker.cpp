@@ -16,6 +16,30 @@
 namespace ce = collision_avoidance::estimation;
 namespace cs = collision_avoidance::selection;
 
+TEST(SpscQueue, EntryBatchDoesNotChaseProducerAndRetainsFifoAcrossWrap)
+{
+    collision_avoidance::common::SpscQueue<int, 4> queue;
+    EXPECT_EQ(queue.sizeForConsumer(), 0U);
+    for (int round = 0; round < 10; ++round) {
+        ASSERT_TRUE(queue.try_push(0));
+        ASSERT_TRUE(queue.try_push(1));
+        const auto count = queue.sizeForConsumer();
+        ASSERT_EQ(count, 2U);
+        for (std::size_t i = 0; i < count; ++i) {
+            ASSERT_EQ(queue.try_pop(), static_cast<int>(i));
+            ASSERT_TRUE(queue.try_push(static_cast<int>(i) + 2));
+        }
+        // Arrivals during the pass belong to the next pass, not the current one.
+        EXPECT_EQ(queue.sizeForConsumer(), 2U);
+        EXPECT_EQ(queue.try_pop(), 2);
+        EXPECT_EQ(queue.try_pop(), 3);
+        EXPECT_FALSE(queue.try_pop());
+    }
+    for (int i = 0; i < 4; ++i) ASSERT_TRUE(queue.try_push(i));
+    EXPECT_EQ(queue.sizeForConsumer(), 4U);
+    EXPECT_FALSE(queue.try_push(4));
+}
+
 // Past-state compensation must not use any of the hypothetical future inputs.
 // These fixtures use the existing public worker queue and production propagator.
 namespace {
@@ -1900,6 +1924,80 @@ TEST(ManeuverSelectionWorker,
     EXPECT_EQ(
         second_output.decision.deactivation_reason,
         cs::ManeuverDeactivationReason::FutureCpaClear);
+}
+
+TEST(ManeuverSelectionWorker, UnavailableRejoinMetadataDoesNotSuppressSevenCandidates)
+{
+    for (bool future_nominal : {false, true}) {
+        SCOPED_TRACE(future_nominal);
+        auto p0 = params(0);
+        auto p1 = params(1);
+        for (auto * p : {&p0, &p1}) {
+            p->exhaustive_test_mode = true;
+            p->evaluator_params.desired_separation_distance_m = 100.0;
+            p->v4_maximum_nominal_age_us = 100'000;
+        }
+        auto first = std::make_unique<cs::ManeuverSelectionWorker>(p0);
+        auto second = std::make_unique<cs::ManeuverSelectionWorker>(p1);
+        constexpr std::uint64_t start = 6'500'000;
+        cs::ManeuverSelectionWorkerOutput a, b;
+        for (std::uint64_t offset = 0; offset <= 250'000; offset += 50'000) {
+            ASSERT_TRUE(first->pushNominalSetpoint(nominalSnapshot(start + offset)));
+            ASSERT_TRUE(second->pushNominalSetpoint(nominalSnapshot(start + offset)));
+            a = pushBeliefAndProcess(*first, beliefSnapshot(start + offset, -40, 0, 20, 0));
+            b = pushBeliefAndProcess(*second, beliefSnapshot(start + offset, 40, 0, -20, 0));
+            exchangePackets(*first, *second, a, b);
+        }
+        const auto commits = confirmTwoAircraftProposal(*first, *second, a, b);
+        ASSERT_TRUE(commits[0].decision.activation_requested);
+        for (const auto offset : {300'000ULL, 350'000ULL}) {
+            ASSERT_TRUE(first->pushNominalSetpoint(nominalSnapshot(start + offset)));
+            ASSERT_TRUE(second->pushNominalSetpoint(nominalSnapshot(start + offset)));
+            a = pushBeliefAndProcess(*first, beliefSnapshot(start + offset, -1000, 0, -20, 0));
+            b = pushBeliefAndProcess(*second, beliefSnapshot(start + offset, 1000, 0, 20, 0));
+            exchangePackets(*first, *second, a, b);
+        }
+        ASSERT_TRUE(a.decision.activation_requested);
+        ASSERT_TRUE(a.decision.safe_rejoin_active);
+        ce::TrajectoryPredict predictor(p0.predictor_params);
+        ce::TrajectoryIntentReceiver receiver(predictor, p0.uncertainty_params);
+        bool held_request = a.decision.safe_rejoin_active;
+        const auto check = [&](std::uint64_t offset, bool nominal_available) {
+            SCOPED_TRACE(offset);
+            // Packet construction precedes the existing activation monitor update.
+            const bool request = held_request && nominal_available;
+            auto output = pushBeliefAndProcess(*first,
+                beliefSnapshot(start + offset, -1000, 0, -20, 0));
+            EXPECT_EQ(output.intent_packet_count, 7U);
+            EXPECT_TRUE(output.decision.activation_requested);
+            for (std::size_t i = 0; i < output.intent_packet_count; ++i) {
+                const auto & packet = output.intent_packets[i];
+                EXPECT_EQ(packet.candidate_id, i);
+                EXPECT_EQ(packet.safe_rejoin_requested, request);
+                EXPECT_EQ(std::isfinite(packet.nominal_lateral_acceleration_mps2), nominal_available);
+                ce::ReceivedTrajectoryIntent received;
+                EXPECT_TRUE(receiver.receive(packet, received));
+                // The receiver must still reject contradictory metadata from peers.
+                auto contradictory = packet;
+                contradictory.safe_rejoin_requested = true;
+                contradictory.nominal_lateral_acceleration_mps2 =
+                    std::numeric_limits<float>::quiet_NaN();
+                EXPECT_FALSE(receiver.receive(contradictory, received));
+            }
+            held_request = output.decision.safe_rejoin_active;
+        };
+        // Both cases start with a verified held request: one advertises a valid
+        // request, the other exercises the recorded +8 ms future-nominal failure.
+        ASSERT_TRUE(first->pushNominalSetpoint(nominalSnapshot(
+            start + 400'000 + (future_nominal ? 8'000 : 0))));
+        check(400'000, !future_nominal);
+        check(450'000, true);  // Nominal becomes usable without relaxing time checks.
+        check(550'000, false); // Stale nominal must not suppress avoidance either.
+        auto invalid = nominalSnapshot(start + 600'000);
+        invalid.valid = false;
+        ASSERT_TRUE(first->pushNominalSetpoint(invalid));
+        check(600'000, false);
+    }
 }
 
 TEST(ManeuverSelectionWorker, WarmsSelectionButDoesNotActivateBeforeGateOpens)

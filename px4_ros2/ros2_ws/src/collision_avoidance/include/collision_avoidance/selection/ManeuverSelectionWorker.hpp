@@ -571,6 +571,15 @@ public:
     {
         return m_budget_trace_queue ? m_budget_trace_queue->try_pop() : std::nullopt;
     }
+    // ROS output consumer only; used to bound one callback to its entry batch.
+    std::size_t pendingBudgetTraceCount() const noexcept
+    {
+        return m_budget_trace_queue ? m_budget_trace_queue->sizeForConsumer() : 0;
+    }
+    std::size_t pendingOutputCount() const noexcept
+    {
+        return m_output_queue.sizeForConsumer();
+    }
 
     bool pushOwnshipBelief(
         const ManeuverSelectionBeliefSnapshot & snapshot) noexcept;

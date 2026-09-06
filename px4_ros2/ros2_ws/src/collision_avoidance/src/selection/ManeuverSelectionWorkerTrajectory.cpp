@@ -223,7 +223,12 @@ bool ManeuverSelectionWorker::buildCurrentIntentSet(
             nominal_input_available
             ? static_cast<float>(nominal_input.a_lat_cmd)
             : std::numeric_limits<float>::quiet_NaN();
-        packets[index].safe_rejoin_requested = m_safe_rejoin_active;
+        // Rejoin is auxiliary metadata, not a prerequisite for a valid
+        // avoidance candidate. Never request it with an unavailable command.
+        // Keep the local activation/release state and receiver validation intact.
+        packets[index].safe_rejoin_requested = m_safe_rejoin_active
+            && nominal_input_available
+            && std::isfinite(packets[index].nominal_lateral_acceleration_mps2);
         if (!m_receiver.receive(packets[index], received_candidates[index])) {
             m_ownship_candidates_complete = false;
             m_ownship_candidate_count = 0;

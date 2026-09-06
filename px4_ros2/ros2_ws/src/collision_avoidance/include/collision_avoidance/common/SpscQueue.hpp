@@ -13,6 +13,12 @@ class SpscQueue {
     static_assert(Capacity > 0, "capacity must be greater than zero");
     static_assert((Capacity & (Capacity - 1)) == 0, "must be power of 2");
 public:
+    // Consumer thread only. Capture a finite FIFO batch before draining so a
+    // concurrent producer cannot extend the current processing pass forever.
+    std::size_t sizeForConsumer() const noexcept {
+        const auto tail = tail_.load(std::memory_order_relaxed);
+        return head_.load(std::memory_order_acquire) - tail;
+    }
     bool try_push(const T& item) noexcept {
         const auto head = head_.load(std::memory_order_relaxed);
         const auto tail = tail_.load(std::memory_order_acquire);

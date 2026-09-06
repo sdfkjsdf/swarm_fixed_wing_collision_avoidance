@@ -397,10 +397,16 @@ void DistributedManeuverSelectionRuntime::onAirspeed(
 void DistributedManeuverSelectionRuntime::drainWorkerOutput()
 {
     std::optional<selection::ManeuverSelectionDecision> latest_control_decision;
-    while (const auto trace = m_worker.tryPopBudgetTrace()) {
+    const auto trace_count = m_worker.pendingBudgetTraceCount();
+    const auto output_count = m_worker.pendingOutputCount();
+    for (std::size_t index = 0; index < trace_count; ++index) {
+        const auto trace = m_worker.tryPopBudgetTrace();
+        if (!trace) break;
         if (m_budget_trace_publisher) m_budget_trace_publisher->publish(budgetTraceMessage(*trace));
     }
-    while (const auto output = m_worker.tryPopOutput()) {
+    for (std::size_t output_index = 0; output_index < output_count; ++output_index) {
+        const auto output = m_worker.tryPopOutput();
+        if (!output) break;
         if (m_intent_publisher) {
             for (std::size_t index = 0;
                  index < output->intent_packet_count; ++index) {
@@ -819,7 +825,7 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 m_decision_publisher->publish(message);
             }
             latest_control_decision = output->decision;
-            RCLCPP_INFO(
+            RCLCPP_DEBUG(
                 m_node.get_logger(),
                 "[maneuver-selection] vehicle=%d selected_epoch=%llu "
                 "proposal_epoch=%llu remote_epoch=%llu qualified=%d "
