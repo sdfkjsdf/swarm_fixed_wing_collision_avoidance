@@ -35,6 +35,9 @@ for required_file in "${GUIDANCE_BIN}" "${GUIDANCE_CONFIG}" "${AMAC_POLICY_CONFI
 done
 
 MEASUREMENT_ARGS=()
+if [[ -n "${STOPPED_STAGE_TIMING_ENABLED:-}" ]]; then
+    MEASUREMENT_ARGS+=(-p "stopped_stage_timing_enabled:=${STOPPED_STAGE_TIMING_ENABLED}")
+fi
 if [[ -n "${MASD_DIAGNOSTICS_ENABLED:-}" ]]; then
     MEASUREMENT_ARGS+=(-p "masd_diagnostics_enabled:=${MASD_DIAGNOSTICS_ENABLED}")
 fi

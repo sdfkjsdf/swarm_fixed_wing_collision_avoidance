@@ -36,6 +36,9 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
   m_mode_b_intent_adapter(params.mode_b_intent_adapter_params),
   m_v4_candidate_adapter(params.v4_candidate_adapter_params)
 {
+    if (m_params.stopped_stage_timing_enabled) {
+        m_stopped_stage_timing = std::make_unique<StoppedStageTiming>();
+    }
     if (m_params.masd_diagnostics_enabled) {
         m_budget_trace_queue = std::make_unique<
             common::SpscQueue<ManeuverBudgetTrace, 256>>();
@@ -78,6 +81,12 @@ void ManeuverSelectionWorker::stop()
 bool ManeuverSelectionWorker::running() const noexcept
 {
     return m_running.load(std::memory_order_acquire);
+}
+
+void ManeuverSelectionWorker::stopAndWriteStageTiming(std::ostream & out)
+{
+    stop();
+    if (m_stopped_stage_timing) m_stopped_stage_timing->write(out, m_params.vehicle_id);
 }
 
 bool ManeuverSelectionWorker::pushOwnshipBelief(
@@ -287,6 +296,11 @@ bool ManeuverSelectionWorker::processPending()
     output.generated_timestamp_us = now_us;
     output.selection_epoch = m_selection_epoch;
 
+    // Timestamps only here; persist records after the existing output handoff.
+    const bool measure = static_cast<bool>(m_stopped_stage_timing);
+    std::array<StageTimingRecord, 3> timing{};
+    std::size_t timing_count = 0;
+
     const bool selection_due = !m_epoch_evaluated
         && now_us >= m_epoch_generation_timestamp_us
         && now_us - m_epoch_generation_timestamp_us
@@ -295,7 +309,14 @@ bool ManeuverSelectionWorker::processPending()
         const std::uint64_t common_evaluation_timestamp_us =
             m_epoch_generation_timestamp_us
             + m_params.coordination_delay_us;
+        const auto begin = measure ? StoppedStageTiming::now() : 0;
         evaluateCurrentSet(common_evaluation_timestamp_us, output);
+        if (measure) {
+            const auto end = StoppedStageTiming::now();
+            timing[timing_count++] = {now_us, m_selection_epoch,
+                m_params.candidate_refresh_period_us, begin, end, 2,
+                static_cast<std::uint8_t>(activeCandidateCount()), output.decision.proposal_valid, false};
+        }
         m_epoch_evaluated = true;
     }
 
@@ -306,6 +327,7 @@ bool ManeuverSelectionWorker::processPending()
 
     bool trajectory_refreshed = false;
     if (now_us >= m_next_trajectory_refresh_timestamp_us) {
+        const auto begin = measure ? StoppedStageTiming::now() : 0;
         if (!v4CutoverMode() || !m_v4_cutover_ready) {
             buildCurrentIntentSet(now_us, output);
         }
@@ -358,6 +380,12 @@ bool ManeuverSelectionWorker::processPending()
                 output.intent_packet_count = 0;
             }
         }
+        if (measure) {
+            const auto end = StoppedStageTiming::now();
+            timing[timing_count++] = {now_us, m_selection_epoch,
+                m_params.trajectory_refresh_period_us, begin, end, 1,
+                static_cast<std::uint8_t>(output.intent_packet_count), output.intent_packet_count > 0, false};
+        }
         trajectory_refreshed = true;
         do {
             m_next_trajectory_refresh_timestamp_us +=
@@ -372,10 +400,15 @@ bool ManeuverSelectionWorker::processPending()
         // acknowledgement and selected-intent awareness. Publish that state
         // with the 20 Hz trajectory refresh; an unrelated V4 shadow evaluator
         // must never be the mechanism that supplies this heartbeat.
+        const auto begin = measure ? StoppedStageTiming::now() : 0;
         updateActivationState(
             now_us,
             selection_due || trajectory_refreshed || coordination_committed,
             output);
+        if (measure) {
+            const auto end = StoppedStageTiming::now();
+            timing[timing_count++] = {now_us, m_selection_epoch, 0, begin, end, 3, 0, false, false};
+        }
     }
 
     if (output.has_decision) {
@@ -386,8 +419,15 @@ bool ManeuverSelectionWorker::processPending()
         m_latest_selection_decision.command_execution_requested =
             output.decision.command_execution_requested;
     }
+    bool output_queued = false;
     if (output.intent_packet_count > 0 || output.has_decision) {
-        publishOutput(output);
+        output_queued = publishOutput(output);
+    }
+    if (measure) {
+        for (std::size_t i = 0; i < timing_count; ++i) {
+            timing[i].output_queued = output_queued;
+            m_stopped_stage_timing->append(timing[i]);
+        }
     }
     return consumed_input;
 }

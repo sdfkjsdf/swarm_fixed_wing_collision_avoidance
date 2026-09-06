@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <thread>
 
 #include <rclcpp/rclcpp.hpp>
@@ -155,6 +156,7 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
     params.evaluator_params.ownship_half_wingspan_m = 1.072;
     params.evaluator_params.threat_half_wingspan_m = 1.072;
     params.v4_safe_control_enabled = true;
+    params.stopped_stage_timing_enabled = true;
 
     std::optional<cs::ManeuverSelectionDecision> decision_a;
     std::optional<cs::ManeuverSelectionDecision> decision_b;
@@ -232,6 +234,13 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
         decision_a->v4_candidates.candidate_count);
 
     executor.remove_node(node);
+    std::ostringstream stopped_log;
+    runtime_a->stopAndWriteStageTiming(stopped_log);
+    EXPECT_NE(stopped_log.str().find("[stop-stage-begin],1,0,"), std::string::npos);
+    EXPECT_NE(stopped_log.str().find("[stop-stage],1,"), std::string::npos);
+    EXPECT_NE(stopped_log.str().find("[stop-stage],2,"), std::string::npos);
+    EXPECT_NE(stopped_log.str().find("[stop-stage],3,"), std::string::npos);
+    EXPECT_NE(stopped_log.str().find("[stop-stage-end],0,"), std::string::npos);
     runtime_b.reset();
     runtime_a.reset();
     static_cast<void>(intent_a_subscription);

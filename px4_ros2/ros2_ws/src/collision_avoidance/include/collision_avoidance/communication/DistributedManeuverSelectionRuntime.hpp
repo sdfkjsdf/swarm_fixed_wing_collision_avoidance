@@ -39,6 +39,8 @@ public:
         const DistributedManeuverSelectionRuntime &) = delete;
 
     bool enabled() const noexcept;
+    // Called only after the ROS executor has stopped, not from its callbacks.
+    void stopAndWriteStageTiming(std::ostream & out);
     void setActivationEnabled(bool enabled) noexcept;
     bool pushNominalSetpoint(
         const selection::ManeuverSelectionNominalSetpointSnapshot & snapshot)

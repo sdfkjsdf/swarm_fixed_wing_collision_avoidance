@@ -20,6 +20,7 @@
 #include <collision_avoidance/selection/ManeuverActivationController.hpp>
 #include <collision_avoidance/selection/ManeuverCombinationEvaluator.hpp>
 #include <collision_avoidance/selection/ManeuverBudgetTrace.hpp>
+#include <collision_avoidance/selection/StoppedStageTiming.hpp>
 #include <collision_avoidance/selection/SafeControlCandidateAdapter.hpp>
 
 namespace collision_avoidance::selection
@@ -73,6 +74,7 @@ enum class V4ControlArchitecture : std::uint8_t
 struct ManeuverSelectionWorkerParams
 {
     bool masd_diagnostics_enabled{false};
+    bool stopped_stage_timing_enabled{false};
     int vehicle_id{0};
     int total_agent_count{2};
     estimation::PredictParams predictor_params{};
@@ -561,6 +563,9 @@ public:
 
     bool start();
     void stop();
+    // Lifecycle-owner only: stops/joins before reading. Never call from a callback
+    // during flight or concurrently with start()/processPendingForTest().
+    void stopAndWriteStageTiming(std::ostream & out);
     bool running() const noexcept;
     std::optional<ManeuverBudgetTrace> tryPopBudgetTrace() noexcept
     {
@@ -865,6 +870,7 @@ private:
     std::unique_ptr<common::SpscQueue<ManeuverBudgetTrace, 256>>
         m_budget_trace_queue;
     std::uint64_t m_dropped_budget_traces{0};
+    std::unique_ptr<StoppedStageTiming> m_stopped_stage_timing;
     void recordBudgetTrace(ManeuverBudgetTrace trace);
     bool m_has_latest_state{false};
 

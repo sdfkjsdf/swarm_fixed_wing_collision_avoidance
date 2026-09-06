@@ -303,6 +303,11 @@ bool DistributedManeuverSelectionRuntime::enabled() const noexcept
     return m_enabled;
 }
 
+void DistributedManeuverSelectionRuntime::stopAndWriteStageTiming(std::ostream & out)
+{
+    m_worker.stopAndWriteStageTiming(out);
+}
+
 void DistributedManeuverSelectionRuntime::setActivationEnabled(
     bool enabled) noexcept
 {

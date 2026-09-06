@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <thread>
 #include <vector>
 
@@ -1397,11 +1398,13 @@ TEST(ManeuverSelectionWorker, RetainsLastCompleteSetUntilNewRefreshIsComplete)
 
 TEST(ManeuverSelectionWorker, BudgetTracingDoesNotChangeControlResults)
 {
-    const auto replay = [](bool enabled) {
+    const auto replay = [](bool enabled, bool stopped_timing = false) {
         auto p0 = params(0);
         auto p1 = params(1);
         p0.masd_diagnostics_enabled = enabled;
         p1.masd_diagnostics_enabled = enabled;
+        p0.stopped_stage_timing_enabled = stopped_timing;
+        p1.stopped_stage_timing_enabled = stopped_timing;
         auto first_storage = std::make_unique<cs::ManeuverSelectionWorker>(p0);
         auto second_storage = std::make_unique<cs::ManeuverSelectionWorker>(p1);
         auto & first = *first_storage;
@@ -1427,6 +1430,26 @@ TEST(ManeuverSelectionWorker, BudgetTracingDoesNotChangeControlResults)
     };
     const auto ordinary_result = replay(false);
     const auto traced_result = replay(true);
+    const auto buffered_result = replay(false, true);
+    ASSERT_EQ(ordinary_result.first.size(), buffered_result.first.size());
+    EXPECT_TRUE(buffered_result.second.empty()); // no legacy trace transport
+    for (std::size_t k = 0; k < ordinary_result.first.size(); ++k) {
+        const auto & a = ordinary_result.first[k];
+        const auto & b = buffered_result.first[k];
+        ASSERT_EQ(a.intent_packet_count, b.intent_packet_count);
+        for (std::size_t n = 0; n < a.intent_packet_count; ++n) {
+            EXPECT_EQ(a.intent_packets[n].initial_state, b.intent_packets[n].initial_state);
+            EXPECT_EQ(a.intent_packets[n].initial_covariance, b.intent_packets[n].initial_covariance);
+            EXPECT_EQ(a.intent_packets[n].candidate_input_revision, b.intent_packets[n].candidate_input_revision);
+        }
+        EXPECT_EQ(a.decision.selected_candidate_ids, b.decision.selected_candidate_ids);
+        EXPECT_EQ(a.decision.proposed_candidate_ids, b.decision.proposed_candidate_ids);
+        EXPECT_EQ(a.decision.coordination_qualified, b.decision.coordination_qualified);
+        EXPECT_EQ(a.decision.activation_requested, b.decision.activation_requested);
+        EXPECT_EQ(a.decision.command_execution_requested, b.decision.command_execution_requested);
+        EXPECT_EQ(a.decision.deactivation_reason, b.decision.deactivation_reason);
+        if (std::isfinite(a.decision.ad_m)) EXPECT_DOUBLE_EQ(a.decision.ad_m, b.decision.ad_m);
+    }
     const auto & ordinary = ordinary_result.first;
     const auto & traced = traced_result.first;
     EXPECT_TRUE(ordinary_result.second.empty());
@@ -1461,6 +1484,60 @@ TEST(ManeuverSelectionWorker, BudgetTracingDoesNotChangeControlResults)
     EXPECT_TRUE(observed[1]);
     EXPECT_TRUE(observed[2]);
     EXPECT_TRUE(observed[3]);
+}
+
+TEST(ManeuverSelectionWorker, StoppedTimingIsBoundedAndKeepsFirstRecords)
+{
+    auto buffer = std::make_unique<cs::StoppedStageTiming>();
+    for (std::size_t i = 0; i < cs::StoppedStageTiming::capacity + 3; ++i) {
+        cs::StageTimingRecord record;
+        record.source_us = i;
+        buffer->append(record);
+    }
+    EXPECT_EQ(buffer->size, cs::StoppedStageTiming::capacity);
+    EXPECT_EQ(buffer->dropped, 3U);
+    EXPECT_EQ(buffer->records.front().source_us, 0U);
+    EXPECT_EQ(buffer->records.back().source_us, cs::StoppedStageTiming::capacity - 1);
+}
+
+TEST(ManeuverSelectionWorker, StoppedTimingDoesNotNeedBudgetDiagnostics)
+{
+    auto p = params(0);
+    p.stopped_stage_timing_enabled = true;
+    p.masd_diagnostics_enabled = false;
+    p.exhaustive_test_mode = true;
+    auto worker = std::make_unique<cs::ManeuverSelectionWorker>(p);
+    for (const auto offset : {0ULL, 64'000ULL, 120'000ULL}) {
+        const auto output = pushBeliefAndProcess(*worker,
+            beliefSnapshot(3'000'000 + offset, -45, 0, 20, 0));
+        EXPECT_EQ(output.intent_packet_count, 7U);
+    }
+    EXPECT_FALSE(worker->tryPopBudgetTrace());
+    std::ostringstream out;
+    worker->stopAndWriteStageTiming(out);
+    EXPECT_FALSE(worker->running());
+    EXPECT_NE(out.str().find("[stop-stage-begin],1,0,3,0"), std::string::npos);
+    EXPECT_NE(out.str().find("[stop-stage],1,3064000,"), std::string::npos);
+    EXPECT_NE(out.str().find(",7,1,1\n"), std::string::npos);
+    EXPECT_NE(out.str().find("[stop-stage-end],0,3"), std::string::npos);
+}
+
+TEST(ManeuverSelectionWorker, StoppedTimingJoinsThreadAndDisabledWritesNothing)
+{
+    auto p = params(0);
+    auto off = std::make_unique<cs::ManeuverSelectionWorker>(p);
+    std::ostringstream empty;
+    off->stopAndWriteStageTiming(empty);
+    EXPECT_TRUE(empty.str().empty());
+    p.stopped_stage_timing_enabled = true;
+    auto on = std::make_unique<cs::ManeuverSelectionWorker>(p);
+    ASSERT_TRUE(on->start());
+    ASSERT_TRUE(on->pushOwnshipBelief(beliefSnapshot(3'000'000, -45, 0, 20, 0)));
+    std::ostringstream log;
+    on->stopAndWriteStageTiming(log); // final drain is joined before serialization
+    EXPECT_FALSE(on->running());
+    EXPECT_NE(log.str().find("[stop-stage],1,"), std::string::npos);
+    EXPECT_NE(log.str().find("[stop-stage-end],0,1"), std::string::npos);
 }
 
 TEST(ManeuverSelectionWorker, IndependentlySelectsAndRequestsActivation)

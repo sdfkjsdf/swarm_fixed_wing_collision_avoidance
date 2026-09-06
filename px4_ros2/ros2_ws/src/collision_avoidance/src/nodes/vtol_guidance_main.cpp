@@ -2,6 +2,8 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -28,6 +30,7 @@ int main(int argc, char * argv[])
 
     node->declare_parameter<bool>("maneuver_selection_enabled", true);
     node->declare_parameter<bool>("masd_diagnostics_enabled", false);
+    node->declare_parameter<bool>("stopped_stage_timing_enabled", false);
     node->declare_parameter<bool>("collision_avoidance_shadow_only", true);
     node->declare_parameter<double>("maneuver_ground_speed_command", 20.0);
     node->declare_parameter<double>("desired_separation_distance", 10.0);
@@ -138,6 +141,8 @@ int main(int argc, char * argv[])
         collision_avoidance::selection::ManeuverSelectionWorkerParams params;
         params.masd_diagnostics_enabled = node->get_parameter(
             "masd_diagnostics_enabled").as_bool();
+        params.stopped_stage_timing_enabled = node->get_parameter(
+            "stopped_stage_timing_enabled").as_bool();
         const std::string execution_policy = node->get_parameter(
             "avoidance_execution_policy").as_string();
         if (execution_policy == "amac_ad_threshold") {
@@ -507,6 +512,13 @@ int main(int argc, char * argv[])
 
     /* [6] 실행 */
     rclcpp::spin(node);
+    if (maneuver_selection_runtime && node->get_parameter("stopped_stage_timing_enabled").as_bool()) {
+        // No live executor or worker during formatting/SSH output. SIGKILL cannot
+        // dump memory; a complete footer is required by the offline analyzer.
+        std::ostringstream timing_log;
+        maneuver_selection_runtime->stopAndWriteStageTiming(timing_log);
+        std::cout << timing_log.str() << std::flush;
+    }
     rclcpp::shutdown();
     return 0;
 }
