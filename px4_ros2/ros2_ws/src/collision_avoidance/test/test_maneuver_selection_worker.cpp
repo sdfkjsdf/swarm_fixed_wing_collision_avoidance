@@ -40,6 +40,57 @@ TEST(SpscQueue, EntryBatchDoesNotChaseProducerAndRetainsFifoAcrossWrap)
     EXPECT_FALSE(queue.try_push(4));
 }
 
+TEST(OrderedSpscInbox, IsolatesStreamsAndRetainsGlobalFifoAcrossWrap)
+{
+    collision_avoidance::common::OrderedSpscInbox<int, 3, 4> inbox;
+    std::array<int, 2> batch{};
+    for (int round = 0; round < 10; ++round) {
+        for (int i = 0; i < 4; ++i) ASSERT_TRUE(inbox.try_push(1, i));
+        ASSERT_FALSE(inbox.try_push(1, 999));
+        // A full peer queue must not consume local or another peer's reserve.
+        ASSERT_TRUE(inbox.try_push(0, 4));
+        ASSERT_TRUE(inbox.try_push(2, 5));
+        ASSERT_FALSE(inbox.try_push(3, 999));
+        for (int i = 0; i < 6; i += 2) {
+            ASSERT_EQ(inbox.drainTo(batch), 2U);
+            EXPECT_EQ(batch[0], i);
+            EXPECT_EQ(batch[1], i + 1);
+        }
+        EXPECT_EQ(inbox.drainTo(batch), 0U);
+        // Bulk removal frees slots before a caller runs expensive handlers.
+        ASSERT_TRUE(inbox.try_push(2, 6));
+        ASSERT_TRUE(inbox.try_push(0, 7));
+        ASSERT_EQ(inbox.drainTo(batch), 2U);
+        ASSERT_TRUE(inbox.try_push(0, 8));
+        EXPECT_EQ(batch[0], 6);
+        EXPECT_EQ(batch[1], 7);
+        ASSERT_EQ(inbox.drainTo(batch), 1U);
+        EXPECT_EQ(batch[0], 8);
+    }
+}
+
+TEST(OrderedSpscInbox, ConcurrentProducerPreservesOrderWithoutUnboundedDrain)
+{
+    collision_avoidance::common::OrderedSpscInbox<int, 5, 64> inbox;
+    constexpr int count = 100'000;
+    std::thread producer([&] {
+        for (int i = 0; i < count; ++i) {
+            while (!inbox.try_push(static_cast<std::size_t>(i % 5), i))
+                std::this_thread::yield();
+        }
+    });
+    std::array<int, 64> batch{};
+    int received = 0;
+    while (received < count) {
+        const auto size = inbox.drainTo(batch);
+        EXPECT_LE(size, batch.size());
+        for (std::size_t i = 0; i < size; ++i) EXPECT_EQ(batch[i], received++);
+        if (!size) std::this_thread::yield();
+    }
+    producer.join();
+    EXPECT_EQ(inbox.drainTo(batch), 0U);
+}
+
 // Past-state compensation must not use any of the hypothetical future inputs.
 // These fixtures use the existing public worker queue and production propagator.
 namespace {
@@ -1522,6 +1573,22 @@ TEST(ManeuverSelectionWorker, StoppedTimingIsBoundedAndKeepsFirstRecords)
     EXPECT_EQ(buffer->dropped, 3U);
     EXPECT_EQ(buffer->records.front().source_us, 0U);
     EXPECT_EQ(buffer->records.back().source_us, cs::StoppedStageTiming::capacity - 1);
+    for (std::size_t i = 0; i < cs::StoppedStageTiming::pipeline_capacity + 2; ++i) {
+        cs::PipelineTimingRecord record;
+        record.source_us = i;
+        buffer->appendPipeline(record);
+    }
+    for (std::size_t i = 0; i < cs::StoppedStageTiming::belief_capacity + 2; ++i) {
+        cs::BeliefTimingRecord record;
+        record.source_us = i;
+        buffer->appendBelief(record);
+    }
+    EXPECT_EQ(buffer->pipeline_dropped, 2U);
+    EXPECT_EQ(buffer->belief_dropped, 2U);
+    EXPECT_EQ(buffer->pipelines.front().source_us, 0U);
+    EXPECT_EQ(buffer->beliefs.front().source_us, 0U);
+    EXPECT_EQ(buffer->pipeline_size, cs::StoppedStageTiming::pipeline_capacity);
+    EXPECT_EQ(buffer->belief_size, cs::StoppedStageTiming::belief_capacity);
 }
 
 TEST(ManeuverSelectionWorker, StoppedTimingDoesNotNeedBudgetDiagnostics)
@@ -1544,6 +1611,9 @@ TEST(ManeuverSelectionWorker, StoppedTimingDoesNotNeedBudgetDiagnostics)
     EXPECT_NE(out.str().find("[stop-stage],1,3064000,"), std::string::npos);
     EXPECT_NE(out.str().find(",7,1,1\n"), std::string::npos);
     EXPECT_NE(out.str().find("[stop-stage-end],0,3"), std::string::npos);
+    EXPECT_NE(out.str().find("[stop-pipeline-begin],1,0,3,0,3,0"), std::string::npos);
+    EXPECT_NE(out.str().find("[stop-belief],3064000,"), std::string::npos);
+    EXPECT_NE(out.str().find("[stop-pipeline-end],0,3,3"), std::string::npos);
 }
 
 TEST(ManeuverSelectionWorker, StoppedTimingJoinsThreadAndDisabledWritesNothing)
@@ -3198,4 +3268,44 @@ TEST(FusionInputHistory, DroppedPublicationInvalidatesTheHistory)
     ASSERT_TRUE(worker.pushOwnshipBelief(b));
     ASSERT_TRUE(worker.processPendingForTest());
     EXPECT_FALSE(worker.tryPopOutput().has_value());
+}
+
+TEST(FusionInputHistory, PeerBurstCannotDropLocalHistoryOrBelief)
+{
+    // Exercise every ownship ID: the local partition must not alias a peer.
+    for (int ownship = 0; ownship < 5; ++ownship) {
+        auto p = params(ownship, 5);
+        p.exhaustive_test_mode = true;
+        auto worker = std::make_unique<cs::ManeuverSelectionWorker>(p);
+        ce::TrajectoryIntentPacket invalid_packet{};
+        for (int peer = 0; peer < 5; ++peer) {
+            if (peer == ownship) continue;
+            for (std::size_t i = 0; i < cs::kSelectionWorkerInputCapacity; ++i)
+                ASSERT_TRUE(worker->pushRemoteIntent(peer, invalid_packet));
+            EXPECT_FALSE(worker->pushRemoteIntent(peer, invalid_packet));
+        }
+        auto belief = beliefSnapshot(1'152'000, 0, 0, 20, 0);
+        belief.timestamp_sample_us = 1'000'000;
+        const auto actual = publishedInput(1'000'000, 3.0);
+        ASSERT_TRUE(worker->pushPublishedSetpoint(actual));
+        ASSERT_TRUE(worker->pushOwnshipBelief(belief));
+        // Preserve FIFO and the old 64-item work limit, not a 320-item pass.
+        for (int peer_batch = 0; peer_batch < 4; ++peer_batch) {
+            ASSERT_TRUE(worker->processPendingForTest());
+            EXPECT_FALSE(worker->tryPopOutput());
+        }
+        ASSERT_TRUE(worker->processPendingForTest());
+        const auto output = worker->tryPopOutput();
+        ASSERT_TRUE(output);
+        ASSERT_EQ(output->intent_packet_count, 7U);
+        ce::TrajectoryUncertainty uncertainty(p.uncertainty_params);
+        ce::TrajectoryPredict predictor(p.predictor_params);
+        ce::PredictState state;
+        ce::PredictStateCovariance covariance;
+        ASSERT_TRUE(uncertainty.initializeFromEstimatorBelief(belief.belief, state, covariance));
+        ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
+            predictor, actual.input, .152, state, covariance));
+        expectPacketInitialState(*output, state, covariance);
+        EXPECT_EQ(worker->droppedInputCount(), 4U);
+    }
 }

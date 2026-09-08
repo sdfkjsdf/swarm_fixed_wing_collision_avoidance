@@ -237,13 +237,15 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                     }
                 }));
     }
+    m_measure_pipeline = worker_params.stopped_stage_timing_enabled;
     m_belief_subscription =
         m_node.create_subscription<px4_msgs::msg::EstimatorTrajectoryBelief>(
             belief_topic,
             rclcpp::SensorDataQoS(),
             [this](
-                px4_msgs::msg::EstimatorTrajectoryBelief::ConstSharedPtr message) {
-                onBelief(*message);
+                px4_msgs::msg::EstimatorTrajectoryBelief::ConstSharedPtr message,
+                const rclcpp::MessageInfo & info) {
+                onBelief(*message, info);
             });
     if (worker_params.v4_safe_control_enabled) {
         m_airspeed_subscription =
@@ -340,8 +342,17 @@ bool DistributedManeuverSelectionRuntime::pushPublishedSetpoint(
 }
 
 void DistributedManeuverSelectionRuntime::onBelief(
-    const px4_msgs::msg::EstimatorTrajectoryBelief & message)
+    const px4_msgs::msg::EstimatorTrajectoryBelief & message,
+    const rclcpp::MessageInfo & info)
 {
+    selection::BeliefArrivalTiming arrival;
+    if (m_measure_pipeline) {
+        arrival.callback_ns = selection::StoppedStageTiming::now();
+        arrival.callback_wall_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const auto received = info.get_rmw_message_info().received_timestamp;
+        if (received > 0) arrival.middleware_received_ns = received;
+    }
     selection::ManeuverSelectionBeliefSnapshot snapshot;
     snapshot.timestamp_us = message.timestamp;
     snapshot.timestamp_sample_us = message.timestamp_sample;
@@ -369,7 +380,7 @@ void DistributedManeuverSelectionRuntime::onBelief(
         }
     }
 
-    if (!m_worker.pushOwnshipBelief(snapshot)) {
+    if (!m_worker.pushOwnshipBelief(snapshot, arrival)) {
         RCLCPP_WARN_THROTTLE(
             m_node.get_logger(), *m_node.get_clock(), 1000,
             "[maneuver-selection] belief input queue full");

@@ -11,6 +11,7 @@
 #include <thread>
 
 #include <collision_avoidance/common/SpscQueue.hpp>
+#include <collision_avoidance/common/OrderedSpscInbox.hpp>
 #include <collision_avoidance/estimation/trajectory_prediction/TrajectoryIntent.hpp>
 #include <collision_avoidance/formation/FormationDiscrimination.hpp>
 #include <collision_avoidance/selection/HeuristicCandidateSelector.hpp>
@@ -27,6 +28,7 @@ namespace collision_avoidance::selection
 {
 
 inline constexpr std::size_t kEligibleLateralCandidateCount = 7;
+// Per-stream reserve AND maximum number handled in one worker pass.
 inline constexpr std::size_t kSelectionWorkerInputCapacity = 64;
 inline constexpr std::size_t kSelectionWorkerOutputCapacity = 16;
 
@@ -582,7 +584,8 @@ public:
     }
 
     bool pushOwnshipBelief(
-        const ManeuverSelectionBeliefSnapshot & snapshot) noexcept;
+        const ManeuverSelectionBeliefSnapshot & snapshot,
+        const BeliefArrivalTiming & arrival = {}) noexcept;
     bool pushAirspeed(
         const ManeuverSelectionAirspeedSnapshot & snapshot) noexcept;
     bool pushNominalSetpoint(
@@ -624,6 +627,8 @@ private:
 
     struct WorkerInput
     {
+        BeliefArrivalTiming arrival{};
+        std::uint64_t belief_enqueue_ns{0};
         InputKind kind{InputKind::OwnshipBelief};
         int remote_vehicle_id{-1};
         ManeuverSelectionBeliefSnapshot belief{};
@@ -632,6 +637,15 @@ private:
         ManeuverSelectionPublishedSetpointSnapshot published{};
         estimation::TrajectoryIntentPacket packet{};
         ManeuverSelectionPeerDecision decision{};
+    };
+
+    bool enqueueInput(const WorkerInput & input) noexcept;
+
+    struct InputStorage
+    {
+        common::OrderedSpscInbox<WorkerInput, kMaximumSelectionAircraft,
+            kSelectionWorkerInputCapacity> inbox{};
+        std::array<WorkerInput, kSelectionWorkerInputCapacity> batch{};
     };
 
     struct RemoteCandidateCache
@@ -854,7 +868,11 @@ private:
         m_formation_discriminator;
 
     // Worker-thread transport and lifecycle.
-    common::SpscQueue<WorkerInput, kSelectionWorkerInputCapacity> m_input_queue{};
+    // The single ROS executor is the sole producer. Partition 0 is local;
+    // remaining partitions are peers in aircraft-ID order (excluding ownship).
+    // Allocate once at construction, never in push/drain. Keep large fixed
+    // buffers off callers' stacks (tests may instantiate several workers).
+    std::unique_ptr<InputStorage> m_input_storage;
     common::SpscQueue<
         ManeuverSelectionWorkerOutput, kSelectionWorkerOutputCapacity> m_output_queue{};
     common::SpscQueue<

@@ -51,7 +51,8 @@ public:
 
 private:
     void onBelief(
-        const px4_msgs::msg::EstimatorTrajectoryBelief & message);
+        const px4_msgs::msg::EstimatorTrajectoryBelief & message,
+        const rclcpp::MessageInfo & info);
     void onAirspeed(const px4_msgs::msg::AirspeedValidated & message);
     void drainWorkerOutput();
 
@@ -59,6 +60,7 @@ private:
     int m_vehicle_id{0};
     int m_total_agent_count{0};
     bool m_enabled{false};
+    bool m_measure_pipeline{false};
     DecisionCallback m_decision_callback;
     selection::ManeuverSelectionWorker m_worker;
     rclcpp::Publisher<collision_avoidance::msg::ManeuverBudgetTrace>::SharedPtr

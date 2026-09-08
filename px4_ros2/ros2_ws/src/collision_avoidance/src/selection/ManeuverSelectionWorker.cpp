@@ -34,7 +34,8 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
   m_v4_safe_control(params.v4_safe_control_params),
   m_mode_b_interpolator(params.mode_b_interpolator_params),
   m_mode_b_intent_adapter(params.mode_b_intent_adapter_params),
-  m_v4_candidate_adapter(params.v4_candidate_adapter_params)
+  m_v4_candidate_adapter(params.v4_candidate_adapter_params),
+  m_input_storage(std::make_unique<InputStorage>())
 {
     if (m_params.stopped_stage_timing_enabled) {
         m_stopped_stage_timing = std::make_unique<StoppedStageTiming>();
@@ -89,13 +90,31 @@ void ManeuverSelectionWorker::stopAndWriteStageTiming(std::ostream & out)
     if (m_stopped_stage_timing) m_stopped_stage_timing->write(out, m_params.vehicle_id);
 }
 
+bool ManeuverSelectionWorker::enqueueInput(const WorkerInput & input) noexcept
+{
+    std::size_t partition = 0;
+    if (input.kind == InputKind::RemoteIntent || input.kind == InputKind::RemoteDecision) {
+        const int peer = input.remote_vehicle_id;
+        if (peer < 0 || peer >= m_params.total_agent_count || peer == m_params.vehicle_id) {
+            return false;
+        }
+        partition = static_cast<std::size_t>(peer < m_params.vehicle_id ? peer + 1 : peer);
+    }
+    return m_input_storage->inbox.try_push(partition, input);
+}
+
 bool ManeuverSelectionWorker::pushOwnshipBelief(
-    const ManeuverSelectionBeliefSnapshot & snapshot) noexcept
+    const ManeuverSelectionBeliefSnapshot & snapshot,
+    const BeliefArrivalTiming & arrival) noexcept
 {
     WorkerInput input;
     input.kind = InputKind::OwnshipBelief;
     input.belief = snapshot;
-    if (!m_input_queue.try_push(input)) {
+    if (m_stopped_stage_timing) {
+        input.arrival = arrival;
+        input.belief_enqueue_ns = StoppedStageTiming::now();
+    }
+    if (!enqueueInput(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
         m_dropped_ownship_beliefs.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -109,7 +128,7 @@ bool ManeuverSelectionWorker::pushAirspeed(
     WorkerInput input;
     input.kind = InputKind::Airspeed;
     input.airspeed = snapshot;
-    if (!m_input_queue.try_push(input)) {
+    if (!enqueueInput(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
@@ -122,7 +141,7 @@ bool ManeuverSelectionWorker::pushNominalSetpoint(
     WorkerInput input;
     input.kind = InputKind::NominalSetpoint;
     input.nominal = snapshot;
-    if (!m_input_queue.try_push(input)) {
+    if (!enqueueInput(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
@@ -137,7 +156,7 @@ bool ManeuverSelectionWorker::pushRemoteIntent(
     input.kind = InputKind::RemoteIntent;
     input.remote_vehicle_id = remote_vehicle_id;
     input.packet = packet;
-    if (!m_input_queue.try_push(input)) {
+    if (!enqueueInput(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
         m_dropped_remote_intents.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -151,7 +170,7 @@ bool ManeuverSelectionWorker::pushPublishedSetpoint(
     WorkerInput input;
     input.kind = InputKind::PublishedSetpoint;
     input.published = snapshot;
-    if (!m_input_queue.try_push(input)) {
+    if (!enqueueInput(input)) {
         m_published_input_history_lost.store(true, std::memory_order_release);
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -167,7 +186,7 @@ bool ManeuverSelectionWorker::pushRemoteDecision(
     input.kind = InputKind::RemoteDecision;
     input.remote_vehicle_id = remote_vehicle_id;
     input.decision = decision;
-    if (!m_input_queue.try_push(input)) {
+    if (!enqueueInput(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
         m_dropped_remote_decisions.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -258,14 +277,26 @@ void ManeuverSelectionWorker::workerLoop()
 
 bool ManeuverSelectionWorker::processPending()
 {
+    const bool measure = static_cast<bool>(m_stopped_stage_timing);
+    PipelineTimingRecord pipeline{};
+    if (measure) pipeline.start_ns = StoppedStageTiming::now();
     bool consumed_input = false;
-    const auto input_count = m_input_queue.sizeForConsumer();
+    const auto input_count = m_input_storage->inbox.drainTo(m_input_storage->batch);
     for (std::size_t index = 0; index < input_count; ++index) {
-        const auto input = m_input_queue.try_pop();
-        if (!input) break;
+        const auto * input = &m_input_storage->batch[index];
         consumed_input = true;
+        if (measure) ++pipeline.input_count;
         if (input->kind == InputKind::OwnshipBelief) {
-            acceptOwnshipBelief(input->belief);
+            const auto begin = measure ? StoppedStageTiming::now() : 0;
+            const bool accepted = acceptOwnshipBelief(input->belief);
+            if (measure) {
+                const auto end = StoppedStageTiming::now();
+                ++pipeline.belief_count;
+                pipeline.belief_processing_ns += end - begin;
+                m_stopped_stage_timing->appendBelief({input->belief.timestamp_us,
+                    input->belief.timestamp_sample_us, input->arrival,
+                    input->belief_enqueue_ns, begin, end, accepted});
+            }
         } else if (input->kind == InputKind::Airspeed) {
             acceptAirspeed(input->airspeed);
         } else if (input->kind == InputKind::NominalSetpoint) {
@@ -273,11 +304,18 @@ bool ManeuverSelectionWorker::processPending()
         } else if (input->kind == InputKind::PublishedSetpoint) {
             acceptPublishedSetpoint(input->published);
         } else if (input->kind == InputKind::RemoteIntent) {
+            const auto begin = measure ? StoppedStageTiming::now() : 0;
             acceptRemoteIntent(input->remote_vehicle_id, input->packet);
+            if (measure) {
+                pipeline.remote_processing_ns += StoppedStageTiming::now() - begin;
+                ++pipeline.remote_count;
+            }
         } else {
             acceptRemoteDecision(input->remote_vehicle_id, input->decision);
         }
     }
+
+    if (measure) pipeline.drain_end_ns = StoppedStageTiming::now();
 
     if (m_published_input_history_lost.exchange(false, std::memory_order_acq_rel)) {
         // A dropped command could be a switch; never propagate through that
@@ -287,6 +325,11 @@ bool ManeuverSelectionWorker::processPending()
         m_has_latest_state = false;
     }
     if (!m_has_latest_state) {
+        if (measure && consumed_input) {
+            pipeline.source_us = m_latest_state_timestamp_us;
+            pipeline.end_ns = StoppedStageTiming::now();
+            m_stopped_stage_timing->appendPipeline(pipeline);
+        }
         return consumed_input;
     }
 
@@ -300,7 +343,6 @@ bool ManeuverSelectionWorker::processPending()
     output.selection_epoch = m_selection_epoch;
 
     // Timestamps only here; persist records after the existing output handoff.
-    const bool measure = static_cast<bool>(m_stopped_stage_timing);
     std::array<StageTimingRecord, 3> timing{};
     std::size_t timing_count = 0;
 
@@ -427,6 +469,11 @@ bool ManeuverSelectionWorker::processPending()
         output_queued = publishOutput(output);
     }
     if (measure) {
+        if (consumed_input || timing_count > 0) {
+            pipeline.source_us = now_us;
+            pipeline.end_ns = StoppedStageTiming::now();
+            m_stopped_stage_timing->appendPipeline(pipeline);
+        }
         for (std::size_t i = 0; i < timing_count; ++i) {
             timing[i].output_queued = output_queued;
             m_stopped_stage_timing->append(timing[i]);
