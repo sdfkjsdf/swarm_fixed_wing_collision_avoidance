@@ -41,8 +41,9 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
         m_stopped_stage_timing = std::make_unique<StoppedStageTiming>();
     }
     if (m_params.masd_diagnostics_enabled) {
-        m_budget_trace_queue = std::make_unique<
-            common::SpscQueue<ManeuverBudgetTrace, 256>>();
+        m_budget_records = std::make_unique<StoppedBudgetRecords>();
+        if (m_params.interaction_graph_params.enabled)
+            m_graph_records = std::make_unique<StoppedGraphRecords>();
     }
     if (m_params.formation_discrimination_enabled) {
         m_formation_discriminator.emplace(
@@ -203,12 +204,6 @@ std::optional<ManeuverSelectionWorkerOutput>
 ManeuverSelectionWorker::tryPopOutput() noexcept
 {
     return m_output_queue.try_pop();
-}
-
-std::optional<std::shared_ptr<const InteractionGraphDiagnostics>>
-ManeuverSelectionWorker::tryPopInteractionGraphDiagnostics() noexcept
-{
-    return m_interaction_graph_diagnostics_queue.try_pop();
 }
 
 bool ManeuverSelectionWorker::processPendingForTest()
@@ -1025,13 +1020,13 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
 
 void ManeuverSelectionWorker::recordBudgetTrace(ManeuverBudgetTrace trace)
 {
-    if (!m_budget_trace_queue) return;
+    if (!m_budget_records) return;
     stampBudgetTrace(trace);
     trace.vehicle_id = m_params.vehicle_id;
     trace.state_timestamp_us = m_latest_state_timestamp_us;
     trace.state_sample_timestamp_us = m_latest_state_sample_timestamp_us;
-    trace.dropped_trace_count = m_dropped_budget_traces;
-    if (!m_budget_trace_queue->try_push(trace)) ++m_dropped_budget_traces;
+    trace.dropped_trace_count = m_budget_records->dropped;
+    m_budget_records->append(trace);
 }
 
 bool ManeuverSelectionWorker::publishOutput(

@@ -269,9 +269,12 @@ void ManeuverSelectionWorker::publishPendingInteractionGraphDiagnostics()
     if (!m_pending_interaction_graph_diagnostics) {
         return;
     }
-    const std::shared_ptr<const InteractionGraphDiagnostics> diagnostics =
-        m_pending_interaction_graph_diagnostics;
-    m_interaction_graph_diagnostics_queue.try_push(diagnostics);
+    if (m_graph_records) {
+        const auto wall = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        m_graph_records->append({static_cast<std::uint64_t>(wall),
+                                 *m_pending_interaction_graph_diagnostics});
+    }
     m_pending_interaction_graph_diagnostics.reset();
 }
 

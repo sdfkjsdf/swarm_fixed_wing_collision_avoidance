@@ -57,7 +57,8 @@
 #include <collision_avoidance/guidance/FlockingGuidance.hpp>
 #include <collision_avoidance/guidance/PointConvergenceGuidance.hpp>
 #include <collision_avoidance/selection/ManeuverSelectionWorker.hpp>
-#include <collision_avoidance/msg/maneuver_budget_trace.hpp>
+#include <collision_avoidance/selection/ManeuverSelectionWorker.hpp>
+#include <ostream>
 
 
 class FormationMode : public px4_ros2::ModeBase
@@ -101,6 +102,9 @@ public:
 
     /* Executor 가 Preflight 종료 시점에 캡처한 cruise altitude / 초기 코스를 주입.
        FormationMode 활성화 전에 호출되어야 함. */
+    // Lifecycle-owner only, after the ROS executor has stopped.
+    void writeStoppedObservations(std::ostream & out) const;
+
     void setInitialCruiseState(float cruise_altitude_amsl,
                                float initial_course,
                                float initial_ground_speed)
@@ -117,8 +121,7 @@ private:
     void traceSetpoint(std::uint64_t begin_wall_ns, std::uint64_t begin_steady_ns,
                        bool avoidance, float lateral_acceleration,
                        float ground_speed, float eas);
-    rclcpp::Publisher<collision_avoidance::msg::ManeuverBudgetTrace>::SharedPtr
-        m_budget_trace_publisher;
+    std::unique_ptr<collision_avoidance::selection::StoppedBudgetRecords> m_budget_records;
 
     /* ── ROS2 / PX4 핸들 (외부 라이브러리 — 관례상 _ prefix 그대로) ── */
     rclcpp::Node & _node;

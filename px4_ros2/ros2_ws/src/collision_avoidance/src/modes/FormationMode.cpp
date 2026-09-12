@@ -1,7 +1,7 @@
 #include <collision_avoidance/modes/FormationMode.hpp>
 
 #include <collision_avoidance/control/GroundToEasAdapter.hpp>
-#include <collision_avoidance/communication/ManeuverBudgetTraceMessage.hpp>
+#include <collision_avoidance/communication/StoppedObservationExport.hpp>
 
 #include <limits>
 #include <chrono>
@@ -17,10 +17,7 @@ FormationMode::FormationMode(rclcpp::Node & node, int vehicle_id, int total_agen
     m_total_agent_num = total_agent_num;
     if (_node.has_parameter("masd_diagnostics_enabled")
         && _node.get_parameter("masd_diagnostics_enabled").as_bool()) {
-        m_budget_trace_publisher = _node.create_publisher<
-            collision_avoidance::msg::ManeuverBudgetTrace>(
-            "/common/px4_" + std::to_string(vehicle_id) + "/maneuver_budget_trace",
-            rclcpp::QoS(128).best_effort());
+        m_budget_records = std::make_unique<collision_avoidance::selection::StoppedBudgetRecords>();
     }
 
     _fw_setpoint = std::make_shared<px4_ros2::FwLateralLongitudinalSetpointType>(*this);
@@ -353,7 +350,7 @@ void FormationMode::updateSetpoint(float /*dt_s*/)
         sp.withLateralAcceleration(m_last_output_mt.lateral_acceleration)
           .withEquivalentAirspeed(v_cmd_eas);
         collision_avoidance::selection::ManeuverBudgetTrace trace;
-        if (m_budget_trace_publisher) collision_avoidance::selection::stampBudgetTrace(trace);
+        if (m_budget_records) collision_avoidance::selection::stampBudgetTrace(trace);
         _fw_setpoint->update(sp);
         recordPublishedSetpoint(horizontal_ground_speed,
                                m_last_output_mt.lateral_acceleration, true);
@@ -419,7 +416,7 @@ void FormationMode::publishAvoidanceSetpoint()
     sp.withLateralAcceleration(lateral_acceleration)
       .withEquivalentAirspeed(v_cmd_eas);
     collision_avoidance::selection::ManeuverBudgetTrace trace;
-    if (m_budget_trace_publisher) collision_avoidance::selection::stampBudgetTrace(trace);
+    if (m_budget_records) collision_avoidance::selection::stampBudgetTrace(trace);
     _fw_setpoint->update(sp);
     recordPublishedSetpoint(v_cmd_ground, lateral_acceleration, true);
     traceSetpoint(trace.wall_ns, trace.steady_ns, true, lateral_acceleration,
@@ -462,7 +459,7 @@ void FormationMode::traceSetpoint(
     std::uint64_t begin_wall_ns, std::uint64_t begin_steady_ns, bool avoidance,
     float lateral_acceleration, float ground_speed, float eas)
 {
-    if (!m_budget_trace_publisher) return;
+    if (!m_budget_records) return;
     collision_avoidance::selection::ManeuverBudgetTrace trace;
     collision_avoidance::selection::stampBudgetTrace(trace);
     trace.publish_end_wall_ns = trace.wall_ns;
@@ -478,8 +475,8 @@ void FormationMode::traceSetpoint(
     trace.lateral_acceleration_mps2 = lateral_acceleration;
     trace.ground_speed_command_mps = ground_speed;
     trace.equivalent_airspeed_command_mps = eas;
-    m_budget_trace_publisher->publish(
-        collision_avoidance::communication::budgetTraceMessage(trace));
+    trace.dropped_trace_count = m_budget_records->dropped;
+    m_budget_records->append(trace);
 }
 
 void FormationMode::rt_loop()
@@ -575,4 +572,10 @@ void FormationMode::rt_loop()
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+}
+
+void FormationMode::writeStoppedObservations(std::ostream & out) const
+{
+    collision_avoidance::communication::writeStoppedBudget(
+        out, m_vehicle_id, "setpoint", m_budget_records.get());
 }

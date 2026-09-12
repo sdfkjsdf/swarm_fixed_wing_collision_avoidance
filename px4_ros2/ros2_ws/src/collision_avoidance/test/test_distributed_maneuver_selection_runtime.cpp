@@ -157,6 +157,7 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
     params.evaluator_params.threat_half_wingspan_m = 1.072;
     params.v4_safe_control_enabled = true;
     params.stopped_stage_timing_enabled = true;
+    params.masd_diagnostics_enabled = true;
 
     std::optional<cs::ManeuverSelectionDecision> decision_a;
     std::optional<cs::ManeuverSelectionDecision> decision_b;
@@ -233,9 +234,13 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
         decision_message_a->v4_candidate_count,
         decision_a->v4_candidates.candidate_count);
 
+    EXPECT_EQ(node->count_publishers("/common/px4_0/maneuver_budget_trace"), 0U);
+    EXPECT_EQ(node->count_publishers("/common/px4_0/interaction_graph_diagnostics"), 0U);
     executor.remove_node(node);
     std::ostringstream stopped_log;
     runtime_a->stopAndWriteStageTiming(stopped_log);
+    EXPECT_NE(stopped_log.str().find("[stop-observation-begin],1,0,worker,"), std::string::npos);
+    EXPECT_NE(stopped_log.str().find("[stop-observation-end],0,worker,"), std::string::npos);
     EXPECT_NE(stopped_log.str().find("[stop-stage-begin],1,0,"), std::string::npos);
     EXPECT_NE(stopped_log.str().find("[stop-stage],1,"), std::string::npos);
     EXPECT_NE(stopped_log.str().find("[stop-stage],2,"), std::string::npos);

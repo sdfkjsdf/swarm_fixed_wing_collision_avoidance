@@ -24,3 +24,11 @@
 # Archived backups and OS files
 *.zip
 .DS_Store
+
+# Local-only project notes; do not publish.
+/md_file/
+/src/testing_module/maneuver_selection_hils/docs/
+
+# Local report exports and temporary rendering files.
+/src/testing_module/maneuver_selection_hils/output/
+/src/testing_module/maneuver_selection_hils/tmp/

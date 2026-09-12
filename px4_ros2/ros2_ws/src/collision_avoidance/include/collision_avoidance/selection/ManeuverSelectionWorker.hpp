@@ -21,6 +21,7 @@
 #include <collision_avoidance/selection/ManeuverActivationController.hpp>
 #include <collision_avoidance/selection/ManeuverCombinationEvaluator.hpp>
 #include <collision_avoidance/selection/ManeuverBudgetTrace.hpp>
+#include <collision_avoidance/common/StoppedRecordBuffer.hpp>
 #include <collision_avoidance/selection/StoppedStageTiming.hpp>
 #include <collision_avoidance/selection/SafeControlCandidateAdapter.hpp>
 
@@ -181,6 +182,13 @@ struct InteractionGraphDiagnostics
     std::size_t component_safe_evaluation_count{0};
     JointCombinationEvaluation global_crosscheck_evaluation{};
 };
+
+struct StoppedGraphObservation {
+    std::uint64_t wall_ns{0};
+    InteractionGraphDiagnostics value{};
+};
+using StoppedBudgetRecords = common::StoppedRecordBuffer<ManeuverBudgetTrace, 32768>;
+using StoppedGraphRecords = common::StoppedRecordBuffer<StoppedGraphObservation, 2048>;
 
 struct ManeuverSelectionBeliefSnapshot
 {
@@ -569,14 +577,12 @@ public:
     // during flight or concurrently with start()/processPendingForTest().
     void stopAndWriteStageTiming(std::ostream & out);
     bool running() const noexcept;
-    std::optional<ManeuverBudgetTrace> tryPopBudgetTrace() noexcept
-    {
-        return m_budget_trace_queue ? m_budget_trace_queue->try_pop() : std::nullopt;
+    // Lifecycle-owner only, after stop/join; tests use these without start().
+    const StoppedBudgetRecords * stoppedBudgetTraces() const noexcept {
+        return running() ? nullptr : m_budget_records.get();
     }
-    // ROS output consumer only; used to bound one callback to its entry batch.
-    std::size_t pendingBudgetTraceCount() const noexcept
-    {
-        return m_budget_trace_queue ? m_budget_trace_queue->sizeForConsumer() : 0;
+    const StoppedGraphRecords * stoppedGraphDiagnostics() const noexcept {
+        return running() ? nullptr : m_graph_records.get();
     }
     std::size_t pendingOutputCount() const noexcept
     {
@@ -600,8 +606,6 @@ public:
         const ManeuverSelectionPeerDecision & decision) noexcept;
     void setActivationEnabled(bool enabled) noexcept;
     std::optional<ManeuverSelectionWorkerOutput> tryPopOutput() noexcept;
-    std::optional<std::shared_ptr<const InteractionGraphDiagnostics>>
-    tryPopInteractionGraphDiagnostics() noexcept;
 
     // Deterministic test/benchmark entry point. Do not call while start() is active.
     bool processPendingForTest();
@@ -875,9 +879,7 @@ private:
     std::unique_ptr<InputStorage> m_input_storage;
     common::SpscQueue<
         ManeuverSelectionWorkerOutput, kSelectionWorkerOutputCapacity> m_output_queue{};
-    common::SpscQueue<
-        std::shared_ptr<const InteractionGraphDiagnostics>,
-        kSelectionWorkerOutputCapacity> m_interaction_graph_diagnostics_queue{};
+    std::unique_ptr<StoppedGraphRecords> m_graph_records;
     std::shared_ptr<InteractionGraphDiagnostics>
         m_pending_interaction_graph_diagnostics{};
     std::thread m_thread;
@@ -894,9 +896,7 @@ private:
     estimation::PredictStateCovariance m_latest_covariance{};
     std::uint64_t m_latest_state_timestamp_us{0};
     std::uint64_t m_latest_state_sample_timestamp_us{0};
-    std::unique_ptr<common::SpscQueue<ManeuverBudgetTrace, 256>>
-        m_budget_trace_queue;
-    std::uint64_t m_dropped_budget_traces{0};
+    std::unique_ptr<StoppedBudgetRecords> m_budget_records;
     std::unique_ptr<StoppedStageTiming> m_stopped_stage_timing;
     void recordBudgetTrace(ManeuverBudgetTrace trace);
     bool m_has_latest_state{false};

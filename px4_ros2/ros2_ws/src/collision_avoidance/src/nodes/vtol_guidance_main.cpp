@@ -512,11 +512,12 @@ int main(int argc, char * argv[])
 
     /* [6] 실행 */
     rclcpp::spin(node);
-    if (maneuver_selection_runtime && node->get_parameter("stopped_stage_timing_enabled").as_bool()) {
+    if (maneuver_selection_runtime) {
         // No live executor or worker during formatting/SSH output. SIGKILL cannot
         // dump memory; a complete footer is required by the offline analyzer.
         std::ostringstream timing_log;
         maneuver_selection_runtime->stopAndWriteStageTiming(timing_log);
+        formation->writeStoppedObservations(timing_log);
         std::cout << timing_log.str() << std::flush;
     }
     rclcpp::shutdown();

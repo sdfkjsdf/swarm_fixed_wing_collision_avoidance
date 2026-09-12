@@ -1600,6 +1600,8 @@ def save_video(
 
 def analyze(args):
     messages = read_bag(args.bag)
+    from read_stopped_observations import merge_into
+    stopped_observations = merge_into(messages, args.log_dir)
     grid_ns, elapsed_s, tracks, velocities, body_headings = interpolate_tracks(
         messages, args.sample_hz, args.evaluation_start_ns)
     position_sigma, velocity_sigma = fleet_standard_deviations(
@@ -1634,6 +1636,8 @@ def analyze(args):
 
     summary = {
         "bag": str(args.bag.resolve()),
+        "stopped_observations": stopped_observations,
+        "stopped_observation_time_basis": "source host wall time, not DDS receipt time",
         "aircraft_count": AIRCRAFT_COUNT,
         "sample_hz": args.sample_hz,
         "scenario_label": args.scenario_label,

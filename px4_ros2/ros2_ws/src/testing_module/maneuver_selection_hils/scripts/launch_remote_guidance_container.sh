@@ -17,13 +17,23 @@ REMOTE_DOCKER_IMAGE=${REMOTE_DOCKER_IMAGE:-collision-avoidance:distributed}
 REMOTE_CONTAINER_NAME=${REMOTE_CONTAINER_NAME:-collision-avoidance-hils-agent-${VEHICLE_ID}}
 
 cleanup_done=0
+remote_ssh_pid=""
 cleanup() {
     if (( cleanup_done == 1 )); then
         return
     fi
     cleanup_done=1
+    # Flight recording has ended. Let the child join its worker and flush the
+    # stopped-only observations before deleting this experiment's container.
+    ssh -T "${REMOTE_SSH_TARGET}" docker exec "${REMOTE_CONTAINER_NAME}" \
+        pkill -INT -x vtol_guidance_n >/dev/null 2>&1 || true
+    timeout 45 ssh -T "${REMOTE_SSH_TARGET}" \
+        docker wait "${REMOTE_CONTAINER_NAME}" >/dev/null 2>&1 || true
     ssh -T "${REMOTE_SSH_TARGET}" \
         docker rm -f "${REMOTE_CONTAINER_NAME}" >/dev/null 2>&1 || true
+    if [[ -n "${remote_ssh_pid}" ]]; then
+        wait "${remote_ssh_pid}" 2>/dev/null || true
+    fi
 }
 trap 'cleanup; exit 143' INT TERM
 trap cleanup EXIT
@@ -67,4 +77,8 @@ docker_args+=(
 )
 
 printf -v remote_command '%q ' "${docker_args[@]}"
-ssh -T "${REMOTE_SSH_TARGET}" "${remote_command}"
+# Background + wait makes TERM interruptible so the cleanup trap can stop the
+# remote child. A foreground SSH previously postponed the trap indefinitely.
+ssh -T "${REMOTE_SSH_TARGET}" "${remote_command}" &
+remote_ssh_pid=$!
+wait "${remote_ssh_pid}"

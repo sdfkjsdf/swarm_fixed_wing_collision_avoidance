@@ -171,6 +171,15 @@ class Audit:
                 self.odometry[v].append((m.timestamp*1e-6, *m.position, *m.velocity))
             elif topic.endswith('/maneuver_budget_trace'):
                 self.traces[v].append((stamp*1e-9, m))
+        from read_stopped_observations import merge_into
+        stopped = {}
+        self.stopped_observations = merge_into(stopped, getattr(self.args, 'log_dir', None))
+        for topic, records in stopped.items():
+            v = int(topic.split('/')[2].split('_')[-1])
+            destination = self.traces[v] if topic.endswith('/maneuver_budget_trace') else self.graphs[v]
+            if destination:
+                raise ValueError('Live and stopped diagnostic records overlap')
+            destination.extend((stamp*1e-9, message) for stamp, message in records)
         for v in range(5):
             for key in sorted(self.intents[v]):
                 self.by_candidate[v][key[1]].append(key)
@@ -610,6 +619,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--bag',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--log-dir',type=Path,help='Guidance shutdown logs for stopped-only observations')
     p.add_argument('--ulog',type=Path,nargs=5,required=True)
     p.add_argument('--start-us',type=int,required=True,help='Common fixed-wing evaluation start, epoch us')
     p.add_argument('--tau-phi',type=float,required=True,help='Recorded run predictor tau, not current source default')
@@ -624,6 +634,7 @@ def main():
         coverage=a.coverage();loss=a.ad_loss()
     latency=a.latency()
     report=dict(bag=str(args.bag.resolve()),tau_phi=args.tau_phi,
+        stopped_observations=a.stopped_observations,
         groundtruth_separation=a.truth_separation(),
         budget=dict(aircraft_size_m=2.144,dsd_m=10,communication_delay_margin_m=0,
                     chi_squared_3d=CHI2,process_noise_diagonal=[.25,.25,.25,.04,.001,.04,.001]),

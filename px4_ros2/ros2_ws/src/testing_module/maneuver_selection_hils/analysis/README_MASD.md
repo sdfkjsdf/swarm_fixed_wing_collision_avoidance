@@ -29,12 +29,16 @@ other run. Both local and remote guidance launchers forward these variables.
 | 3 | `ManeuverSelectionWorkerActivation.cpp` | An existing pair-monitor calculation has completed |
 | 4 | `FormationMode.cpp` | Actual ROS fixed-wing setpoint publication is bracketed |
 
-The worker uses a separate optional bounded SPSC trace queue. It does not enlarge
-the control-output queue, block on the recorder, recompute AD, or consume trace
-messages as control inputs. `dropped_trace_count` records worker-queue overflow;
-it does not prove that DDS lost no trace messages. Publication is best effort.
-Instrumentation and recording have nonzero scheduling/network overhead, so two
-independent closed-loop runs are not a deterministic causal A/B experiment.
+Current implementation stores MASD and graph observations in fixed single-writer
+buffers and exports them only after the executor stops and the worker joins.
+There are no live MASD/graph diagnostic publishers. The message types above are
+retained for shutdown-only CDR export and old-bag compatibility. Pass `--log-dir`
+to `analyze_masd_budget.py` for new runs; the standard flight analyzer also reads
+shutdown logs. Complete headers/footers and counts are checked, and buffer drops
+are reported explicitly. Diagnostic wall timestamps are not DDS receive times.
+The old best-effort trace queue/publishers were removed, not moved to another
+live logging thread. Clock reads and fixed record copies still have nonzero
+cost; no zero-observer-effect or hard-real-time guarantee is claimed.
 
 Use `steady_ns` only on the same machine. For cross-machine timestamps, take
 read-only clock probes before and after the experiment:

@@ -1499,8 +1499,11 @@ TEST(ManeuverSelectionWorker, BudgetTracingDoesNotChangeControlResults)
         const auto committed = confirmTwoAircraftProposal(first, second, a, b);
         history.insert(history.end(), committed.begin(), committed.end());
         std::vector<cs::ManeuverBudgetTrace> traces;
-        while (auto t = first.tryPopBudgetTrace()) traces.push_back(*t);
-        while (auto t = second.tryPopBudgetTrace()) traces.push_back(*t);
+        for (const auto * worker : {&first, &second}) {
+            if (const auto * records = worker->stoppedBudgetTraces())
+                traces.insert(traces.end(), records->records.begin(),
+                              records->records.begin() + records->size);
+        }
         return std::make_pair(history, traces);
     };
     const auto ordinary_result = replay(false);
@@ -1603,7 +1606,7 @@ TEST(ManeuverSelectionWorker, StoppedTimingDoesNotNeedBudgetDiagnostics)
             beliefSnapshot(3'000'000 + offset, -45, 0, 20, 0));
         EXPECT_EQ(output.intent_packet_count, 7U);
     }
-    EXPECT_FALSE(worker->tryPopBudgetTrace());
+    EXPECT_EQ(worker->stoppedBudgetTraces(), nullptr);
     std::ostringstream out;
     worker->stopAndWriteStageTiming(out);
     EXPECT_FALSE(worker->running());
@@ -2605,6 +2608,7 @@ TEST(ManeuverSelectionWorker,
     auto worker_params = params(0, 2);
     worker_params.exhaustive_test_mode = true;
     worker_params.interaction_graph_params.enabled = true;
+    worker_params.masd_diagnostics_enabled = true;
     cs::ManeuverSelectionWorker worker(worker_params);
     ASSERT_TRUE(worker.pushNominalSetpoint(nominalSnapshot(start)));
 
@@ -2616,10 +2620,10 @@ TEST(ManeuverSelectionWorker,
         beliefSnapshot(start + 250'000ULL, 5.0, 0.0, 20.0, 0.0)));
 
     const auto diagnostics_message =
-        worker.tryPopInteractionGraphDiagnostics();
-    ASSERT_TRUE(diagnostics_message.has_value());
-    ASSERT_TRUE(diagnostics_message.value());
-    const auto & diagnostics = *diagnostics_message.value();
+        worker.stoppedGraphDiagnostics();
+    ASSERT_NE(diagnostics_message, nullptr);
+    ASSERT_GT(diagnostics_message->size, 0U);
+    const auto & diagnostics = diagnostics_message->records[diagnostics_message->size - 1].value;
     EXPECT_EQ(
         diagnostics.status,
         cs::InteractionGraphEvaluationStatus::CandidateSetsIncomplete);
@@ -2637,9 +2641,11 @@ TEST(ManeuverSelectionWorker,
     auto ownship_params = params(0, 2);
     ownship_params.exhaustive_test_mode = true;
     ownship_params.interaction_graph_params.enabled = true;
+    ownship_params.masd_diagnostics_enabled = true;
     auto remote_params = params(1, 2);
     remote_params.exhaustive_test_mode = true;
     remote_params.interaction_graph_params.enabled = true;
+    remote_params.masd_diagnostics_enabled = true;
     cs::ManeuverSelectionWorker ownship(ownship_params);
     cs::ManeuverSelectionWorker remote(remote_params);
     ASSERT_TRUE(ownship.pushNominalSetpoint(nominalSnapshot(start)));
@@ -2674,8 +2680,9 @@ TEST(ManeuverSelectionWorker,
         ownship,
         beliefSnapshot(start + 250'000ULL, 5.0, 0.0, 20.0, 0.0)));
     const auto old_epoch_diagnostics =
-        ownship.tryPopInteractionGraphDiagnostics();
-    ASSERT_TRUE(old_epoch_diagnostics.has_value());
+        ownship.stoppedGraphDiagnostics();
+    ASSERT_NE(old_epoch_diagnostics, nullptr);
+    ASSERT_GT(old_epoch_diagnostics->size, 0U);
     for (std::uint64_t offset : {
             300'000ULL, 350'000ULL, 400'000ULL, 450'000ULL}) {
         static_cast<void>(pushBeliefAndProcess(
@@ -2689,10 +2696,10 @@ TEST(ManeuverSelectionWorker,
         beliefSnapshot(start + 500'000ULL, 10.0, 0.0, 20.0, 0.0)));
 
     const auto diagnostics_message =
-        ownship.tryPopInteractionGraphDiagnostics();
-    ASSERT_TRUE(diagnostics_message.has_value());
-    ASSERT_TRUE(diagnostics_message.value());
-    const auto & diagnostics = *diagnostics_message.value();
+        ownship.stoppedGraphDiagnostics();
+    ASSERT_NE(diagnostics_message, nullptr);
+    ASSERT_GT(diagnostics_message->size, 0U);
+    const auto & diagnostics = diagnostics_message->records[diagnostics_message->size - 1].value;
     EXPECT_EQ(diagnostics.graph.selection_epoch, 65U);
     EXPECT_TRUE(diagnostics.graph.valid());
     EXPECT_EQ(diagnostics.candidate_ready_mask, 0b11U);
@@ -2710,6 +2717,7 @@ TEST(ManeuverSelectionWorker,
         auto worker_params = params(static_cast<int>(aircraft), 2);
         worker_params.exhaustive_test_mode = true;
         worker_params.interaction_graph_params.enabled = true;
+    worker_params.masd_diagnostics_enabled = true;
         // Deliberately wrong screening threshold: the aircraft are closer
         // than the hard budget but are split into isolated components.
         worker_params.interaction_graph_params.ad_screen_m = -1.0e6;
@@ -2742,10 +2750,10 @@ TEST(ManeuverSelectionWorker,
                 20.0,
                 0.0));
         const auto diagnostics_message =
-            workers[aircraft]->tryPopInteractionGraphDiagnostics();
-        ASSERT_TRUE(diagnostics_message.has_value());
-        ASSERT_TRUE(diagnostics_message.value());
-        const auto & diagnostics = *diagnostics_message.value();
+            workers[aircraft]->stoppedGraphDiagnostics();
+        ASSERT_NE(diagnostics_message, nullptr);
+        ASSERT_GT(diagnostics_message->size, 0U);
+        const auto & diagnostics = diagnostics_message->records[diagnostics_message->size - 1].value;
         ASSERT_TRUE(diagnostics.graph.valid());
         EXPECT_EQ(diagnostics.candidate_ready_mask, 0b11U);
         EXPECT_EQ(diagnostics.candidate_counts[0], 7U);
@@ -2768,6 +2776,7 @@ TEST(ManeuverSelectionWorker,
         auto worker_params = params(static_cast<int>(aircraft), 2);
         worker_params.exhaustive_test_mode = true;
         worker_params.interaction_graph_params.enabled = true;
+    worker_params.masd_diagnostics_enabled = true;
         worker_params.interaction_graph_params.ad_screen_m = 0.0;
         workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
             worker_params);
@@ -2803,10 +2812,10 @@ TEST(ManeuverSelectionWorker,
         EXPECT_FALSE(outputs[aircraft].decision.selected_combination_safe);
 
         const auto diagnostics_message =
-            workers[aircraft]->tryPopInteractionGraphDiagnostics();
-        ASSERT_TRUE(diagnostics_message.has_value());
-        ASSERT_TRUE(diagnostics_message.value());
-        const auto & diagnostics = *diagnostics_message.value();
+            workers[aircraft]->stoppedGraphDiagnostics();
+        ASSERT_NE(diagnostics_message, nullptr);
+        ASSERT_GT(diagnostics_message->size, 0U);
+        const auto & diagnostics = diagnostics_message->records[diagnostics_message->size - 1].value;
         ASSERT_TRUE(diagnostics.graph.valid());
         EXPECT_EQ(diagnostics.graph.component_count, 1U);
         EXPECT_EQ(diagnostics.graph.component_evaluation_count, 49U);
@@ -2827,6 +2836,7 @@ TEST(ManeuverSelectionWorker,
         auto worker_params = params(static_cast<int>(aircraft), 2);
         worker_params.exhaustive_test_mode = true;
         worker_params.interaction_graph_params.enabled = true;
+    worker_params.masd_diagnostics_enabled = true;
         worker_params.interaction_graph_params.ad_screen_m = -1.0e6;
         workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
             worker_params);
@@ -2862,10 +2872,10 @@ TEST(ManeuverSelectionWorker,
         // the legacy 7^2=49 search must not run when the graph is active.
         EXPECT_EQ(outputs[aircraft].decision.evaluated_combination_count, 0U);
         const auto diagnostics_message =
-            workers[aircraft]->tryPopInteractionGraphDiagnostics();
-        ASSERT_TRUE(diagnostics_message.has_value());
-        ASSERT_TRUE(diagnostics_message.value());
-        const auto & diagnostics = *diagnostics_message.value();
+            workers[aircraft]->stoppedGraphDiagnostics();
+        ASSERT_NE(diagnostics_message, nullptr);
+        ASSERT_GT(diagnostics_message->size, 0U);
+        const auto & diagnostics = diagnostics_message->records[diagnostics_message->size - 1].value;
         EXPECT_TRUE(diagnostics.enabled);
         EXPECT_TRUE(diagnostics.component_proposal_used);
         EXPECT_TRUE(diagnostics.global_crosscheck_pass);
@@ -2934,6 +2944,7 @@ TEST(ManeuverSelectionWorker,
         auto worker_params = params(static_cast<int>(aircraft), 2);
         worker_params.exhaustive_test_mode = true;
         worker_params.interaction_graph_params.enabled = true;
+    worker_params.masd_diagnostics_enabled = true;
         worker_params.interaction_graph_params.ad_screen_m = 0.0;
         workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
             worker_params);
@@ -2995,6 +3006,7 @@ static void verifyDeferredComponentActivation(bool peer_ended)
         worker_params.exhaustive_test_mode = true;
         worker_params.evaluator_params.stale_timeout_s = 0.275;
         worker_params.interaction_graph_params.enabled = true;
+    worker_params.masd_diagnostics_enabled = true;
         worker_params.interaction_graph_params.ad_screen_m = 0.0;
         workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
             worker_params);
@@ -3081,6 +3093,7 @@ TEST(ManeuverSelectionWorker,
         auto worker_params = params(static_cast<int>(aircraft), 2);
         worker_params.exhaustive_test_mode = true;
         worker_params.interaction_graph_params.enabled = true;
+    worker_params.masd_diagnostics_enabled = true;
         worker_params.interaction_graph_params.ad_screen_m = -1.0e6;
         workers[aircraft] = std::make_unique<cs::ManeuverSelectionWorker>(
             worker_params);
@@ -3307,5 +3320,49 @@ TEST(FusionInputHistory, PeerBurstCannotDropLocalHistoryOrBelief)
             predictor, actual.input, .152, state, covariance));
         expectPacketInitialState(*output, state, covariance);
         EXPECT_EQ(worker->droppedInputCount(), 4U);
+    }
+}
+
+TEST(StoppedObservations, FullBufferDropsWithoutOverwriteOrDynamicRecords)
+{
+    collision_avoidance::common::StoppedRecordBuffer<std::uint64_t, 2> records;
+    records.append(10); records.append(20); records.append(30);
+    EXPECT_EQ(records.size, 2U);
+    EXPECT_EQ(records.dropped, 1U);
+    EXPECT_EQ(records.records[0], 10U);
+    EXPECT_EQ(records.records[1], 20U);
+}
+
+TEST(StoppedObservations, GraphControlAndCommitAreIndependentOfRecording)
+{
+    const auto replay = [](bool record) {
+        auto p0 = params(0), p1 = params(1);
+        for (auto * p : {&p0, &p1}) {
+            p->exhaustive_test_mode = true;
+            p->interaction_graph_params.enabled = true;
+            p->masd_diagnostics_enabled = record;
+        }
+        cs::ManeuverSelectionWorker first(p0), second(p1);
+        constexpr std::uint64_t start = 30'000'000;
+        EXPECT_TRUE(first.pushNominalSetpoint(nominalSnapshot(start)));
+        EXPECT_TRUE(second.pushNominalSetpoint(nominalSnapshot(start)));
+        auto a = pushBeliefAndProcess(first, beliefSnapshot(start, -45, 0, 20, 0));
+        auto b = pushBeliefAndProcess(second, beliefSnapshot(start, 45, 0, -20, 0));
+        exchangePackets(first, second, a, b);
+        a = pushBeliefAndProcess(first, beliefSnapshot(start+250'000, -40, 0, 20, 0));
+        b = pushBeliefAndProcess(second, beliefSnapshot(start+250'000, 40, 0, -20, 0));
+        EXPECT_TRUE(a.decision.proposed_component_graph);
+        EXPECT_TRUE(a.decision.proposal_valid);
+        EXPECT_EQ(first.stoppedGraphDiagnostics() != nullptr, record);
+        EXPECT_EQ(first.stoppedBudgetTraces() != nullptr, record);
+        return confirmTwoAircraftProposal(first, second, a, b);
+    };
+    const auto off = replay(false), on = replay(true);
+    for (std::size_t i=0; i<2; ++i) {
+        EXPECT_EQ(off[i].decision.selected_candidate_ids, on[i].decision.selected_candidate_ids);
+        EXPECT_EQ(off[i].decision.coordination_qualified, on[i].decision.coordination_qualified);
+        EXPECT_EQ(off[i].decision.command_execution_requested, on[i].decision.command_execution_requested);
+        EXPECT_EQ(off[i].decision.activation_requested, on[i].decision.activation_requested);
+        EXPECT_DOUBLE_EQ(off[i].decision.ad_m, on[i].decision.ad_m);
     }
 }
