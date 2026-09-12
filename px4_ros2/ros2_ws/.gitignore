@@ -24,3 +24,6 @@
 # Archived backups and OS files
 *.zip
 .DS_Store
+
+# Local-only project notes; do not publish.
+/md_file/
