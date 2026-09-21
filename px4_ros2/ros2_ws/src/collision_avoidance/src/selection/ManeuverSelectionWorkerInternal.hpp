@@ -107,7 +107,6 @@ inline bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
         || !finitePositive(
             params.activation_params
                 .relative_speed_epsilon_mps)
-        || !finitePositive(params.activation_params.cpa_horizon_s)
         || (params.formation_discrimination_enabled
             && (params.execution_policy
                     != ManeuverExecutionPolicy::AmacAdThreshold

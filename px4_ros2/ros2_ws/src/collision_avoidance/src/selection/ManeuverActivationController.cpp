@@ -173,12 +173,12 @@ bool ManeuverActivationController::futureCpaDistance(
         if (!std::isfinite(unconstrained_cpa_time_s)) {
             return false;
         }
-        if (unconstrained_cpa_time_s > m_params.cpa_horizon_s) {
-            // Project reconstruction: do not extrapolate an approaching pair
-            // beyond the validated predictor horizon merely to release the
-            // avoidance command.
-            return false;
-        }
+        // This is the geometric CPA of the current relative flight vector,
+        // not a rollout of the commanded maneuver. A distant CPA may still
+        // have a safe miss distance; its time alone must not veto release.
+        // Keep the full future CPA (do not clamp to the rollout horizon), so
+        // a distant but unsafe intersection still fails the distance check.
+        // The worker separately checks the finite-horizon Formation rollout.
         cpa_time_s = std::max(0.0, unconstrained_cpa_time_s);
     }
 

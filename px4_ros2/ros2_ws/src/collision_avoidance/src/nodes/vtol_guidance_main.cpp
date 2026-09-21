@@ -84,7 +84,6 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>("mode_b_maximum_intent_age_s", 1.0);
     node->declare_parameter<double>(
         "amac_relative_speed_epsilon_mps", 1.0e-6);
-    node->declare_parameter<double>("amac_cpa_horizon_s", 4.5);
     node->declare_parameter<bool>("formation_discrimination_enabled", false);
     node->declare_parameter<std::string>(
         "formation_aggregation_policy", "per_threat_exemption_only");
@@ -170,8 +169,6 @@ int main(int argc, char * argv[])
         params.activation_params.relative_speed_epsilon_mps =
             node->get_parameter(
                 "amac_relative_speed_epsilon_mps").as_double();
-        params.activation_params.cpa_horizon_s = node->get_parameter(
-            "amac_cpa_horizon_s").as_double();
         params.gravity_mps2 = node->get_parameter("gravity").as_double();
         const double maximum_roll_radians =
             node->get_parameter("max_roll_deg").as_double()

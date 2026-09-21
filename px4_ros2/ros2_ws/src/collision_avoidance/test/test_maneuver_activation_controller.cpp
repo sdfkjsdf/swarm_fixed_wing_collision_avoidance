@@ -191,27 +191,38 @@ TEST(ManeuverActivationController,
 }
 
 TEST(ManeuverActivationController,
-    ApproachingCpaBeyondPredictionHorizonCannotTerminate)
+    SafeFutureCpaBeyondRolloutHorizonCanTerminate)
 {
-    cs::ManeuverActivationControllerParams params;
-    params.cpa_horizon_s = 4.5;
-    cs::ManeuverActivationController controller(params);
+    cs::ManeuverActivationController controller;
     ASSERT_TRUE(controller.update(sample(3'170'000, -1.0, 5.0, -1.0)).active);
 
     auto beyond_horizon = sample(3'180'000, 1.0, 20.0, -1.0);
     beyond_horizon.relative_positions_ned_m[1] = {20.0, 15.0, 0.0};
     beyond_horizon.relative_velocities_ned_mps[1] = {-1.0, 0.0, 0.0};
     const auto status = controller.update(beyond_horizon);
+    // CPA is 20 s away but the paths never get closer than 15 m.
+    EXPECT_FALSE(status.active);
+    EXPECT_TRUE(status.just_deactivated);
+}
+
+TEST(ManeuverActivationController,
+    UnsafeFutureCpaBeyondRolloutHorizonStillBlocksRelease)
+{
+    cs::ManeuverActivationController controller;
+    ASSERT_TRUE(controller.update(sample(3'170'000, -1.0, 5.0, -1.0)).active);
+    auto future_intersection = sample(3'180'000, 1.0, 20.0, -1.0);
+    future_intersection.relative_positions_ned_m[1] = {20.0, 5.0, 0.0};
+    future_intersection.relative_velocities_ned_mps[1] = {-1.0, 0.0, 0.0};
+    // Safe over the next 4.5 s, but full CPA is 5 m: do not clamp the time.
+    const auto status = controller.update(future_intersection);
     EXPECT_TRUE(status.active);
     EXPECT_FALSE(status.just_deactivated);
 }
 
 TEST(ManeuverActivationController,
-    CpaExactlyOnPredictionHorizonUsesCpaDistance)
+    CpaAtFourPointFiveSecondsUsesCpaDistance)
 {
-    cs::ManeuverActivationControllerParams params;
-    params.cpa_horizon_s = 4.5;
-    cs::ManeuverActivationController controller(params);
+    cs::ManeuverActivationController controller;
     ASSERT_TRUE(controller.update(sample(3'190'000, -1.0, 5.0, -1.0)).active);
 
     auto at_horizon = sample(3'200'000, 1.0, 4.5, -1.0);

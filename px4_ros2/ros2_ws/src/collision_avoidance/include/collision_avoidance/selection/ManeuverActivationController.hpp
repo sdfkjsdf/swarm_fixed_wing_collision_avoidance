@@ -22,10 +22,6 @@ struct ManeuverActivationControllerParams
     // dividing by a near-zero denominator. Runtime profiles must calibrate
     // this threshold from their synchronized velocity noise.
     double relative_speed_epsilon_mps{1.0e-6};
-    // CPA projection is trusted only over the same finite interval as the
-    // trajectory predictor. An approaching CPA beyond this horizon cannot
-    // terminate an active episode.
-    double cpa_horizon_s{4.5};
 };
 
 struct ManeuverActivationSample

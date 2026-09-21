@@ -9,4 +9,3 @@
     # first-difference noise measured in the normal line-flocking SILS bag;
     # it is not a Lockheed Martin value.
     amac_relative_speed_epsilon_mps: 0.21
-    amac_cpa_horizon_s: 4.5
