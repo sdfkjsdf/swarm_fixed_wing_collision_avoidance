@@ -109,6 +109,36 @@ PositionCovariance positionCovarianceNed(const PredictStateCovariance & covarian
     return result;
 }
 
+// Evaluate T P T^T as (T P) T^T. Fixed-size scratch storage avoids allocation;
+// retain every cross-covariance, including the rectangular EKF transform.
+template<std::size_t Rows, std::size_t Columns>
+std::array<double, Rows * Rows> transformCovariance(
+    const std::array<double, Rows * Columns> & transform,
+    const std::array<double, Columns * Columns> & covariance)
+{
+    std::array<double, Rows * Columns> intermediate{};
+    for (std::size_t row = 0; row < Rows; ++row) {
+        for (std::size_t column = 0; column < Columns; ++column) {
+            for (std::size_t k = 0; k < Columns; ++k) {
+                intermediate[row * Columns + column] +=
+                    transform[row * Columns + k]
+                    * covariance[k * Columns + column];
+            }
+        }
+    }
+    std::array<double, Rows * Rows> result{};
+    for (std::size_t row = 0; row < Rows; ++row) {
+        for (std::size_t column = 0; column < Rows; ++column) {
+            for (std::size_t k = 0; k < Columns; ++k) {
+                result[row * Rows + column] +=
+                    intermediate[row * Columns + k]
+                    * transform[column * Columns + k];
+            }
+        }
+    }
+    return result;
+}
+
 }  // namespace
 
 TrajectoryUncertainty::TrajectoryUncertainty(const UncertaintyParams & params)
@@ -156,20 +186,7 @@ bool TrajectoryUncertainty::initializeFromEstimatorBelief(
         }
     }
 
-    covariance.fill(0.0);
-    for (std::size_t row = 0; row < kX; ++row) {
-        for (std::size_t column = 0; column < kX; ++column) {
-            double value = 0.0;
-            for (std::size_t left = 0; left < kZ; ++left) {
-                for (std::size_t right = 0; right < kZ; ++right) {
-                    value += jacobian[row * kZ + left]
-                           * belief.covariance[left * kZ + right]
-                           * jacobian[column * kZ + right];
-                }
-            }
-            covariance[row * kX + column] = value;
-        }
-    }
+    covariance = transformCovariance<kX, kZ>(jacobian, belief.covariance);
 
     symmetrizeAndFloor(covariance, m_params.covariance_diagonal_floor);
     return covarianceIsFiniteAndPsd(covariance);
@@ -233,19 +250,8 @@ bool TrajectoryUncertainty::propagateCovarianceOneStep(
         }
     }
 
-    PredictStateCovariance propagated{};
+    auto propagated = transformCovariance<kX, kX>(transition, covariance);
     for (std::size_t row = 0; row < kX; ++row) {
-        for (std::size_t column = 0; column < kX; ++column) {
-            double value = 0.0;
-            for (std::size_t left = 0; left < kX; ++left) {
-                for (std::size_t right = 0; right < kX; ++right) {
-                    value += transition[row * kX + left]
-                           * covariance[left * kX + right]
-                           * transition[column * kX + right];
-                }
-            }
-            propagated[row * kX + column] = value;
-        }
         propagated[row * kX + row] +=
             m_params.process_noise_diagonal[row] * dt;
     }

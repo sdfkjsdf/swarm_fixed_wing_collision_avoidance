@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include <collision_avoidance/estimation/trajectory_prediction/TrajectoryUncertainty.hpp>
@@ -90,4 +92,110 @@ TEST(TrajectoryUncertainty, ImplicitSeedIsConditionedOnTheUnperturbedMean)
     ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(predictor,input,.1,implicit,a));
     ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(predictor,input,.1,explicit_seed,b));
     for (std::size_t k=0;k<a.size();++k) EXPECT_DOUBLE_EQ(a[k],b[k]);
+}
+
+TEST(TrajectoryUncertainty, DenseCovarianceMatchesDirectQuadraticFormOverFullHorizon)
+{
+    // Independent scalar reference for the covariance multiplication. Keep
+    // the slow four-loop expression here only, never on a runtime path.
+    constexpr std::size_t n = ce::kPredictStateDimension;
+    const auto as_array = [](const ce::PredictState & x) {
+        return std::array<double, n>{x.p_n,x.p_e,x.h,x.V,x.psi,x.h_dot,x.phi};
+    };
+    const auto wrap = [](double angle) {
+        angle = std::fmod(angle + M_PI, 2*M_PI);
+        return std::fmod(angle + 2*M_PI, 2*M_PI) - M_PI;
+    };
+    ce::TrajectoryPredict predictor(ce::PredictParams{});
+    for (double scale : {1e-4, 1.0, 100.0}) {
+        for (double bank : {-50.0, 0.0, 50.0}) {
+            for (bool process_noise : {false, true}) {
+                SCOPED_TRACE(::testing::Message() << scale << ',' << bank << ',' << process_noise);
+                ce::UncertaintyParams params;
+                if (!process_noise) params.process_noise_diagonal.fill(0.0);
+                ce::TrajectoryUncertainty uncertainty(params);
+                ce::PredictState state{10,-5,100,20,3.13,1.2,-bank*M_PI/180.0};
+                state.phi_setpoint = -.5*state.phi;
+                ce::PredictionInputTrajectory inputs;
+                inputs.fill({22,103,-.4,9.80665*std::tan(bank*M_PI/180.0)});
+                ce::PredictionMeanTrajectory mean;
+                predictor.predict(state,inputs[0],.1,mean);
+                ce::PredictStateCovariance expected{};
+                for (std::size_t r=0;r<n;++r) for (std::size_t c=0;c<n;++c)
+                    expected[r*n+c] = scale*((r==c ? .04 : 0.0)
+                        + .002*std::cos(double(r)-double(c)));
+                ce::TrajectoryCone actual;
+                ASSERT_TRUE(uncertainty.propagateAlongMean(
+                    predictor,mean,expected,inputs,.1,actual));
+                for (std::size_t k=0;k<ce::kTrajectoryIntervalCount;++k) {
+                    const auto base = as_array(mean[k]);
+                    const auto next = as_array(predictor.stepRK4(mean[k],inputs[k],.1));
+                    std::array<double,n*n> a{};
+                    for (std::size_t c=0;c<n;++c) {
+                        auto x = base;
+                        x[c] += params.finite_difference_step[c];
+                        ce::PredictState perturbed{x[0],x[1],x[2],x[3],x[4],x[5],x[6]};
+                        perturbed.phi_setpoint = std::isfinite(mean[k].phi_setpoint)
+                            ? mean[k].phi_setpoint : mean[k].phi;
+                        const auto step = as_array(predictor.stepRK4(perturbed,inputs[k],.1));
+                        for (std::size_t r=0;r<n;++r) {
+                            double delta = step[r]-next[r];
+                            if (r==4 || r==6) delta = wrap(delta);
+                            a[r*n+c] = delta/params.finite_difference_step[c];
+                        }
+                    }
+                    ce::PredictStateCovariance next_p{};
+                    for (std::size_t r=0;r<n;++r) for (std::size_t c=0;c<n;++c)
+                        for (std::size_t i=0;i<n;++i) for (std::size_t j=0;j<n;++j)
+                            next_p[r*n+c] += a[r*n+i]*expected[i*n+j]*a[c*n+j];
+                    for (std::size_t r=0;r<n;++r) {
+                        next_p[r*n+r] = std::max(params.covariance_diagonal_floor,
+                            next_p[r*n+r]+params.process_noise_diagonal[r]*.1);
+                        for (std::size_t c=r+1;c<n;++c)
+                            next_p[r*n+c] = next_p[c*n+r] =
+                                .5*(next_p[r*n+c]+next_p[c*n+r]);
+                    }
+                    expected = next_p;
+                    ASSERT_TRUE(ce::TrajectoryUncertainty::covarianceIsFiniteAndPsd(
+                        actual[k+1].state_covariance));
+                    for (std::size_t i=0;i<n*n;++i)
+                        EXPECT_NEAR(actual[k+1].state_covariance[i],expected[i],
+                            1e-11*std::max(1.0,std::abs(expected[i])));
+                }
+            }
+        }
+    }
+}
+
+TEST(TrajectoryUncertainty, DenseEstimatorCovarianceMatchesRectangularTransform)
+{
+    constexpr std::size_t n = ce::kPredictStateDimension;
+    constexpr std::size_t m = ce::kEstimatorBeliefDimension;
+    ce::EstimatorTrajectoryBelief belief;
+    belief.attitude_q = {1,0,0,0};
+    belief.velocity_ned = {15,0,0};
+    belief.position_ned = {0,0,0};
+    for (std::size_t r=0;r<m;++r) for (std::size_t c=0;c<m;++c)
+        belief.covariance[r*m+c] = (r==c ? .04 : 0.0)
+            + .002*std::cos(double(r)-double(c));
+    ce::PredictState state;
+    ce::PredictStateCovariance covariance;
+    ASSERT_TRUE(ce::TrajectoryUncertainty{}.initializeFromEstimatorBelief(
+        belief,state,covariance));
+    // At this axis-aligned mean the finite-difference transform is explicit.
+    constexpr double dv = 1e-3;
+    std::array<double,n*m> j{};
+    j[0*m+6] = j[1*m+7] = 1;
+    j[2*m+8] = -1;
+    j[3*m+3] = ((15+dv)-15)/dv;
+    j[3*m+4] = j[3*m+5] = (std::sqrt(225+dv*dv)-15)/dv;
+    j[4*m+4] = std::atan2(dv,15)/dv;
+    j[5*m+5] = -1;
+    j[6*m+0] = 1;
+    for (std::size_t r=0;r<n;++r) for (std::size_t c=0;c<n;++c) {
+        double expected = 0;
+        for (std::size_t a=0;a<m;++a) for (std::size_t b=0;b<m;++b)
+            expected += j[r*m+a]*belief.covariance[a*m+b]*j[c*m+b];
+        EXPECT_NEAR(covariance[r*n+c],expected,1e-10);
+    }
 }
