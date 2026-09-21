@@ -8,10 +8,9 @@ PX4 SITL을 기준으로 한다.
 
 ## 연구 목표
 
-1. Leader-follower 및 flocking 기반 편대 비행 구현
+1. flocking 기반 군집 비행 구현
 2. Closed-form Control Barrier Function(CBF)을 이용한 충돌 회피 가능성 검증
-3. 지오펜싱 상황에서 고도 분리와 CBF 기반 안전 제약 검증
-4. PX4 SITL에서 다기체 알고리즘의 실시간 동작 및 재현성 평가
+3. PX4 SITL에서 다기체 알고리즘의 실시간 동작 및 재현성 평가
 
 ## 주요 디렉터리
 
