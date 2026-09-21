@@ -950,24 +950,40 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
         && decision.proposal_epoch < cache.decision.proposal_epoch) {
         return false;
     }
+    // A delayed active heartbeat cannot reopen an ended episode. The start
+    // timestamp is already present in the wire message and is stable across
+    // maneuver switches. No extra packet or acknowledgement is needed.
+    const bool stale_activation_status =
+        m_params.interaction_graph_params.enabled
+        && m_params.execution_policy == ManeuverExecutionPolicy::AmacAdThreshold
+        && cache.valid
+        && (decision.activation_timestamp_us
+                < cache.decision.activation_timestamp_us
+            || (decision.activation_requested
+                && decision.activation_timestamp_us != 0
+                && decision.activation_timestamp_us
+                    <= cache.activation_ended_through_us));
+    const auto previous_activation_timestamp =
+        cache.decision.activation_timestamp_us;
+    const bool previous_activation_requested = cache.decision.activation_requested;
     const bool retain_bootstrap_readiness = cache.valid
         && cache.decision.v4_cutover_candidate_ready
         && !cache.decision.selected_v4_cutover
         && !decision.selected_v4_cutover
         && cache.decision.v4_control_architecture
             == decision.v4_control_architecture;
-    if (!decision.activation_requested) {
-        cache.activation_start_pending = false;
-    } else if (decision.activation_just_started) {
-        // Preserve the edge until the next local 20 Hz belief update. A newer
-        // peer heartbeat may otherwise overwrite this one-shot event before
-        // the component activation roll-up consumes it.
-        cache.activation_start_pending = true;
-        cache.activation_start_epoch = decision.local_selection_epoch;
-        cache.activation_start_valid_mask = decision.selected_candidate_valid_mask;
-        cache.activation_start_candidate_ids = decision.selected_candidate_ids;
+    if (!stale_activation_status && !decision.activation_requested) {
+        cache.activation_ended_through_us = std::max(
+            cache.activation_ended_through_us, decision.activation_timestamp_us);
     }
     cache.decision = decision;
+    if (stale_activation_status) {
+        // Preserve episode ordering without dropping an otherwise valid
+        // proposal carried by this message.
+        cache.decision.activation_timestamp_us = previous_activation_timestamp;
+        cache.decision.activation_requested = previous_activation_requested;
+        cache.decision.activation_just_started = false;
+    }
     // Readiness advertises that this peer has demonstrated the selected V4
     // architecture, not that its latest 20 Hz diagnostic sample is a command.
     // Retain that capability across transient missing/stale intent samples.

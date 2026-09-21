@@ -386,6 +386,7 @@ cs::ManeuverSelectionPeerDecision peerDecision(
     peer.coordination_qualified = decision.coordination_qualified;
     peer.activation_requested = decision.activation_requested;
     peer.activation_just_started = decision.activation_just_started;
+    peer.activation_timestamp_us = decision.activation_timestamp_us;
     peer.command_execution_requested =
         decision.command_execution_requested;
     peer.nominal_setpoint_available =
@@ -2984,6 +2985,7 @@ TEST(ManeuverSelectionWorker,
     auto matching_trigger = peerDecision(commits[0].decision);
     matching_trigger.activation_requested = true;
     matching_trigger.activation_just_started = true;
+    matching_trigger.activation_timestamp_us = start + 250'000;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
     ASSERT_TRUE(workers[1]->processPendingForTest());
     const auto coordinated = pushBeliefAndProcess(
@@ -2996,7 +2998,9 @@ TEST(ManeuverSelectionWorker,
         commits[1].decision.selected_candidate_ids[1]);
 }
 
-static void verifyDeferredComponentActivation(bool peer_ended)
+static void verifyDeferredComponentActivation(
+    bool peer_ended, bool lost_edge = false, bool late_active = false,
+    bool stale = false, bool mismatched_tuple = false)
 {
     constexpr std::uint64_t start = 15'500'000ULL;
     std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, 2> workers;
@@ -3045,7 +3049,8 @@ static void verifyDeferredComponentActivation(bool peer_ended)
     workers[1]->setActivationEnabled(true);
     auto matching_trigger = peerDecision(commits[0].decision);
     matching_trigger.activation_requested = true;
-    matching_trigger.activation_just_started = true;
+    matching_trigger.activation_just_started = !lost_edge;
+    matching_trigger.activation_timestamp_us = start + 250'000;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
     ASSERT_TRUE(workers[1]->processPendingForTest());
     const auto unavailable = pushBeliefAndProcess(
@@ -3055,7 +3060,17 @@ static void verifyDeferredComponentActivation(bool peer_ended)
     heartbeat.activation_just_started = false;
     heartbeat.activation_requested = !peer_ended;
     ++heartbeat.local_selection_epoch;  // Must not relabel the saved event.
+    if (stale) heartbeat.proposal_timestamp_us = start - 1'000'000;
+    if (mismatched_tuple) {
+        heartbeat.selected_candidate_ids[1] =
+            (heartbeat.selected_candidate_ids[1] + 1) % ce::kManeuverCandidateCount;
+    }
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+    if (late_active) {
+        // Reordered/duplicated active status must not resurrect the ended episode.
+        ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
+        ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
+    }
     const auto fresh_peer = pushBeliefAndProcess(
         *workers[0], beliefSnapshot(start + 350'000ULL, 7.0, 0.0, 20.0, 0.0));
     for (std::size_t i = 0; i < fresh_peer.intent_packet_count; ++i) {
@@ -3064,8 +3079,9 @@ static void verifyDeferredComponentActivation(bool peer_ended)
     const auto coordinated = pushBeliefAndProcess(
         *workers[1],
         beliefSnapshot(start + 350'000ULL, 500.0, 0.0, 20.0, 0.0));
-    EXPECT_EQ(coordinated.decision.activation_requested, !peer_ended);
-    EXPECT_EQ(coordinated.decision.activation_just_started, !peer_ended);
+    const bool should_activate = !peer_ended && !stale && !mismatched_tuple;
+    EXPECT_EQ(coordinated.decision.activation_requested, should_activate);
+    EXPECT_EQ(coordinated.decision.activation_just_started, should_activate);
     EXPECT_EQ(
         coordinated.decision.ownship_candidate_id,
         commits[1].decision.selected_candidate_ids[1]);
@@ -3081,6 +3097,202 @@ TEST(ManeuverSelectionWorker,
     EndedPeerActivationIsNotReplayedAfterInputRecovery)
 {
     verifyDeferredComponentActivation(true);
+}
+
+TEST(ManeuverSelectionWorker, ComponentActivationRecoveredFromHeartbeatWithoutEdge)
+{
+    verifyDeferredComponentActivation(false, true);
+}
+
+TEST(ManeuverSelectionWorker, EndedComponentEpisodeRejectsLateDuplicateStart)
+{
+    verifyDeferredComponentActivation(true, false, true);
+}
+
+TEST(ManeuverSelectionWorker, ComponentActivationRequiresFreshStatusAndAgreedTuple)
+{
+    verifyDeferredComponentActivation(false, false, false, true);
+    verifyDeferredComponentActivation(false, false, false, false, true);
+}
+
+TEST(ManeuverSelectionWorker, ComponentEpisodeSurvivesLocalCommitInEitherArrivalOrder)
+{
+    for (bool start_after_commit : {false, true}) {
+        SCOPED_TRACE(start_after_commit);
+        constexpr std::uint64_t start = 19'000'000;
+        std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, 2> workers;
+        std::array<cs::ManeuverSelectionWorkerOutput, 2> outputs;
+        for (int i = 0; i < 2; ++i) {
+            auto p = params(i);
+            p.exhaustive_test_mode = true;
+            p.interaction_graph_params.enabled = true;
+            p.interaction_graph_params.ad_screen_m = 1.0e6;
+            workers[i] = std::make_unique<cs::ManeuverSelectionWorker>(p);
+            workers[i]->setActivationEnabled(false);
+            ASSERT_TRUE(workers[i]->pushNominalSetpoint(nominalSnapshot(start)));
+        }
+        for (std::uint64_t offset = 0; offset <= 500'000; offset += 50'000) {
+            for (int i = 0; i < 2; ++i)
+                outputs[i] = pushBeliefAndProcess(*workers[i], beliefSnapshot(
+                    start + offset, 500.0 * i, 0.0, 20.0, 0.0));
+            if (offset == 250'000) {
+                auto commits = confirmTwoAircraftProposal(
+                    *workers[0], *workers[1], outputs[0], outputs[1]);
+                ASSERT_TRUE(commits[1].decision.coordination_qualified);
+                for (int i = 0; i < 2; ++i)
+                    ASSERT_TRUE(workers[i]->pushRemoteDecision(1-i, peerDecision(commits[1-i].decision)));
+            }
+            if (offset < 500'000)
+                exchangePackets(*workers[0], *workers[1], outputs[0], outputs[1]);
+        }
+        ASSERT_TRUE(outputs[1].decision.proposal_valid);
+        ASSERT_EQ(outputs[0].decision.proposed_candidate_ids, outputs[1].decision.proposed_candidate_ids);
+        auto heartbeat = peerDecision(outputs[0].decision);
+        const auto new_epoch = outputs[1].decision.proposal_epoch;
+        ASSERT_LT(heartbeat.local_selection_epoch, new_epoch);
+        ASSERT_EQ(heartbeat.selected_candidate_ids, outputs[1].decision.proposed_candidate_ids);
+        workers[1]->setActivationEnabled(true);
+        if (start_after_commit) {
+            ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+            ASSERT_TRUE(workers[1]->processPendingForTest());
+            const auto committed = workers[1]->tryPopOutput();
+            ASSERT_TRUE(committed.has_value());
+            ASSERT_EQ(committed->decision.local_selection_epoch, new_epoch);
+            ASSERT_FALSE(committed->decision.activation_requested);
+        }
+        heartbeat.activation_requested = true;
+        heartbeat.activation_just_started = false; // periodic status suffices
+        heartbeat.activation_timestamp_us = start + 450'000;
+        ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+        ASSERT_TRUE(workers[1]->processPendingForTest());
+        if (!start_after_commit) {
+            const auto result = workers[1]->tryPopOutput();
+            ASSERT_TRUE(result.has_value());
+            EXPECT_EQ(result->decision.local_selection_epoch, new_epoch);
+            EXPECT_TRUE(result->decision.activation_requested);
+        } else {
+            const auto result = pushBeliefAndProcess(*workers[1],
+                beliefSnapshot(start + 550'000, 500.0, 0.0, 20.0, 0.0));
+            EXPECT_EQ(result.decision.local_selection_epoch, new_epoch);
+            EXPECT_TRUE(result.decision.activation_requested);
+        }
+        heartbeat.post_release_evaluated = true;
+        heartbeat.post_release_safe = true;
+        heartbeat.post_release_evaluation_timestamp_us = start + 600'000;
+        heartbeat.proposal_timestamp_us = start + 600'000;
+        heartbeat.nominal_setpoint_timestamp_us = start + 600'000;
+        heartbeat.nominal_setpoint_available = true;
+        heartbeat.nominal_ground_speed_command_mps = 20.0;
+        heartbeat.nominal_altitude_command_m = 100.0;
+        heartbeat.nominal_lateral_acceleration_mps2 = 0.0;
+        ASSERT_TRUE(workers[1]->pushNominalSetpoint(nominalSnapshot(start + 600'000)));
+        ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+        const auto released = pushBeliefAndProcess(*workers[1],
+            beliefSnapshot(start + 600'000, 500.0, 0.0, 22.0, 0.0));
+        ASSERT_FALSE(released.decision.activation_requested)
+            << "CPA=" << released.decision.cpa_clear
+            << " post=" << released.decision.post_release_evaluated
+            << "," << released.decision.post_release_safe
+            << " peer=" << released.decision.post_release_peer_confirmed
+            << " AD=" << released.decision.ad_m;
+        ASSERT_TRUE(released.decision.activation_just_ended);
+        ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+        const auto duplicate = pushBeliefAndProcess(*workers[1],
+            beliefSnapshot(start + 650'000, 500.0, 0.0, 22.0, 0.0));
+        EXPECT_FALSE(duplicate.decision.activation_requested);
+        // A genuinely new episode is still eligible after release; this is
+        // not a fixed cooldown or a permanent inhibit.
+        heartbeat.activation_timestamp_us = start + 650'000;
+        heartbeat.proposal_timestamp_us = start + 650'000;
+        ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+        const auto next_episode = pushBeliefAndProcess(*workers[1],
+            beliefSnapshot(start + 700'000, 500.0, 0.0, 22.0, 0.0));
+        EXPECT_TRUE(next_episode.decision.activation_requested);
+        EXPECT_TRUE(next_episode.decision.activation_just_started);
+    }
+}
+
+static void verifyComponentProposalActivationRace(bool superior)
+{
+    constexpr std::uint64_t start = 18'000'000;
+    std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, 2> workers;
+    std::array<cs::ManeuverSelectionWorkerOutput, 2> outputs;
+    for (int i = 0; i < 2; ++i) {
+        auto p = params(i);
+        p.active_switching_enabled = true;
+        p.active_switch_cost_margin = 0.01;
+        p.active_switch_minimum_ad_margin_m = 1.0;
+        if (!superior) {
+            p.evaluator_params.desired_separation_distance_m = 1'000.0;
+            p.active_switch_cost_margin = 1.0e9;
+            p.active_switch_minimum_ad_margin_m = 1.0e9;
+        }
+        p.exhaustive_test_mode = true;
+        p.interaction_graph_params.enabled = true;
+        workers[i] = std::make_unique<cs::ManeuverSelectionWorker>(p);
+        workers[i]->setActivationEnabled(false);
+        ASSERT_TRUE(workers[i]->pushNominalSetpoint(nominalSnapshot(start)));
+    }
+    for (std::uint64_t offset = 0; offset <= 500'000; offset += 50'000) {
+        for (int i = 0; i < 2; ++i) {
+            // First epoch is head-on; the next common snapshot is offset.
+            outputs[i] = pushBeliefAndProcess(*workers[i], beliefSnapshot(
+                start + offset, i ? 40.0 : -40.0,
+                offset >= 300'000 ? (i ? -20.0 : 20.0) : 0.0,
+                i ? -20.0 : 20.0, 0.0));
+        }
+        if (offset == 250'000) {
+            auto commits = confirmTwoAircraftProposal(
+                *workers[0], *workers[1], outputs[0], outputs[1]);
+            ASSERT_TRUE(commits[0].decision.coordination_qualified);
+            ASSERT_FALSE(commits[0].decision.activation_requested);
+            for (int i = 0; i < 2; ++i)
+                ASSERT_TRUE(workers[i]->pushRemoteDecision(1-i, peerDecision(commits[1-i].decision)));
+        }
+        if (offset < 500'000)
+            exchangePackets(*workers[0], *workers[1], outputs[0], outputs[1]);
+    }
+    if (!superior) {
+        EXPECT_TRUE(outputs[0].decision.switch_superiority_evaluated);
+        EXPECT_FALSE(outputs[0].decision.switch_clearly_superior);
+        EXPECT_FALSE(outputs[0].decision.proposal_valid);
+        EXPECT_FALSE(outputs[0].decision.activation_requested);
+        return;
+    }
+    ASSERT_TRUE(outputs[0].decision.proposal_valid)
+        << "superiority=" << outputs[0].decision.switch_superiority_evaluated
+        << " costs=" << outputs[0].decision.switch_current_cost << ","
+        << outputs[0].decision.switch_proposed_cost
+        << " AD=" << outputs[0].decision.switch_current_minimum_ad_m << ","
+        << outputs[0].decision.switch_proposed_minimum_ad_m;
+    ASSERT_EQ(outputs[0].decision.proposed_candidate_ids, outputs[1].decision.proposed_candidate_ids);
+    ASSERT_NE(outputs[0].decision.proposed_candidate_ids[0], outputs[0].decision.selected_candidate_ids[0]);
+    auto matching = peerDecision(outputs[1].decision);
+    const auto proposed = outputs[0].decision.proposed_candidate_ids;
+    const auto epoch = outputs[0].decision.proposal_epoch;
+    workers[0]->setActivationEnabled(true);
+    // Activate the old command before delivering the matching proposal.
+    const auto active = pushBeliefAndProcess(*workers[0],
+        beliefSnapshot(start + 550'000, 38.0, -20.0, 20.0, 0.0));
+    ASSERT_TRUE(active.decision.activation_requested);
+    ASSERT_TRUE(workers[0]->pushRemoteDecision(1, matching));
+    ASSERT_TRUE(workers[0]->processPendingForTest());
+    const auto committed = workers[0]->tryPopOutput();
+    ASSERT_TRUE(committed.has_value());
+    EXPECT_EQ(committed->decision.local_selection_epoch, epoch);
+    EXPECT_EQ(committed->decision.selected_candidate_ids, proposed);
+    EXPECT_TRUE(committed->decision.proposal_consensus_confirmed);
+    EXPECT_EQ(committed->decision.ownship_candidate_id, proposed[0]);
+}
+
+TEST(ManeuverSelectionWorker, ComponentProposalSurvivesActivationBeforeAgreement)
+{
+    verifyComponentProposalActivationRace(true);
+}
+
+TEST(ManeuverSelectionWorker, ComponentIncumbentPersistenceIsCheckedBeforeInactiveProposal)
+{
+    verifyComponentProposalActivationRace(false);
 }
 
 TEST(ManeuverSelectionWorker,
@@ -3133,6 +3345,7 @@ TEST(ManeuverSelectionWorker,
     auto other_component_trigger = peerDecision(commits[0].decision);
     other_component_trigger.activation_requested = true;
     other_component_trigger.activation_just_started = true;
+    other_component_trigger.activation_timestamp_us = start + 250'000;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, other_component_trigger));
     ASSERT_TRUE(workers[1]->processPendingForTest());
     const auto unaffected = pushBeliefAndProcess(

@@ -52,14 +52,18 @@ bool ManeuverSelectionWorker::selectedComponentActivationRequested(
         const RemoteDecisionCache & peer =
             m_remote_decision_caches[aircraft_index];
         if (peer.valid && peer.decision.coordination_qualified
-            && (ownship_component_mask & aircraft_bit) != 0U
-            && peer.activation_start_epoch
-                == m_latest_selection_decision.local_selection_epoch
-            && peer.activation_start_valid_mask
+            && peer.decision.activation_requested
+            && peer.decision.activation_timestamp_us
+                > peer.activation_consumed_through_us
+            && peer.decision.activation_timestamp_us
+                > peer.activation_ended_through_us
+            && peer.decision.proposal_timestamp_us != 0
+            && peer.decision.proposal_timestamp_us <= m_latest_state_timestamp_us
+            && m_latest_state_timestamp_us - peer.decision.proposal_timestamp_us
+                <= m_params.maximum_belief_delay_us
+            && peer.decision.selected_candidate_valid_mask
                 == m_selected_candidate_valid_mask
-            && peer.activation_start_candidate_ids
-                == m_selected_candidate_ids
-            && peer.activation_start_pending) {
+            && peer.decision.selected_candidate_ids == m_selected_candidate_ids) {
             return true;
         }
     }
@@ -780,16 +784,6 @@ void ManeuverSelectionWorker::updateActivationState(
             }
         }
     }
-    // An invalid sample cannot execute the activation request. Preserve the
-    // original event identity until a valid evaluation can consume it; later
-    // heartbeats must not re-label the edge with a different tuple/epoch.
-    // A valid evaluation still discards non-matching events, preventing replay
-    // after a changed selection or component.
-    if (sample.valid) {
-        for (RemoteDecisionCache & peer : m_remote_decision_caches) {
-            peer.activation_start_pending = false;
-        }
-    }
     JointCombinationEvaluation post_release_evaluation;
     if (evaluateNominalPostRelease(now_us, post_release_evaluation)) {
         m_last_post_release_evaluation = post_release_evaluation;
@@ -822,6 +816,31 @@ void ManeuverSelectionWorker::updateActivationState(
     }
     const ManeuverActivationStatus status =
         m_activation_controller.update(sample);
+    if (m_selected_component_graph && (status.active || status.just_deactivated)) {
+        const auto component_mask =
+            selectedComponentMemberMask(activation_ownship_index);
+        for (std::size_t index = 0; index < m_remote_decision_caches.size(); ++index) {
+            auto & peer = m_remote_decision_caches[index];
+            if (!peer.valid) {
+                continue;
+            }
+            // Consume only when actually participating, not merely when a
+            // sample happened to be valid. An epoch change cannot drop intent.
+            if ((component_mask & (std::uint32_t{1} << index)) != 0U) {
+                peer.activation_consumed_through_us = std::max(
+                    peer.activation_consumed_through_us,
+                    peer.decision.activation_timestamp_us);
+            }
+            if (status.just_deactivated) {
+                // Release already requires fresh safe post-release reports
+                // from all peers. Retire earlier starts in each sender's own
+                // clock domain so late heartbeats cannot undo that release.
+                peer.activation_consumed_through_us = std::max(
+                    peer.activation_consumed_through_us,
+                    peer.decision.post_release_evaluation_timestamp_us);
+            }
+        }
+    }
     decision.activation_requested = status.active;
     decision.activation_just_started = status.just_activated;
     decision.activation_just_ended = status.just_deactivated;

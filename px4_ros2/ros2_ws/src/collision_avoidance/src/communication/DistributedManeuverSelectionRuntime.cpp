@@ -181,6 +181,8 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->activation_requested;
                     decision.activation_just_started =
                         message->activation_just_started;
+                    decision.activation_timestamp_us =
+                        message->activation_timestamp_us;
                     decision.command_execution_requested =
                         message->command_execution_requested;
                     decision.nominal_setpoint_available =

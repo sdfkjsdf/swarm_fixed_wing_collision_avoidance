@@ -1137,15 +1137,30 @@ def decision_consensus_summary(decisions, elapsed_s):
         elif first_mismatch_time_s is None:
             first_mismatch_time_s = float(time_s)
     per_vehicle_by_epoch = []
+    first_commit_times = {}
     for records in decisions:
         by_epoch = {}
-        for _, decision in records:
+        vehicle = len(per_vehicle_by_epoch)
+        for time_s, decision in records:
             if decision.coordination_qualified:
-                by_epoch[int(decision.local_selection_epoch)] = decision
+                epoch = int(decision.local_selection_epoch)
+                by_epoch[epoch] = decision
+                first_commit_times.setdefault(epoch, {}).setdefault(vehicle, float(time_s))
         per_vehicle_by_epoch.append(by_epoch)
     common_epochs = set(per_vehicle_by_epoch[0])
     for by_epoch in per_vehicle_by_epoch[1:]:
         common_epochs.intersection_update(by_epoch)
+    union_epochs = set().union(*(set(items) for items in per_vehicle_by_epoch))
+    partial_commits = [
+        {"epoch": epoch,
+         "committed_vehicle_ids": sorted(first_commit_times[epoch]),
+         "missing_vehicle_ids": [v for v in range(len(decisions))
+                                 if v not in first_commit_times[epoch]],
+         "first_commit_s": min(first_commit_times[epoch].values())}
+        for epoch in sorted(union_epochs - common_epochs)]
+    commit_spreads_ms = [
+        (max(first_commit_times[epoch].values()) - min(first_commit_times[epoch].values())) * 1000
+        for epoch in sorted(common_epochs)]
     same_epoch_tuple_count = 0
     first_epoch_mismatch = None
     for epoch in sorted(common_epochs):
@@ -1159,6 +1174,19 @@ def decision_consensus_summary(decisions, elapsed_s):
             first_epoch_mismatch = epoch
 
     return {
+        "union_qualified_epoch_count": len(union_epochs),
+        "partially_committed_epoch_count": len(partial_commits),
+        "partial_commits": partial_commits,
+        "all_vehicle_commit_coverage_ratio": (
+            len(common_epochs) / len(union_epochs) if union_epochs else None),
+        "observed_first_commit_spread_ms": {
+            "median": float(np.median(commit_spreads_ms)) if commit_spreads_ms else None,
+            "p95": float(np.percentile(commit_spreads_ms, 95)) if commit_spreads_ms else None,
+            "max": max(commit_spreads_ms) if commit_spreads_ms else None},
+        "commit_observation_note": (
+            "Partial epochs include recording boundaries. Commit spread uses decision "
+            "observation timestamps, not PX4 command application or actual response; "
+            "tuple agreement does not imply simultaneous activation."),
         "common_qualified_epoch_count": len(common_epochs),
         "same_tuple_common_epoch_count": same_epoch_tuple_count,
         "same_tuple_common_epoch_ratio": (

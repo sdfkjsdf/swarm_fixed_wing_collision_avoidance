@@ -431,6 +431,7 @@ struct ManeuverSelectionPeerDecision
     bool activation_requested{false};
     bool activation_just_started{false};
     bool command_execution_requested{false};
+    std::uint64_t activation_timestamp_us{0};
     bool nominal_setpoint_available{false};
     std::uint64_t nominal_setpoint_timestamp_us{0};
     double nominal_ground_speed_command_mps{
@@ -667,11 +668,9 @@ private:
     struct RemoteDecisionCache
     {
         ManeuverSelectionPeerDecision decision{};
-        bool activation_start_pending{false};
-        std::uint64_t activation_start_epoch{0};
-        std::uint32_t activation_start_valid_mask{0};
-        std::array<std::uint8_t, kMaximumSelectionAircraft>
-            activation_start_candidate_ids{};
+        // Episode identity belongs to this sender, not a selection epoch.
+        std::uint64_t activation_consumed_through_us{0};
+        std::uint64_t activation_ended_through_us{0};
         bool valid{false};
     };
 

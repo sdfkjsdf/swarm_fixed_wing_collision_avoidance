@@ -338,7 +338,8 @@ bool ManeuverSelectionWorker::finalizePendingCoordination(
         m_params.vehicle_id);
     const bool proposed_ownship_candidate_valid = candidateIsValid(
         m_pending_proposal.candidate_valid_mask, ownship_index);
-    if (activation.active && !m_pending_proposal.active_command_change
+    if (!m_pending_proposal.component_graph
+        && activation.active && !m_pending_proposal.active_command_change
         && proposed_ownship_candidate_valid
         && (m_pending_proposal.candidate_ids[ownship_index]
                 != activation.latched_candidate_id

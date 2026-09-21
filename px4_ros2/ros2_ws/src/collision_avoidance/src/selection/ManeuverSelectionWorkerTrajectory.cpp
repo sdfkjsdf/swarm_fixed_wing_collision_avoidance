@@ -615,18 +615,25 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                     ->component_proposal_used = true;
             }
             const bool active_command_change =
-                proposalChangesActiveCommand(
+                component_cutover
+                ? m_has_selected_combination
+                    && (proposed_candidate_valid_mask
+                            != m_selected_candidate_valid_mask
+                        || proposed_candidate_ids != m_selected_candidate_ids)
+                : proposalChangesActiveCommand(
                     proposed_candidate_ids,
                     proposed_candidate_input_revisions,
                     proposed_candidate_valid_mask);
             JointCombinationEvaluation current_evaluation{};
             std::array<std::uint8_t, kMaximumSelectionAircraft>
-                incumbent_candidate_ids{};
+                incumbent_candidate_ids = m_selected_candidate_ids;
             const bool common_incumbent_available =
-                m_params.execution_policy
+                component_cutover
+                ? m_has_selected_combination
+                : (m_params.execution_policy
                         != ManeuverExecutionPolicy::AmacAdThreshold
                     || buildCommonIncumbentCandidateIds(
-                        incumbent_candidate_ids);
+                        incumbent_candidate_ids));
             bool current_evaluation_available = false;
             if (active_command_change && common_incumbent_available) {
                 if (component_cutover
@@ -693,9 +700,9 @@ void ManeuverSelectionWorker::evaluateCurrentSet(
                 }
             }
             // The component result is authoritative as the proposed tuple,
-            // but changing an active command still uses the same incumbent
-            // persistence rule as the legacy evaluator. Both tuples are
-            // compared on this epoch's frozen candidate library.
+            // and every changed component tuple is qualified BEFORE proposing,
+            // irrespective of a local activation transition during agreement.
+            // Compare the committed incumbent on the same frozen library.
             const bool active_change_allowed = !active_command_change
                 || clearly_superior;
             if (!active_change_allowed) {
