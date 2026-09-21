@@ -18,33 +18,6 @@ constexpr double kTrajectoryHorizonSeconds =
     estimation::kTrajectoryIntentHorizonSeconds;
 constexpr std::uint64_t kTrajectoryHorizonMicroseconds =
     static_cast<std::uint64_t>(kTrajectoryHorizonSeconds * 1.0e6);
-constexpr std::uint64_t kInteractionFnvOffset = 14695981039346656037ULL;
-constexpr std::uint64_t kInteractionFnvPrime = 1099511628211ULL;
-
-inline std::uint64_t assembledCandidateHash(
-    std::uint64_t graph_hash,
-    const std::array<std::uint8_t, kMaximumSelectionAircraft> & candidate_ids,
-    std::uint32_t candidate_valid_mask,
-    std::size_t aircraft_count) noexcept
-{
-    std::uint64_t hash = kInteractionFnvOffset;
-    const auto mix = [&hash](std::uint8_t byte) {
-        hash ^= byte;
-        hash *= kInteractionFnvPrime;
-    };
-    for (std::size_t byte = 0; byte < sizeof(graph_hash); ++byte) {
-        mix(static_cast<std::uint8_t>(graph_hash >> (byte * 8U)));
-    }
-    for (std::size_t index = 0; index < aircraft_count; ++index) {
-        mix(static_cast<std::uint8_t>(
-            (candidate_valid_mask >> index) & std::uint32_t{1}));
-        if ((candidate_valid_mask & (std::uint32_t{1} << index)) == 0U) {
-            continue;
-        }
-        mix(candidate_ids[index]);
-    }
-    return hash;
-}
 
 inline std::uint32_t candidateMaskForAircraftCount(
     const std::size_t aircraft_count) noexcept
@@ -293,4 +266,3 @@ inline V4SnapshotStatus classifySnapshot(
 }
 
 }  // namespace collision_avoidance::selection::worker_detail
-

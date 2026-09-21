@@ -16,6 +16,8 @@
 #include <collision_avoidance/formation/FormationDiscrimination.hpp>
 #include <collision_avoidance/selection/HeuristicCandidateSelector.hpp>
 #include <collision_avoidance/selection/InteractionGraph.hpp>
+#include <collision_avoidance/selection/ManeuverEvaluationWorker.hpp>
+#include <collision_avoidance/selection/RemoteTrajectoryWorker.hpp>
 #include <collision_avoidance/selection/BackupControlInterpolatorV4.hpp>
 #include <collision_avoidance/selection/BackupThreatIntentAdapterV4.hpp>
 #include <collision_avoidance/selection/ManeuverActivationController.hpp>
@@ -138,50 +140,6 @@ struct ManeuverSelectionWorkerParams
         static_cast<std::uint8_t>(estimation::ManeuverCandidateId::RollPlus50)};
 };
 
-enum class InteractionGraphEvaluationStatus : std::uint8_t
-{
-    Disabled = 0,
-    GraphInvalid,
-    CandidateSetsIncomplete,
-    RequiresSevenCandidates,
-    ComponentEvaluationFailed,
-    GlobalCrosscheckFailed,
-    Evaluated,
-};
-
-struct InteractionGraphDiagnostics
-{
-    int vehicle_id{0};
-    bool enabled{false};
-    bool component_proposal_used{false};
-    InteractionGraphResult graph{};
-    InteractionGraphEvaluationStatus status{
-        InteractionGraphEvaluationStatus::Disabled};
-    bool component_search_evaluated{false};
-    std::uint32_t candidate_ready_mask{0};
-    std::array<std::uint8_t, kMaximumSelectionAircraft>
-        candidate_counts{};
-    std::array<std::uint64_t, kMaximumSelectionAircraft>
-        candidate_source_timestamps_us{};
-    std::uint64_t dropped_ownship_belief_count{0};
-    std::uint64_t dropped_remote_intent_count{0};
-    std::uint64_t dropped_remote_decision_count{0};
-    std::array<std::uint8_t, kMaximumSelectionAircraft>
-        assembled_candidate_ids{};
-    std::uint32_t assembled_candidate_valid_mask{0};
-    std::uint64_t assembled_candidate_hash{0};
-    std::uint64_t component_solution_hash{0};
-    bool global_crosscheck_evaluated{false};
-    bool global_crosscheck_pass{false};
-    double global_crosscheck_minimum_ad_m{
-        std::numeric_limits<double>::quiet_NaN()};
-    std::uint64_t component_search_time_ns{0};
-    std::uint64_t global_crosscheck_time_ns{0};
-    std::uint64_t total_evaluation_time_ns{0};
-    std::size_t component_valid_evaluation_count{0};
-    std::size_t component_safe_evaluation_count{0};
-    JointCombinationEvaluation global_crosscheck_evaluation{};
-};
 
 struct StoppedGraphObservation {
     std::uint64_t wall_ns{0};
@@ -614,8 +572,15 @@ public:
 
     // Deterministic clock injection: elapsed time since the latest accepted
     // belief arrived. Production advances this clock even without new inputs.
+    // run_selection=false leaves the job queued, allowing deterministic tests
+    // to interleave trajectory ticks with an unfinished selection job.
+    // run_remote=false likewise leaves remote reconstruction queued.
     // Do not call while start() is active.
-    bool processPendingForTest(std::uint64_t belief_elapsed_us = 0);
+    bool processPendingForTest(std::uint64_t belief_elapsed_us = 0,
+                               bool run_selection = true, bool run_remote = true);
+
+    std::uint64_t skippedSelectionCount() const noexcept { return m_selection_busy.load(); }
+    std::uint64_t expiredSelectionCount() const noexcept { return m_selection_expired.load(); }
 
     std::uint64_t droppedInputCount() const noexcept;
     std::uint64_t droppedOutputCount() const noexcept;
@@ -632,7 +597,6 @@ private:
         Airspeed,
         NominalSetpoint,
         PublishedSetpoint,
-        RemoteIntent,
         RemoteDecision,
     };
 
@@ -646,7 +610,6 @@ private:
         ManeuverSelectionAirspeedSnapshot airspeed{};
         ManeuverSelectionNominalSetpointSnapshot nominal{};
         ManeuverSelectionPublishedSetpointSnapshot published{};
-        estimation::TrajectoryIntentPacket packet{};
         ManeuverSelectionPeerDecision decision{};
     };
 
@@ -659,17 +622,7 @@ private:
         std::array<WorkerInput, kSelectionWorkerInputCapacity> batch{};
     };
 
-    struct RemoteCandidateCache
-    {
-        std::uint64_t selection_epoch{0};
-        std::uint64_t source_timestamp_us{0};
-        estimation::CandidateSetKind candidate_set_kind{
-            estimation::CandidateSetKind::LegacyRoll};
-        std::size_t expected_count{0};
-        ExhaustiveCandidateIntentSet candidates{};
-        std::array<bool, kExhaustiveCandidatesPerAircraft> occupied{};
-        std::size_t count{0};
-    };
+    using RemoteCandidateCache = RemoteTrajectoryCandidateSet;
 
     struct RemoteDecisionCache
     {
@@ -725,7 +678,8 @@ private:
     // Core event loop and input-cache ownership.
     void workerLoop();
     bool processPending(
-        std::optional<std::uint64_t> belief_elapsed_us = std::nullopt);
+        std::optional<std::uint64_t> belief_elapsed_us = std::nullopt,
+        bool run_selection_inline = false);
     bool prepareStateAt(std::uint64_t timestamp_us);
     bool acceptOwnshipBelief(const ManeuverSelectionBeliefSnapshot & snapshot);
     bool acceptPublishedSetpoint(
@@ -738,9 +692,7 @@ private:
         const ManeuverSelectionAirspeedSnapshot & snapshot);
     bool acceptNominalSetpoint(
         const ManeuverSelectionNominalSetpointSnapshot & snapshot);
-    bool acceptRemoteIntent(
-        int remote_vehicle_id,
-        const estimation::TrajectoryIntentPacket & packet);
+    bool acceptRemoteCandidateSet(const RemoteTrajectoryCandidateSet & completed);
     void freezeRemoteCertificationCandidatesForCurrentEpoch(
         int remote_vehicle_id);
     bool acceptRemoteDecision(
@@ -767,12 +719,15 @@ private:
         ManeuverSelectionWorkerOutput & output);
 
     // Current legacy candidate-set evaluation.
-    void evaluateCurrentSet(
-        std::uint64_t now_us,
+    void submitSelectionEvaluation(std::uint64_t now_us);
+    bool consumeSelectionEvaluation(std::uint64_t now_us,
+                                    ManeuverSelectionWorkerOutput & output);
+    void applySelectionEvaluation(
+        const ManeuverEvaluationTask & task,
         ManeuverSelectionWorkerOutput & output);
 
     // Interaction-graph component search and diagnostics.
-    void evaluateInteractionGraph(std::uint64_t now_us);
+    void prepareInteractionGraph(ManeuverEvaluationRequest & request);
     void publishPendingInteractionGraphDiagnostics() noexcept;
 
     // V4 horizon supervision.
@@ -821,22 +776,31 @@ private:
         ManeuverSelectionWorkerOutput & output);
 
     // Activation, CPA termination, formation gate and post-release checks.
+    // Call-local: activation and post-release use the same owner-thread inputs.
+    // Cache failed builds too; the next activation update gets a fresh context.
+    struct NominalIntentSet
+    {
+        MultiAircraftCandidateIntentSets candidates{};
+        std::array<std::size_t, kMaximumSelectionAircraft> counts{};
+        bool attempted{false};
+        bool valid{false};
+    };
     bool buildNominalIntentSet(
         std::uint64_t now_us,
-        MultiAircraftCandidateIntentSets & candidate_sets,
-        std::array<std::size_t, kMaximumSelectionAircraft>
-            & candidate_counts);
+        NominalIntentSet & nominal);
     bool buildActivationSample(
         std::uint64_t now_us,
         ManeuverActivationSample & sample,
-        ManeuverSelectionDecision & decision);
+        ManeuverSelectionDecision & decision,
+        NominalIntentSet & nominal);
     std::uint32_t selectedComponentMemberMask(
         std::size_t aircraft_index) const noexcept;
     bool selectedComponentActivationRequested(
         std::uint32_t ownship_component_mask) const noexcept;
     bool evaluateNominalPostRelease(
         std::uint64_t now_us,
-        JointCombinationEvaluation & evaluation);
+        JointCombinationEvaluation & evaluation,
+        NominalIntentSet & nominal);
     bool allPeersConfirmPostRelease(
         std::uint64_t now_us) const noexcept;
     void applyFormationActivationGate(
@@ -865,10 +829,7 @@ private:
     ManeuverCombinationEvaluator m_pair_evaluator;
     PositiveMarginBarrierEvaluator m_barrier_evaluator;
     JointManeuverCombinationEvaluator m_joint_evaluator;
-    ExhaustiveManeuverCombinationEvaluator m_exhaustive_evaluator;
-    PairwiseAdCertificationEvaluator m_pairwise_ad_certifier;
     CertifiedComponentManeuverEvaluator m_certified_component_evaluator;
-    InteractionGraphBuilder m_interaction_graph_builder;
     HeuristicCandidateSelector m_candidate_selector;
     ManeuverActivationController m_activation_controller;
     std::uint64_t m_local_activation_request_timestamp_us{0};
@@ -884,11 +845,18 @@ private:
     // remaining partitions are peers in aircraft-ID order (excluding ownship).
     // Allocate once at construction, never in push/drain. Keep large fixed
     // buffers off callers' stacks (tests may instantiate several workers).
+    ManeuverEvaluationWorker m_evaluation_worker;
+    RemoteTrajectoryWorker m_remote_trajectory_worker;
+    std::atomic<std::uint64_t> m_selection_submitted{0}, m_selection_completed{0};
+    std::atomic<std::uint64_t> m_selection_busy{0}, m_selection_expired{0};
+    std::optional<StageTimingRecord> m_completed_selection_timing;
+    std::optional<StageTimingRecord> m_selection_snapshot_timing;
+    std::optional<StageTimingRecord> m_selection_apply_timing;
     std::unique_ptr<InputStorage> m_input_storage;
     common::SpscQueue<
         ManeuverSelectionWorkerOutput, kSelectionWorkerOutputCapacity> m_output_queue{};
     std::unique_ptr<StoppedGraphRecords> m_graph_records;
-    std::shared_ptr<InteractionGraphDiagnostics>
+    std::optional<InteractionGraphDiagnostics>
         m_pending_interaction_graph_diagnostics{};
     std::thread m_thread;
     std::atomic<bool> m_running{false};
@@ -966,8 +934,6 @@ private:
     bool m_epoch_evaluated{false};
     std::unique_ptr<MultiAircraftExhaustiveCandidateIntentSets>
         m_epoch_certification_candidate_sets{};
-    std::unique_ptr<PairwiseAdCertificationSet>
-        m_epoch_pairwise_ad_certifications{};
     std::array<std::size_t, kMaximumSelectionAircraft>
         m_epoch_certification_candidate_counts{};
     std::array<bool, kMaximumSelectionAircraft>
@@ -1005,8 +971,6 @@ private:
     // 4 Hz coordination race without duplicating another full trajectory set.
     std::array<RemoteSelectedIntentCache, kMaximumSelectionAircraft>
         m_remote_selected_caches{};
-    std::array<RemoteCandidateCache, kMaximumSelectionAircraft>
-        m_remote_staging_caches{};
     std::array<RemoteDecisionCache, kMaximumSelectionAircraft>
         m_remote_decision_caches{};
     PendingSelectionProposal m_pending_proposal{};

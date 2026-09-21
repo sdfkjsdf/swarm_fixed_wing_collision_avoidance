@@ -202,6 +202,7 @@ struct JointManeuverEvaluation
     std::uint64_t evaluation_timestamp_us{0};
     std::size_t aircraft_count{0};
     std::size_t combination_count{0};
+    std::size_t evaluated_unique_pair_count{0};
     std::size_t valid_combination_count{0};
     std::size_t safe_combination_count{0};
     double maximum_minimum_ad_m{

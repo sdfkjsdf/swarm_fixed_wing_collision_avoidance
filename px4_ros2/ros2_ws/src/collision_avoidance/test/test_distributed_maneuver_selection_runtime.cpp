@@ -241,10 +241,12 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
     runtime_a->stopAndWriteStageTiming(stopped_log);
     EXPECT_NE(stopped_log.str().find("[stop-observation-begin],1,0,worker,"), std::string::npos);
     EXPECT_NE(stopped_log.str().find("[stop-observation-end],0,worker,"), std::string::npos);
-    EXPECT_NE(stopped_log.str().find("[stop-stage-begin],1,0,"), std::string::npos);
+    EXPECT_NE(stopped_log.str().find("[stop-stage-begin],2,0,"), std::string::npos);
     EXPECT_NE(stopped_log.str().find("[stop-stage],1,"), std::string::npos);
     EXPECT_NE(stopped_log.str().find("[stop-stage],2,"), std::string::npos);
     EXPECT_NE(stopped_log.str().find("[stop-stage],3,"), std::string::npos);
+    EXPECT_NE(stopped_log.str().find("[stop-stage],4,"), std::string::npos);
+    EXPECT_NE(stopped_log.str().find("[stop-stage],5,"), std::string::npos);
     EXPECT_NE(stopped_log.str().find("[stop-stage-end],0,"), std::string::npos);
     runtime_b.reset();
     runtime_a.reset();
@@ -254,7 +256,7 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
     rclcpp::shutdown();
 }
 
-TEST(DistributedManeuverSelectionRuntime, FiveRuntimesPublishSameJointDecision)
+static void fiveRuntimesPublishSameJointDecision(bool graph)
 {
     if (!rclcpp::ok()) {
         int argc = 0;
@@ -284,6 +286,8 @@ TEST(DistributedManeuverSelectionRuntime, FiveRuntimesPublishSameJointDecision)
     params.evaluator_params.desired_separation_distance_m = 10.0;
     params.evaluator_params.ownship_half_wingspan_m = 1.072;
     params.evaluator_params.threat_half_wingspan_m = 1.072;
+    params.exhaustive_test_mode = graph;
+    params.interaction_graph_params.enabled = graph;
 
     std::array<std::optional<cs::ManeuverSelectionDecision>, aircraft_count>
         decisions;
@@ -336,7 +340,12 @@ TEST(DistributedManeuverSelectionRuntime, FiveRuntimesPublishSameJointDecision)
         ASSERT_TRUE(decisions[aircraft].has_value());
         EXPECT_TRUE(decisions[aircraft]->coordination_qualified);
         EXPECT_EQ(decisions[aircraft]->aircraft_count, aircraft_count);
-        EXPECT_EQ(decisions[aircraft]->evaluated_combination_count, 243U);
+        if (graph) {
+            EXPECT_TRUE(decisions[aircraft]->proposed_component_graph);
+            EXPECT_GT(decisions[aircraft]->evaluated_combination_count, 0U);
+        } else {
+            EXPECT_EQ(decisions[aircraft]->evaluated_combination_count, 243U);
+        }
         EXPECT_EQ(decisions[aircraft]->selected_candidate_ids, expected_tuple);
         EXPECT_EQ(
             decisions[aircraft]->selected_candidate_input_revisions,
@@ -351,4 +360,14 @@ TEST(DistributedManeuverSelectionRuntime, FiveRuntimesPublishSameJointDecision)
         runtime.reset();
     }
     rclcpp::shutdown();
+}
+
+TEST(DistributedManeuverSelectionRuntime, FiveRuntimesPublishSameJointDecision)
+{
+    fiveRuntimesPublishSameJointDecision(false);
+}
+
+TEST(DistributedManeuverSelectionRuntime, FiveAsyncGraphRuntimesAgreeOnSevenCandidateTuple)
+{
+    fiveRuntimesPublishSameJointDecision(true);
 }

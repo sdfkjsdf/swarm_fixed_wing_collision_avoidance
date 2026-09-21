@@ -94,4 +94,49 @@ private:
     InteractionGraphParams m_params;
 };
 
+enum class InteractionGraphEvaluationStatus : std::uint8_t
+{
+    Disabled = 0,
+    GraphInvalid,
+    CandidateSetsIncomplete,
+    RequiresSevenCandidates,
+    ComponentEvaluationFailed,
+    GlobalCrosscheckFailed,
+    Evaluated,
+};
+
+struct InteractionGraphDiagnostics
+{
+    int vehicle_id{0};
+    bool enabled{false};
+    bool component_proposal_used{false};
+    InteractionGraphResult graph{};
+    InteractionGraphEvaluationStatus status{
+        InteractionGraphEvaluationStatus::Disabled};
+    bool component_search_evaluated{false};
+    std::uint32_t candidate_ready_mask{0};
+    std::array<std::uint8_t, kMaximumSelectionAircraft>
+        candidate_counts{};
+    std::array<std::uint64_t, kMaximumSelectionAircraft>
+        candidate_source_timestamps_us{};
+    std::uint64_t dropped_ownship_belief_count{0};
+    std::uint64_t dropped_remote_intent_count{0};
+    std::uint64_t dropped_remote_decision_count{0};
+    std::array<std::uint8_t, kMaximumSelectionAircraft>
+        assembled_candidate_ids{};
+    std::uint32_t assembled_candidate_valid_mask{0};
+    std::uint64_t assembled_candidate_hash{0};
+    std::uint64_t component_solution_hash{0};
+    bool global_crosscheck_evaluated{false};
+    bool global_crosscheck_pass{false};
+    double global_crosscheck_minimum_ad_m{
+        std::numeric_limits<double>::quiet_NaN()};
+    std::uint64_t component_search_time_ns{0};
+    std::uint64_t global_crosscheck_time_ns{0};
+    std::uint64_t total_evaluation_time_ns{0};
+    std::size_t component_valid_evaluation_count{0};
+    std::size_t component_safe_evaluation_count{0};
+    JointCombinationEvaluation global_crosscheck_evaluation{};
+};
+
 }  // namespace collision_avoidance::selection

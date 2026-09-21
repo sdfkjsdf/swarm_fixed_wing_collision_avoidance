@@ -73,7 +73,8 @@ bool ManeuverSelectionWorker::selectedComponentActivationRequested(
 bool ManeuverSelectionWorker::buildActivationSample(
     std::uint64_t now_us,
     ManeuverActivationSample & sample,
-    ManeuverSelectionDecision & decision)
+    ManeuverSelectionDecision & decision,
+    NominalIntentSet & nominal)
 {
     sample = ManeuverActivationSample{};
     sample.timestamp_us = now_us;
@@ -183,9 +184,6 @@ bool ManeuverSelectionWorker::buildActivationSample(
     double reciprocal_cost_sum = 0.0;
     bool reciprocal_cost_defined = true;
     std::size_t evaluated_threat_count = 0;
-    MultiAircraftCandidateIntentSets nominal_sets{};
-    std::array<std::size_t, kMaximumSelectionAircraft> nominal_counts{};
-    bool nominal_intents_built = false;
     for (int remote_id = 0;
          remote_id < m_params.total_agent_count; ++remote_id) {
         if (remote_id == m_params.vehicle_id) {
@@ -212,20 +210,14 @@ bool ManeuverSelectionWorker::buildActivationSample(
                     peer.decision.selected_candidate_input_revisions[
                         remote_index];
             } else {
-                if (!nominal_intents_built) {
-                    if (!buildNominalIntentSet(
-                            now_us, nominal_sets, nominal_counts)) {
-                        return false;
-                    }
-                    nominal_intents_built = true;
-                }
-                if (nominal_counts[remote_index] != 1U) {
+                if (!buildNominalIntentSet(now_us, nominal)
+                    || nominal.counts[remote_index] != 1U) {
                     return false;
                 }
                 remote_candidate_id = kRollZeroId;
                 remote_candidate_input_revision =
-                    nominal_sets[remote_index][0].candidate_input_revision;
-                remote_intent = &nominal_sets[remote_index][0];
+                    nominal.candidates[remote_index][0].candidate_input_revision;
+                remote_intent = &nominal.candidates[remote_index][0];
             }
         }
         if (remote_intent == nullptr
@@ -362,15 +354,18 @@ bool ManeuverSelectionWorker::buildActivationSample(
 
 bool ManeuverSelectionWorker::buildNominalIntentSet(
     std::uint64_t now_us,
-    MultiAircraftCandidateIntentSets & candidate_sets,
-    std::array<std::size_t, kMaximumSelectionAircraft> & candidate_counts)
+    NominalIntentSet & nominal)
 {
+    if (nominal.attempted) {
+        return nominal.valid;
+    }
+    nominal.attempted = true;
     if (!m_has_latest_state || !m_has_latest_nominal) {
         return false;
     }
 
-    candidate_sets = MultiAircraftCandidateIntentSets{};
-    candidate_counts.fill(0U);
+    auto & candidate_sets = nominal.candidates;
+    auto & candidate_counts = nominal.counts;
     estimation::PredictInput ownship_input{};
     if (!nominalPredictInput(
             m_latest_nominal,
@@ -474,24 +469,24 @@ bool ManeuverSelectionWorker::buildNominalIntentSet(
         candidate_counts[aircraft_index] = 1;
     }
 
+    nominal.valid = true;
     return true;
 }
 
 bool ManeuverSelectionWorker::evaluateNominalPostRelease(
     std::uint64_t now_us,
-    JointCombinationEvaluation & evaluation)
+    JointCombinationEvaluation & evaluation,
+    NominalIntentSet & nominal)
 {
-    MultiAircraftCandidateIntentSets candidate_sets{};
-    std::array<std::size_t, kMaximumSelectionAircraft> candidate_counts{};
-    if (!buildNominalIntentSet(now_us, candidate_sets, candidate_counts)) {
+    if (!buildNominalIntentSet(now_us, nominal)) {
         return false;
     }
 
     JointManeuverEvaluation nominal_evaluation;
     if (!m_joint_evaluator.evaluate(
             now_us,
-            candidate_sets,
-            candidate_counts,
+            nominal.candidates,
+            nominal.counts,
             static_cast<std::size_t>(m_params.total_agent_count),
             nominal_evaluation)
         || !nominal_evaluation.has_best) {
@@ -760,8 +755,9 @@ void ManeuverSelectionWorker::updateActivationState(
         ? m_last_post_release_evaluation_timestamp_us : 0;
     decision.post_release_peer_confirmed = false;
 
+    NominalIntentSet nominal;
     ManeuverActivationSample sample;
-    const bool sample_valid = buildActivationSample(now_us, sample, decision);
+    const bool sample_valid = buildActivationSample(now_us, sample, decision, nominal);
     sample.valid = sample_valid;
     applyFormationActivationGate(now_us, sample, decision);
     const std::size_t activation_ownship_index = static_cast<std::size_t>(
@@ -791,7 +787,7 @@ void ManeuverSelectionWorker::updateActivationState(
         }
     }
     JointCombinationEvaluation post_release_evaluation;
-    if (evaluateNominalPostRelease(now_us, post_release_evaluation)) {
+    if (evaluateNominalPostRelease(now_us, post_release_evaluation, nominal)) {
         m_last_post_release_evaluation = post_release_evaluation;
         m_last_post_release_evaluation_timestamp_us = now_us;
         m_has_last_post_release_evaluation = true;

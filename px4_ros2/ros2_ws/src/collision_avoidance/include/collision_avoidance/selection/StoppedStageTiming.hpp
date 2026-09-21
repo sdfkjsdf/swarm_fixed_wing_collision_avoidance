@@ -29,6 +29,8 @@ struct BeliefTimingRecord
 struct PipelineTimingRecord
 {
     std::uint64_t source_us{0}, start_ns{0}, drain_end_ns{0}, end_ns{0};
+    // With [stop-remote-worker], remote_processing is complete-set installation
+    // on the state owner, not the concurrent reconstruction/covariance work.
     std::uint64_t remote_processing_ns{0}, belief_processing_ns{0};
     std::uint32_t input_count{0}, remote_count{0}, belief_count{0};
 };
@@ -70,9 +72,11 @@ struct StoppedStageTiming
         beliefs[belief_size++] = record;
     }
     // Caller must have stopped/joined the worker; not a live logging API.
-    void write(std::ostream & out, int vehicle) const
+    // v1: serial stages 1/2/3. v2: selection kernel (2) may overlap the owner;
+    // snapshot preparation (4) and result application (5) stay on the owner.
+    void write(std::ostream & out, int vehicle, unsigned version = 1) const
     {
-        out << "[stop-stage-begin],1," << vehicle << ',' << size << ',' << dropped << '\n';
+        out << "[stop-stage-begin]," << version << ',' << vehicle << ',' << size << ',' << dropped << '\n';
         for (std::size_t i = 0; i < size; ++i) {
             const auto & r = records[i];
             out << "[stop-stage]," << unsigned(r.stage) << ',' << r.source_us << ','

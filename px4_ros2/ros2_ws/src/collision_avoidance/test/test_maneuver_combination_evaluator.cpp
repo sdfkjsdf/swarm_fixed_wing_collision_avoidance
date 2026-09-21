@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -650,6 +651,7 @@ TEST(JointManeuverCombinationEvaluator, EvaluatesAllFiveAircraftCombinations)
         evaluation));
     EXPECT_EQ(evaluation.aircraft_count, 5U);
     EXPECT_EQ(evaluation.combination_count, 243U);
+    EXPECT_EQ(evaluation.evaluated_unique_pair_count, 90U);
     ASSERT_TRUE(evaluation.has_best);
     const auto & best = evaluation.combinations[
         evaluation.best_combination_index];
@@ -689,6 +691,7 @@ TEST(JointManeuverCombinationEvaluator, UsesPerAircraftV4CandidateCounts)
         cs::kMaximumSelectionAircraft,
         evaluation));
     EXPECT_EQ(evaluation.combination_count, 12U);
+    EXPECT_EQ(evaluation.evaluated_unique_pair_count, 31U);
     for (std::size_t combination_index = 0;
          combination_index < evaluation.combination_count;
          ++combination_index) {
@@ -698,6 +701,77 @@ TEST(JointManeuverCombinationEvaluator, UsesPerAircraftV4CandidateCounts)
                 evaluation.combinations[combination_index]
                     .candidate_slots[aircraft],
                 candidate_counts[aircraft]);
+        }
+    }
+}
+
+TEST(JointManeuverCombinationEvaluator, SingleCandidateEvaluatesOnlyTenPairs)
+{
+    constexpr std::uint64_t timestamp_us = 7'600'000ULL;
+    cs::MultiAircraftCandidateIntentSets sets{};
+    std::array<std::size_t, cs::kMaximumSelectionAircraft> counts{};
+    counts.fill(1U);
+    for (std::size_t aircraft = 0; aircraft < sets.size(); ++aircraft) {
+        sets[aircraft][0] = linearIntent(timestamp_us, 0,
+            0.0, 100.0 * aircraft, 100.0, 10.0, 0.0, 0.0);
+        // Slots 1 and 2 are deliberately invalid and must never be evaluated.
+    }
+    cs::JointManeuverEvaluation result;
+    ASSERT_TRUE(cs::JointManeuverCombinationEvaluator{}.evaluate(
+        timestamp_us, sets, counts, sets.size(), result));
+    ASSERT_TRUE(result.has_best);
+    EXPECT_EQ(result.combination_count, 1U);
+    EXPECT_EQ(result.evaluated_unique_pair_count, 10U);
+    const auto & best = result.combinations[result.best_combination_index];
+    EXPECT_TRUE(best.all_pairs_feasible);
+    EXPECT_EQ(best.evaluated_pair_count, 10U);
+    double direct_cost = 0.0;
+    double direct_min_ad = std::numeric_limits<double>::infinity();
+    for (std::size_t first = 0; first < sets.size(); ++first) {
+        for (std::size_t second = first + 1; second < sets.size(); ++second) {
+            cs::CombinationEvaluation pair;
+            ASSERT_TRUE(cs::ManeuverCombinationEvaluator{}.evaluatePair(
+                timestamp_us, sets[first][0], sets[second][0], pair));
+            direct_cost += pair.reciprocal_cost;
+            direct_min_ad = std::min(direct_min_ad, pair.ad_m);
+        }
+    }
+    EXPECT_DOUBLE_EQ(best.minimum_ad_m, direct_min_ad);
+    EXPECT_DOUBLE_EQ(best.reciprocal_cost_sum, direct_cost);
+}
+
+TEST(JointManeuverCombinationEvaluator, MixedCountsKeepFixedCacheStrideAndScores)
+{
+    constexpr std::uint64_t timestamp_us = 7'700'000ULL;
+    cs::MultiAircraftCandidateIntentSets sets{};
+    for (std::size_t aircraft = 0; aircraft < sets.size(); ++aircraft) {
+        const double base = 100.0 * aircraft;
+        sets[aircraft] = parallelCandidates(timestamp_us,
+            {base, base + 5.0, base + 10.0});
+    }
+    const std::array<std::size_t, cs::kMaximumSelectionAircraft> counts{1, 2, 3, 1, 2};
+    for (int mode = 0; mode < 3; ++mode) {
+        SCOPED_TRACE(mode);
+        auto p = barrierParams();
+        p.positive_margin_filter_enabled = mode == 1;
+        p.robust_cone_filter_enabled = mode == 2;
+        cs::JointManeuverCombinationEvaluator evaluator(p);
+        cs::JointManeuverEvaluation full, reduced;
+        ASSERT_TRUE(evaluator.evaluate(timestamp_us, sets, sets.size(), full));
+        ASSERT_TRUE(evaluator.evaluate(timestamp_us, sets, counts, sets.size(), reduced));
+        ASSERT_EQ(reduced.combination_count, 12U);
+        for (std::size_t index = 0; index < reduced.combination_count; ++index) {
+            const auto & actual = reduced.combinations[index];
+            std::size_t full_index = 0;
+            for (const auto slot : actual.candidate_slots) full_index = full_index * 3 + slot;
+            const auto & expected = full.combinations[full_index];
+            ASSERT_TRUE(expected.valid);
+            EXPECT_EQ(actual.valid, expected.valid);
+            EXPECT_EQ(actual.all_pairs_feasible, expected.all_pairs_feasible);
+            EXPECT_EQ(actual.barrier_admissible, expected.barrier_admissible);
+            EXPECT_EQ(actual.evaluated_pair_count, expected.evaluated_pair_count);
+            EXPECT_DOUBLE_EQ(actual.minimum_ad_m, expected.minimum_ad_m);
+            EXPECT_DOUBLE_EQ(actual.reciprocal_cost_sum, expected.reciprocal_cost_sum);
         }
     }
 }

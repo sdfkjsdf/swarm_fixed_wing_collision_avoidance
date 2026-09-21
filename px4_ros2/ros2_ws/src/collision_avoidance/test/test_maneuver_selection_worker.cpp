@@ -1518,6 +1518,46 @@ TEST(ManeuverSelectionWorker, TimerSelectionKeepsTheCommonEpochAndFrozenLibrary)
     EXPECT_FALSE(output->decision.command_execution_requested);
 }
 
+TEST(ManeuverSelectionWorker, ReusedFrozenStorageDoesNotLeakAcrossIncompleteEpoch)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    p.interaction_graph_params.enabled = true;
+    p.masd_diagnostics_enabled = true;
+    cs::ManeuverSelectionWorker local(p);
+    p.vehicle_id = 1;
+    cs::ManeuverSelectionWorker peer(p);
+    constexpr std::uint64_t start = 4'000'000;
+    const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+    const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+    exchangePackets(local, peer, own, other);
+
+    const auto check = [&](std::uint64_t elapsed, bool complete) {
+        const auto output = pushBeliefAndProcess(local,
+            beliefSnapshot(start + elapsed, 20.0e-6 * elapsed, 0, 20, 0));
+        const auto * records = local.stoppedGraphDiagnostics();
+        ASSERT_NE(records, nullptr);
+        ASSERT_GT(records->size, 0U);
+        const auto & graph = records->records[records->size - 1].value;
+        EXPECT_EQ(graph.graph.selection_epoch, (start + elapsed) / 250'000 - 1);
+        EXPECT_EQ(graph.graph.valid(), complete);
+        EXPECT_EQ(graph.candidate_ready_mask, complete ? 0b11U : 0b01U);
+        if (!complete) {
+            EXPECT_EQ(graph.status, cs::InteractionGraphEvaluationStatus::CandidateSetsIncomplete);
+            EXPECT_FALSE(output.decision.proposal_valid);
+        }
+    };
+    check(250'000, true);
+    // Storage still contains the peer's old library, but epoch readiness is reset.
+    check(500'000, false);
+    const auto fresh = pushBeliefAndProcess(peer,
+        beliefSnapshot(start + 500'000, 1010, 0, 20, 0));
+    for (std::size_t i = 0; i < fresh.intent_packet_count; ++i)
+        ASSERT_TRUE(local.pushRemoteIntent(1, fresh.intent_packets[i]));
+    ASSERT_TRUE(local.processPendingForTest());
+    check(750'000, true);
+}
+
 TEST(ManeuverSelectionWorker, PeerAgreementDoesNotRequireANewTimerPrediction)
 {
     for (const std::uint64_t elapsed : {2'000ULL, 60'000ULL}) {
@@ -1552,6 +1592,63 @@ TEST(ManeuverSelectionWorker, PeerAgreementDoesNotRequireANewTimerPrediction)
     }
 }
 
+TEST(ManeuverSelectionWorker, DeferredRemoteReconstructionDoesNotBlockTrajectoryTicks)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    p.interaction_graph_params.enabled = true;
+    cs::ManeuverSelectionWorker local(p);
+    p.vehicle_id = 1;
+    cs::ManeuverSelectionWorker peer(p);
+    constexpr std::uint64_t start = 4'000'000;
+    const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+    const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+    ASSERT_EQ(own.intent_packet_count, 7U);
+    for (std::size_t i = 0; i < other.intent_packet_count; ++i)
+        ASSERT_TRUE(local.pushRemoteIntent(1, other.intent_packets[i]));
+    ASSERT_TRUE(local.pushPublishedSetpoint(publishedInput(start, 0.0)));
+    for (std::uint64_t tick = 50'000; tick <= 200'000; tick += 50'000) {
+        ASSERT_TRUE(local.processPendingForTest(tick, true, false));
+        const auto output = local.tryPopOutput();
+        ASSERT_TRUE(output);
+        EXPECT_EQ(output->intent_packet_count, 7U);
+        EXPECT_EQ(output->generated_timestamp_us, start + tick);
+    }
+    // Finish the deferred batch, then evaluate the original frozen epoch.
+    ASSERT_TRUE(local.processPendingForTest(200'000));
+    ASSERT_TRUE(local.processPendingForTest(250'000));
+    const auto proposal = local.tryPopOutput();
+    ASSERT_TRUE(proposal);
+    EXPECT_TRUE(proposal->decision.proposal_valid);
+}
+
+TEST(ManeuverSelectionWorker, PeerAgreementBypassesPendingRemoteReconstruction)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    p.interaction_graph_params.enabled = true;
+    cs::ManeuverSelectionWorker local(p);
+    p.vehicle_id = 1;
+    cs::ManeuverSelectionWorker peer(p);
+    constexpr std::uint64_t start = 4'000'000;
+    const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+    const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+    exchangePackets(local, peer, own, other);
+    const auto proposal = pushBeliefAndProcess(local, beliefSnapshot(start + 250'000, 5, 0, 20, 0));
+    const auto peer_proposal = pushBeliefAndProcess(peer, beliefSnapshot(start + 250'000, 1005, 0, 20, 0));
+    ASSERT_TRUE(proposal.decision.proposal_valid);
+    ASSERT_TRUE(peer_proposal.decision.proposal_valid);
+    for (std::size_t i = 0; i < peer_proposal.intent_packet_count; ++i)
+        ASSERT_TRUE(local.pushRemoteIntent(1, peer_proposal.intent_packets[i]));
+    ASSERT_TRUE(local.pushRemoteDecision(1, peerDecision(peer_proposal.decision)));
+    ASSERT_TRUE(local.processPendingForTest(2'000, true, false));
+    const auto committed = local.tryPopOutput();
+    ASSERT_TRUE(committed);
+    EXPECT_TRUE(committed->decision.coordination_qualified);
+    EXPECT_EQ(committed->decision.selected_candidate_ids, proposal.decision.proposed_candidate_ids);
+    EXPECT_EQ(committed->intent_packet_count, 0U);
+}
+
 TEST(ManeuverSelectionWorker, RunningTimerRefreshesWithoutMoreInputOrDiagnostics)
 {
     auto p = params();
@@ -1578,6 +1675,122 @@ TEST(ManeuverSelectionWorker, RunningTimerRefreshesWithoutMoreInputOrDiagnostics
     EXPECT_EQ(stamps[0], start);
     EXPECT_GE(stamps[1], start + p.trajectory_refresh_period_us);
     EXPECT_EQ(worker->droppedOutputCount(), 0U);
+}
+
+TEST(ManeuverSelectionWorker, DeferredSearchKeepsRefreshingAndPreservesFrozenProposal)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    p.interaction_graph_params.enabled = true;
+    auto reference = std::make_unique<cs::ManeuverSelectionWorker>(p);
+    auto deferred = std::make_unique<cs::ManeuverSelectionWorker>(p);
+    p.vehicle_id = 1;
+    auto peer = std::make_unique<cs::ManeuverSelectionWorker>(p);
+    constexpr std::uint64_t start = 6'000'000;
+    for (std::uint64_t offset : {0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        const auto own = beliefSnapshot(start + offset, 20e-6 * offset, 0, 20, 0);
+        pushBeliefAndProcess(*reference, own);
+        pushBeliefAndProcess(*deferred, own);
+        const auto other = pushBeliefAndProcess(*peer,
+            beliefSnapshot(start + offset, 1000 + 20e-6 * offset, 0, 20, 0));
+        for (std::size_t i = 0; i < other.intent_packet_count; ++i) {
+            ASSERT_TRUE(reference->pushRemoteIntent(1, other.intent_packets[i]));
+            ASSERT_TRUE(deferred->pushRemoteIntent(1, other.intent_packets[i]));
+        }
+    }
+    const auto own = beliefSnapshot(start + 250'000, 5, 0, 20, 0);
+    const auto expected = pushBeliefAndProcess(*reference, own);
+    ASSERT_TRUE(expected.decision.proposal_valid);
+    ASSERT_TRUE(deferred->pushOwnshipBelief(own));
+    ASSERT_TRUE(deferred->processPendingForTest(0, false)); // search queued, not run
+    auto output = deferred->tryPopOutput();
+    ASSERT_TRUE(output);
+    EXPECT_EQ(output->intent_packet_count, 7U);
+    EXPECT_FALSE(output->has_decision);
+
+    // Deliberately change the live state and epoch while the job is pending.
+    ASSERT_TRUE(deferred->pushOwnshipBelief(
+        beliefSnapshot(start + 300'000, 700, 100, 0, 20)));
+    ASSERT_TRUE(deferred->processPendingForTest(0, false));
+    output = deferred->tryPopOutput();
+    ASSERT_TRUE(output);
+    EXPECT_EQ(output->intent_packet_count, 7U);
+    EXPECT_EQ(output->intent_packets[0].source_timestamp_us, start + 300'000);
+    EXPECT_FALSE(output->has_decision);
+
+    ASSERT_TRUE(deferred->processPendingForTest()); // release the same kernel
+    output = deferred->tryPopOutput();
+    ASSERT_TRUE(output);
+    ASSERT_TRUE(output->has_decision);
+    EXPECT_EQ(output->decision.proposal_epoch, expected.decision.proposal_epoch);
+    EXPECT_EQ(output->decision.proposal_timestamp_us, start + 250'000);
+    EXPECT_EQ(output->decision.proposed_candidate_ids, expected.decision.proposed_candidate_ids);
+    EXPECT_EQ(output->decision.proposed_candidate_source_timestamps_us,
+              expected.decision.proposed_candidate_source_timestamps_us);
+    EXPECT_EQ(output->decision.proposed_candidate_library_hash,
+              expected.decision.proposed_candidate_library_hash);
+    EXPECT_EQ(output->decision.proposed_graph_hash, expected.decision.proposed_graph_hash);
+    EXPECT_EQ(deferred->skippedSelectionCount(), 0U);
+    EXPECT_EQ(deferred->expiredSelectionCount(), 0U);
+}
+
+TEST(ManeuverSelectionWorker, BusySearchDoesNotBlockRefreshOrApplyAnExpiredResult)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    cs::ManeuverSelectionWorker worker(p);
+    constexpr std::uint64_t start = 7'000'000;
+    pushBeliefAndProcess(worker, beliefSnapshot(start, 0, 0, 20, 0));
+    for (std::uint64_t elapsed : {250'000ULL, 300'000ULL, 500'000ULL}) {
+        ASSERT_TRUE(worker.pushOwnshipBelief(
+            beliefSnapshot(start + elapsed, 20e-6 * elapsed, 0, 20, 0)));
+        ASSERT_TRUE(worker.processPendingForTest(0, false));
+        const auto output = worker.tryPopOutput();
+        ASSERT_TRUE(output);
+        EXPECT_EQ(output->intent_packet_count, 7U);
+        EXPECT_FALSE(output->has_decision);
+    }
+    EXPECT_EQ(worker.skippedSelectionCount(), 1U);
+    worker.processPendingForTest();
+    EXPECT_EQ(worker.expiredSelectionCount(), 1U);
+    EXPECT_FALSE(worker.tryPopOutput());
+    const auto recovered = pushBeliefAndProcess(worker,
+        beliefSnapshot(start + 750'000, 15, 0, 20, 0));
+    EXPECT_TRUE(recovered.has_decision);
+    EXPECT_EQ(recovered.decision.proposal_epoch, (start + 500'000) / 250'000);
+}
+
+TEST(ManeuverEvaluationWorker, BoundedMailboxHoldsSnapshotUntilReleaseAndRestarts)
+{
+    cs::ManeuverEvaluationWorker evaluator({}, {});
+    auto * slot = evaluator.beginRequest();
+    ASSERT_NE(slot, nullptr);
+    slot->epoch = 42;
+    slot->complete = false;
+    evaluator.submit();
+    EXPECT_EQ(evaluator.beginRequest(), nullptr);
+    ASSERT_TRUE(evaluator.processOneForTest());
+    ASSERT_NE(evaluator.readyResult(), nullptr);
+    EXPECT_EQ(evaluator.readyResult()->request.epoch, 42U);
+    EXPECT_EQ(evaluator.beginRequest(), nullptr);
+    evaluator.release();
+    EXPECT_EQ(evaluator.beginRequest(), slot);
+    for (std::uint64_t epoch : {43ULL, 44ULL}) {
+        evaluator.start();
+        auto * request = evaluator.beginRequest();
+        ASSERT_NE(request, nullptr);
+        request->epoch = epoch;
+        evaluator.submit();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!evaluator.readyResult() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const auto * result = evaluator.readyResult();
+        ASSERT_NE(result, nullptr);
+        EXPECT_EQ(result->request.epoch, epoch);
+        EXPECT_GE(result->result.end_ns, result->result.start_ns);
+        evaluator.release();
+        evaluator.stop();
+    }
 }
 
 TEST(ManeuverSelectionWorker, DoesNotMixAdjacentIncompleteRemoteEpochs)
@@ -1793,7 +2006,7 @@ TEST(ManeuverSelectionWorker, StoppedTimingDoesNotNeedBudgetDiagnostics)
     std::ostringstream out;
     worker->stopAndWriteStageTiming(out);
     EXPECT_FALSE(worker->running());
-    EXPECT_NE(out.str().find("[stop-stage-begin],1,0,3,0"), std::string::npos);
+    EXPECT_NE(out.str().find("[stop-stage-begin],2,0,3,0"), std::string::npos);
     EXPECT_NE(out.str().find("[stop-stage],1,3064000,"), std::string::npos);
     EXPECT_NE(out.str().find(",7,1,1\n"), std::string::npos);
     EXPECT_NE(out.str().find("[stop-stage-end],0,3"), std::string::npos);
@@ -2180,6 +2393,48 @@ TEST(ManeuverSelectionWorker,
     EXPECT_EQ(
         second_output.decision.deactivation_reason,
         cs::ManeuverDeactivationReason::FutureCpaClear);
+}
+
+TEST(ManeuverSelectionWorker, NominalIntentReuseIsLimitedToOneActivationUpdate)
+{
+    cs::ManeuverSelectionWorker local(params());
+    cs::ManeuverSelectionWorker peer(params(1));
+    constexpr std::uint64_t start = 6'500'000;
+    const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+    const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 0, 100, 20, 0));
+    exchangePackets(local, peer, own, other);
+    auto output = pushBeliefAndProcess(local,
+        beliefSnapshot(start + 250'000, 5, 0, 20, 0));
+    const auto remote_proposal = pushBeliefAndProcess(peer,
+        beliefSnapshot(start + 250'000, 5, 100, 20, 0));
+    const auto commits = confirmTwoAircraftProposal(local, peer, output, remote_proposal);
+    output = commits[0];
+    ASSERT_TRUE(output.has_decision);
+    ASSERT_TRUE(output.decision.coordination_qualified);
+    EXPECT_FALSE(output.decision.post_release_evaluated);
+
+    // A failed build in one update must not prevent recovery on new inputs.
+    ASSERT_TRUE(local.pushNominalSetpoint(nominalSnapshot(start + 300'000)));
+    auto heartbeat = peerDecision(commits[1].decision);
+    heartbeat.nominal_setpoint_available = true;
+    heartbeat.nominal_setpoint_timestamp_us = start + 300'000;
+    heartbeat.nominal_ground_speed_command_mps = 20.0;
+    heartbeat.nominal_altitude_command_m = 100.0;
+    heartbeat.nominal_lateral_acceleration_mps2 = 0.0;
+    ASSERT_TRUE(local.pushRemoteDecision(1, heartbeat));
+    output = pushBeliefAndProcess(local,
+        beliefSnapshot(start + 300'000, 6, 0, 20, 0));
+    ASSERT_TRUE(output.decision.post_release_evaluated);
+    EXPECT_EQ(output.decision.post_release_evaluation_timestamp_us, start + 300'000);
+    const double straight_ad = output.decision.post_release_minimum_ad_m;
+
+    // A successful build must not hide a changed Formation input next update.
+    ASSERT_TRUE(local.pushNominalSetpoint(nominalSnapshot(start + 350'000, 20, 8)));
+    output = pushBeliefAndProcess(local,
+        beliefSnapshot(start + 350'000, 7, 0, 20, 0));
+    ASSERT_TRUE(output.decision.post_release_evaluated);
+    EXPECT_EQ(output.decision.post_release_evaluation_timestamp_us, start + 350'000);
+    EXPECT_GT(std::abs(output.decision.post_release_minimum_ad_m - straight_ad), 1.0);
 }
 
 TEST(ManeuverSelectionWorker, UnavailableRejoinMetadataDoesNotSuppressSevenCandidates)
@@ -3169,11 +3424,18 @@ TEST(ManeuverSelectionWorker,
     matching_trigger.activation_just_started = true;
     matching_trigger.activation_timestamp_us = start + 250'000;
     matching_trigger.local_activation_request_timestamp_us = start + 250'000;
+    // Even a paused remote reconstruction queue must not hold an activation
+    // event behind its trajectory packets. The last complete set stays usable.
+    for (std::size_t i = 0; i < outputs[0].intent_packet_count; ++i)
+        ASSERT_TRUE(workers[1]->pushRemoteIntent(0, outputs[0].intent_packets[i]));
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
-    ASSERT_TRUE(workers[1]->processPendingForTest());
-    const auto coordinated = pushBeliefAndProcess(
-        *workers[1],
-        beliefSnapshot(start + 300'000ULL, 500.0, 0.0, 20.0, 0.0));
+    ASSERT_TRUE(workers[1]->processPendingForTest(0, true, false));
+    ASSERT_TRUE(workers[1]->pushOwnshipBelief(
+        beliefSnapshot(start + 300'000ULL, 500.0, 0.0, 20.0, 0.0)));
+    ASSERT_TRUE(workers[1]->processPendingForTest(0, true, false));
+    const auto coordinated_output = workers[1]->tryPopOutput();
+    ASSERT_TRUE(coordinated_output);
+    const auto & coordinated = *coordinated_output;
     EXPECT_TRUE(coordinated.decision.activation_requested);
     EXPECT_TRUE(coordinated.decision.activation_just_started);
     EXPECT_EQ(coordinated.decision.local_activation_request_timestamp_us, 0U);
@@ -3814,12 +4076,8 @@ TEST(FusionInputHistory, PeerBurstCannotDropLocalHistoryOrBelief)
         const auto actual = publishedInput(1'000'000, 3.0);
         ASSERT_TRUE(worker->pushPublishedSetpoint(actual));
         ASSERT_TRUE(worker->pushOwnshipBelief(belief));
-        // Preserve FIFO and the old 64-item work limit, not a 320-item pass.
-        for (int peer_batch = 0; peer_batch < 4; ++peer_batch) {
-            ASSERT_TRUE(worker->processPendingForTest());
-            EXPECT_FALSE(worker->tryPopOutput());
-        }
-        ASSERT_TRUE(worker->processPendingForTest());
+        // Paused remote reconstruction must not delay local input processing.
+        ASSERT_TRUE(worker->processPendingForTest(0, true, false));
         const auto output = worker->tryPopOutput();
         ASSERT_TRUE(output);
         ASSERT_EQ(output->intent_packet_count, 7U);

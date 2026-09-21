@@ -255,12 +255,15 @@ target_link_libraries(interaction_graph PUBLIC
 )
 
 # Per-aircraft five-stage runtime worker. ROS callbacks remain in the onboard
-# node; this target owns only deterministic prediction/selection state and one
-# SPSC-fed computation thread.
+# node. Prediction/control state has one owner; immutable 4 Hz evaluation jobs
+# run on a separate SPSC-fed thread without blocking 20 Hz trajectory refresh.
+# Remote spline/cone reconstruction owns another worker and complete-set channel.
 add_library(maneuver_selection_worker STATIC
     src/selection/ManeuverActivationController.cpp
     src/selection/HeuristicCandidateSelector.cpp
     src/selection/ManeuverSelectionWorker.cpp
+    src/selection/ManeuverEvaluationWorker.cpp
+    src/selection/RemoteTrajectoryWorker.cpp
     src/selection/ManeuverSelectionWorkerActivation.cpp
     src/selection/ManeuverSelectionWorkerCoordination.cpp
     src/selection/ManeuverSelectionWorkerInteractionGraph.cpp
@@ -454,6 +457,10 @@ if(BUILD_TESTING)
         maneuver_selection_worker
     )
     target_include_directories(test_maneuver_selection_worker PRIVATE include)
+
+    ament_add_gtest(test_remote_trajectory_worker test/test_remote_trajectory_worker.cpp)
+    target_link_libraries(test_remote_trajectory_worker maneuver_selection_worker)
+    target_include_directories(test_remote_trajectory_worker PRIVATE include)
 
     ament_add_gtest(test_interaction_graph
         test/test_interaction_graph.cpp

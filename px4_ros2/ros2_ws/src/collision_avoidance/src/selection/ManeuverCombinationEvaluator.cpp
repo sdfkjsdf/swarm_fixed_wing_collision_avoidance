@@ -448,7 +448,8 @@ std::size_t initializePairCandidateCaches(
     std::uint64_t evaluation_timestamp_us,
     const CandidateSets & candidate_sets,
     std::size_t aircraft_count,
-    std::size_t candidate_count,
+    const std::array<std::size_t, kMaximumSelectionAircraft> & candidate_counts,
+    std::size_t candidate_stride,
     bool positive_margin_filter_enabled,
     bool robust_cone_filter_enabled,
     const PositiveMarginBarrierEvaluator & barrier_evaluator,
@@ -464,11 +465,11 @@ std::size_t initializePairCandidateCaches(
             cache.first_aircraft = first;
             cache.second_aircraft = second;
             for (std::size_t first_candidate = 0;
-                 first_candidate < candidate_count; ++first_candidate) {
+                 first_candidate < candidate_counts[first]; ++first_candidate) {
                 for (std::size_t second_candidate = 0;
-                     second_candidate < candidate_count; ++second_candidate) {
+                     second_candidate < candidate_counts[second]; ++second_candidate) {
                     const std::size_t cache_index =
-                        first_candidate * candidate_count + second_candidate;
+                        first_candidate * candidate_stride + second_candidate;
                     if (positive_margin_filter_enabled) {
                         static_cast<void>(barrier_evaluator.evaluateDirection(
                             evaluation_timestamp_us,
@@ -1265,18 +1266,18 @@ bool JointManeuverCombinationEvaluator::evaluate(
     candidate_evaluation.combination_count = combination_count;
 
     std::array<PairCandidateCache, kMaximumSelectionPairCount> pair_caches{};
-    std::size_t ignored_evaluated_ad_pair_count = 0;
     const std::size_t pair_cache_count = initializePairCandidateCaches(
         evaluation_timestamp_us,
         candidate_sets,
         aircraft_count,
+        candidate_counts,
         kCandidatesPerAircraft,
         m_positive_margin_filter_enabled,
         m_robust_cone_filter_enabled,
         m_barrier_evaluator,
         m_pair_evaluator,
         pair_caches,
-        ignored_evaluated_ad_pair_count);
+        candidate_evaluation.evaluated_unique_pair_count);
 
     bool has_safe_combination = false;
     double best_safe_cost = std::numeric_limits<double>::infinity();
@@ -1383,6 +1384,7 @@ bool JointManeuverCombinationEvaluator::evaluate(
                     candidate_sets[cache.second_aircraft][second_candidate],
                     cache.evaluations[cache_index]));
                 cache.ad_evaluated[cache_index] = true;
+                ++candidate_evaluation.evaluated_unique_pair_count;
             }
             const CombinationEvaluation & pair = cache.evaluations[cache_index];
             if (pair.validity != CombinationValidity::Valid) {
@@ -1475,10 +1477,13 @@ bool ExhaustiveManeuverCombinationEvaluator::evaluate(
     }
 
     std::array<PairCandidateCache, kMaximumSelectionPairCount> pair_caches{};
+    std::array<std::size_t, kMaximumSelectionAircraft> candidate_counts{};
+    candidate_counts.fill(kExhaustiveCandidatesPerAircraft);
     const std::size_t pair_cache_count = initializePairCandidateCaches(
         evaluation_timestamp_us,
         candidate_sets,
         aircraft_count,
+        candidate_counts,
         kExhaustiveCandidatesPerAircraft,
         m_positive_margin_filter_enabled,
         m_robust_cone_filter_enabled,

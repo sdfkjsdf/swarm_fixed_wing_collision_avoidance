@@ -28,6 +28,42 @@ class StoppedTimingTests(unittest.TestCase):
         self.assertEqual(r["stages"]["trajectory_refresh"]["output_not_queued_count"], 1)
         self.assertIsNone(r["stages"]["trajectory_refresh"]["completion_rate_hz"])
 
+    def test_parallel_spans_and_pure_compute_are_separate_from_waits(self):
+        s = """[stop-stage-begin],2,0,4,0
+[stop-stage],4,250000,1,250000,1000000,2000000,7,1,1
+[stop-stage],1,250000,2,50000,2100000,4000000,7,1,1
+[stop-stage],5,250000,1,250000,12000000,13000000,7,1,1
+[stop-stage],2,250000,1,250000,3000000,10000000,7,1,1
+[stop-stage-end],0,4
+"""
+        r = analyze(s)
+        self.assertEqual(r["stages"]["combination_kernel"]["computation"]["max_ms"], 7)
+        self.assertNotIn("combination_selection", r["stages"])
+        total = r["selection_total"]
+        self.assertEqual(total["computation"]["max_ms"], 9)
+        self.assertEqual(total["dispatch_to_apply"]["max_ms"], 12)
+        self.assertEqual(total["request_wait"]["max_ms"], 1)
+        self.assertEqual(total["result_wait"]["max_ms"], 2)
+        self.assertEqual(total["incomplete_job_count"], 0)
+
+    def test_same_worker_overlap_still_rejected(self):
+        s = """[stop-stage-begin],2,0,2,0
+[stop-stage],1,100,1,50000,1000000,3000000,7,1,1
+[stop-stage],3,100,1,50000,2000000,4000000,7,1,1
+[stop-stage-end],0,2
+"""
+        with self.assertRaises(ValueError):
+            analyze(s)
+
+    def test_incomplete_selection_is_not_reported_as_fast(self):
+        s = """[stop-stage-begin],2,0,1,0
+[stop-stage],4,100,1,250000,1000000,2000000,7,1,1
+[stop-stage-end],0,1
+"""
+        r = analyze(s)["selection_total"]
+        self.assertEqual(r["incomplete_job_count"], 1)
+        self.assertEqual(r["computation"]["count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

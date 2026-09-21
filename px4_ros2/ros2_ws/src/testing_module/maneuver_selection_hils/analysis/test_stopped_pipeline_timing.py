@@ -32,6 +32,21 @@ class PipelineTimingTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             analyze(SAMPLE.replace('[stop-pipeline-end],0,2,2', ''))
 
+    def test_remote_reconstruction_is_not_owner_input_processing(self):
+        r = analyze(SAMPLE + '[stop-remote-worker],0,14,0,2,7000000,700000\n', 50000, 60000)
+        self.assertEqual(r['remote_processing_scope'], 'complete-set installation on state owner only')
+        remote = r['remote_reconstruction_thread']
+        self.assertEqual(remote['handler_mean_ms'], .5)
+        self.assertEqual(remote['handler_max_ms'], .7)
+        self.assertEqual(remote['processed_packets'], 14)  # entire run, not the time window
+        self.assertFalse(remote['includes_queue_wait'])
+        self.assertIn('entire run', remote['scope'])
+        self.assertEqual(r['remote_processing_per_pass']['max_ms'], .2)
+
+    def test_remote_reconstruction_summary_rejects_wrong_vehicle(self):
+        with self.assertRaises(ValueError):
+            analyze(SAMPLE + '[stop-remote-worker],1,14,0,2,7000000,700000\n')
+
     def test_invalid_clock_order_is_rejected(self):
         with self.assertRaises(ValueError):
             analyze(SAMPLE.replace('600000,1100000', '1600000,1100000'))
@@ -40,6 +55,26 @@ class PipelineTimingTest(unittest.TestCase):
         r = analyze(SAMPLE, 50000, 60000)
         self.assertEqual(r['accepted_beliefs'], 1)
         self.assertEqual(r['largest_completion_gaps']['trajectory_refresh'], [])
+
+    def test_cross_clock_age_is_not_transport_latency(self):
+        r = analyze(SAMPLE)
+        self.assertNotIn('source_to_callback_wall', r)
+        self.assertEqual(r['apparent_source_to_callback_age']['max_ms'], .5)
+        self.assertFalse(r['source_age_clock_contract']['pure_transport_latency'])
+        self.assertFalse(r['source_age_clock_contract']['px4_to_pc_clock_mapping_error_accounted_for'])
+        self.assertFalse(r['source_age_clock_contract']['pc_to_pi_clock_offset_accounted_for'])
+
+    def test_wall_clock_offset_does_not_change_computation(self):
+        original = analyze(SAMPLE)
+        shifted = analyze(SAMPLE.replace(',1500000,0,', ',61500000,0,')
+                          .replace(',51500000,0,', ',111500000,0,'))
+        self.assertEqual(original['stage_timing'], shifted['stage_timing'])
+        self.assertEqual(original['callback_interval'], shifted['callback_interval'])
+        self.assertAlmostEqual(shifted['apparent_source_to_callback_age']['max_ms'], 60.5)
+
+    def test_negative_apparent_age_is_not_clamped(self):
+        r = analyze(SAMPLE.replace(',1500000,0,', ',500000,0,'))
+        self.assertEqual(r['apparent_source_to_callback_age']['median_ms'], 0)
 
 
 if __name__ == '__main__':

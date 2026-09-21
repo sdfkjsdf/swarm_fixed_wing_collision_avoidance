@@ -36,16 +36,21 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
   m_pair_evaluator(params.evaluator_params),
   m_barrier_evaluator(params.evaluator_params),
   m_joint_evaluator(params.evaluator_params),
-  m_exhaustive_evaluator(params.evaluator_params),
-  m_pairwise_ad_certifier(params.evaluator_params),
-  m_interaction_graph_builder(params.interaction_graph_params),
   m_activation_controller(params.activation_params),
   m_v4_safe_control(params.v4_safe_control_params),
   m_mode_b_interpolator(params.mode_b_interpolator_params),
   m_mode_b_intent_adapter(params.mode_b_intent_adapter_params),
   m_v4_candidate_adapter(params.v4_candidate_adapter_params),
+  m_evaluation_worker(params.evaluator_params, params.interaction_graph_params),
+  m_remote_trajectory_worker(params.vehicle_id, params.total_agent_count,
+      params.exhaustive_test_mode ? kExhaustiveCandidatesPerAircraft : kCandidatesPerAircraft,
+      params.predictor_params, params.uncertainty_params, params.stopped_stage_timing_enabled),
   m_input_storage(std::make_unique<InputStorage>())
 {
+    if (m_params.interaction_graph_params.enabled) {
+        m_epoch_certification_candidate_sets = std::make_unique<
+            MultiAircraftExhaustiveCandidateIntentSets>();
+    }
     if (m_params.stopped_stage_timing_enabled) {
         m_stopped_stage_timing = std::make_unique<StoppedStageTiming>();
     }
@@ -77,7 +82,16 @@ bool ManeuverSelectionWorker::start()
     if (!m_running.compare_exchange_strong(expected, true)) {
         return false;
     }
-    m_thread = std::thread(&ManeuverSelectionWorker::workerLoop, this);
+    try {
+        m_evaluation_worker.start();
+        m_remote_trajectory_worker.start();
+        m_thread = std::thread(&ManeuverSelectionWorker::workerLoop, this);
+    } catch (...) {
+        m_running.store(false, std::memory_order_release);
+        m_evaluation_worker.stop();
+        m_remote_trajectory_worker.stop();
+        throw;
+    }
     return true;
 }
 
@@ -87,6 +101,8 @@ void ManeuverSelectionWorker::stop()
     if (m_thread.joinable()) {
         m_thread.join();
     }
+    m_evaluation_worker.stop();
+    m_remote_trajectory_worker.stop();
 }
 
 bool ManeuverSelectionWorker::running() const noexcept
@@ -97,13 +113,19 @@ bool ManeuverSelectionWorker::running() const noexcept
 void ManeuverSelectionWorker::stopAndWriteStageTiming(std::ostream & out)
 {
     stop();
-    if (m_stopped_stage_timing) m_stopped_stage_timing->write(out, m_params.vehicle_id);
+    if (m_stopped_stage_timing) {
+        m_stopped_stage_timing->write(out, m_params.vehicle_id, 2);
+        out << "[stop-selection-worker]," << m_params.vehicle_id << ','
+            << m_selection_submitted.load() << ',' << m_selection_completed.load() << ','
+            << m_selection_busy.load() << ',' << m_selection_expired.load() << '\n';
+        m_remote_trajectory_worker.writeStoppedStatistics(out);
+    }
 }
 
 bool ManeuverSelectionWorker::enqueueInput(const WorkerInput & input) noexcept
 {
     std::size_t partition = 0;
-    if (input.kind == InputKind::RemoteIntent || input.kind == InputKind::RemoteDecision) {
+    if (input.kind == InputKind::RemoteDecision) {
         const int peer = input.remote_vehicle_id;
         if (peer < 0 || peer >= m_params.total_agent_count || peer == m_params.vehicle_id) {
             return false;
@@ -164,11 +186,7 @@ bool ManeuverSelectionWorker::pushRemoteIntent(
     int remote_vehicle_id,
     const estimation::TrajectoryIntentPacket & packet) noexcept
 {
-    WorkerInput input;
-    input.kind = InputKind::RemoteIntent;
-    input.remote_vehicle_id = remote_vehicle_id;
-    input.packet = packet;
-    if (!enqueueInput(input)) {
+    if (!m_remote_trajectory_worker.push(remote_vehicle_id, packet)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
         m_dropped_remote_intents.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -218,12 +236,14 @@ ManeuverSelectionWorker::tryPopOutput() noexcept
 }
 
 bool ManeuverSelectionWorker::processPendingForTest(
-    std::uint64_t belief_elapsed_us)
+    std::uint64_t belief_elapsed_us, bool run_selection, bool run_remote)
 {
     if (running() || !validParams(m_params)) {
         return false;
     }
-    return processPending(belief_elapsed_us);
+    const bool remote_processed = run_remote
+        && m_remote_trajectory_worker.processAvailableForTest();
+    return processPending(belief_elapsed_us, run_selection) || remote_processed;
 }
 
 std::uint64_t ManeuverSelectionWorker::droppedInputCount() const noexcept
@@ -283,12 +303,13 @@ void ManeuverSelectionWorker::workerLoop()
 }
 
 bool ManeuverSelectionWorker::processPending(
-    std::optional<std::uint64_t> belief_elapsed_us)
+    std::optional<std::uint64_t> belief_elapsed_us, bool run_selection_inline)
 {
     const bool measure = static_cast<bool>(m_stopped_stage_timing);
     PipelineTimingRecord pipeline{};
     if (measure) pipeline.start_ns = StoppedStageTiming::now();
     bool consumed_input = false;
+    if (run_selection_inline) m_evaluation_worker.processOneForTest();
     bool accepted_belief = false;
     const auto input_count = m_input_storage->inbox.drainTo(m_input_storage->batch);
     for (std::size_t index = 0; index < input_count; ++index) {
@@ -318,15 +339,27 @@ bool ManeuverSelectionWorker::processPending(
             acceptNominalSetpoint(input->nominal);
         } else if (input->kind == InputKind::PublishedSetpoint) {
             acceptPublishedSetpoint(input->published);
-        } else if (input->kind == InputKind::RemoteIntent) {
-            const auto begin = measure ? StoppedStageTiming::now() : 0;
-            acceptRemoteIntent(input->remote_vehicle_id, input->packet);
-            if (measure) {
-                pipeline.remote_processing_ns += StoppedStageTiming::now() - begin;
-                ++pipeline.remote_count;
-            }
         } else {
             acceptRemoteDecision(input->remote_vehicle_id, input->decision);
+        }
+    }
+
+    // Only completed immutable batches cross from the reconstruction thread.
+    // Capture a finite batch; arrivals cannot extend this owner pass. Ownship
+    // inputs and peer activation/decision events above never wait for decoding.
+    const auto remote_count = m_remote_trajectory_worker.readyCount();
+    for (std::size_t index = 0; index < remote_count; ++index) {
+        const auto * completed = m_remote_trajectory_worker.readyResult();
+        const auto begin = measure ? StoppedStageTiming::now() : 0;
+        const auto candidate_count = completed->count;
+        acceptRemoteCandidateSet(*completed);
+        m_remote_trajectory_worker.releaseResult();
+        consumed_input = true;
+        if (measure) {
+            // Owner installation only now; reconstruction has separate stopped
+            // counters and is not attributed to this owner's input processing.
+            pipeline.remote_processing_ns += StoppedStageTiming::now() - begin;
+            pipeline.remote_count += candidate_count;
         }
     }
 
@@ -380,8 +413,9 @@ bool ManeuverSelectionWorker::processPending(
     // Peer agreement is an input event, not a new prediction frame. It may use
     // the existing valid state/trajectory at their unchanged source times;
     // do not make it wait for history needed only to advance the next frame.
-    if (!frame_ready && !(consumed_input && m_pending_proposal.valid
-            && !m_pending_proposal.resolved && m_has_latest_state
+    if (!frame_ready && !(((consumed_input && m_pending_proposal.valid
+            && !m_pending_proposal.resolved) || m_evaluation_worker.readyResult())
+            && m_has_latest_state
             && m_latest_state_timestamp_us >= m_last_processing_timestamp_us)) {
         return finish_without_frame();
     }
@@ -394,6 +428,7 @@ bool ManeuverSelectionWorker::processPending(
     ManeuverSelectionWorkerOutput output;
     output.generated_timestamp_us = now_us;
     output.selection_epoch = m_selection_epoch;
+    bool selection_completed = consumeSelectionEvaluation(due_time_us, output);
 
     // Timestamps only here; persist records after the existing output handoff.
     std::array<StageTimingRecord, 3> timing{};
@@ -407,13 +442,10 @@ bool ManeuverSelectionWorker::processPending(
         const std::uint64_t common_evaluation_timestamp_us =
             m_epoch_generation_timestamp_us
             + m_params.coordination_delay_us;
-        const auto begin = measure ? StoppedStageTiming::now() : 0;
-        evaluateCurrentSet(common_evaluation_timestamp_us, output);
-        if (measure) {
-            const auto end = StoppedStageTiming::now();
-            timing[timing_count++] = {now_us, m_selection_epoch,
-                m_params.candidate_refresh_period_us, begin, end, 2,
-                static_cast<std::uint8_t>(activeCandidateCount()), output.decision.proposal_valid, false};
+        submitSelectionEvaluation(common_evaluation_timestamp_us);
+        if (run_selection_inline) {
+            m_evaluation_worker.processOneForTest();
+            selection_completed |= consumeSelectionEvaluation(due_time_us, output);
         }
         m_epoch_evaluated = true;
     }
@@ -492,7 +524,7 @@ bool ManeuverSelectionWorker::processPending(
     }
 
     const bool coordination_committed = finalizePendingCoordination(output);
-    if ((selection_due || trajectory_refreshed || coordination_committed)
+    if ((selection_due || selection_completed || trajectory_refreshed || coordination_committed)
         && m_has_selected_combination) {
         // AMAC peers use the current decision message for post-release safety
         // acknowledgement and selected-intent awareness. Publish that state
@@ -501,7 +533,7 @@ bool ManeuverSelectionWorker::processPending(
         const auto begin = measure ? StoppedStageTiming::now() : 0;
         updateActivationState(
             now_us,
-            selection_due || trajectory_refreshed || coordination_committed,
+            selection_due || selection_completed || trajectory_refreshed || coordination_committed,
             output);
         if (measure) {
             const auto end = StoppedStageTiming::now();
@@ -522,7 +554,21 @@ bool ManeuverSelectionWorker::processPending(
         output_queued = publishOutput(output);
     }
     if (measure) {
-        if (consumed_input || timing_count > 0) {
+        const bool selection_work_recorded = m_selection_snapshot_timing.has_value()
+            || m_selection_apply_timing.has_value();
+        for (auto * record : {&m_selection_snapshot_timing, &m_selection_apply_timing}) {
+            if (*record) {
+                (*record)->output_queued = output_queued;
+                m_stopped_stage_timing->append(**record);
+                record->reset();
+            }
+        }
+        if (m_completed_selection_timing) {
+            m_completed_selection_timing->output_queued = output_queued;
+            m_stopped_stage_timing->append(*m_completed_selection_timing);
+            m_completed_selection_timing.reset();
+        }
+        if (consumed_input || timing_count > 0 || selection_work_recorded) {
             pipeline.source_us = now_us;
             pipeline.end_ns = StoppedStageTiming::now();
             m_stopped_stage_timing->appendPipeline(pipeline);
@@ -532,7 +578,7 @@ bool ManeuverSelectionWorker::processPending(
             m_stopped_stage_timing->append(timing[i]);
         }
     }
-    return consumed_input || selection_due || trajectory_refreshed
+    return consumed_input || selection_due || selection_completed || trajectory_refreshed
         || coordination_committed;
 }
 
@@ -703,200 +749,54 @@ bool ManeuverSelectionWorker::acceptNominalSetpoint(
     return true;
 }
 
-bool ManeuverSelectionWorker::acceptRemoteIntent(
-    int remote_vehicle_id,
-    const estimation::TrajectoryIntentPacket & packet)
+bool ManeuverSelectionWorker::acceptRemoteCandidateSet(
+    const RemoteTrajectoryCandidateSet & completed)
 {
-    if (remote_vehicle_id < 0
-        || remote_vehicle_id >= m_params.total_agent_count
-        || remote_vehicle_id == m_params.vehicle_id) {
+    const int remote_vehicle_id = completed.vehicle_id;
+    if (remote_vehicle_id < 0 || remote_vehicle_id >= m_params.total_agent_count
+        || remote_vehicle_id == m_params.vehicle_id || completed.count == 0
+        || completed.count != completed.expected_count
+        || completed.count > kExhaustiveCandidatesPerAircraft) {
         return false;
     }
-    RemoteCandidateCache & remote_cache =
-        m_remote_caches[static_cast<std::size_t>(remote_vehicle_id)];
-    RemoteCandidateCache & staging_cache =
-        m_remote_staging_caches[static_cast<std::size_t>(remote_vehicle_id)];
-
-    const auto keyLess = [](
-                             std::uint64_t lhs_epoch,
-                             std::uint64_t lhs_timestamp,
-                             std::uint64_t rhs_epoch,
-                             std::uint64_t rhs_timestamp) {
-        return lhs_epoch < rhs_epoch
-            || (lhs_epoch == rhs_epoch && lhs_timestamp < rhs_timestamp);
+    const auto index = static_cast<std::size_t>(remote_vehicle_id);
+    RemoteCandidateCache & remote_cache = m_remote_caches[index];
+    const bool current_complete = remote_cache.count > 0
+        && remote_cache.count == remote_cache.expected_count;
+    if (current_complete
+        && (completed.selection_epoch < remote_cache.selection_epoch
+            || (completed.selection_epoch == remote_cache.selection_epoch
+                && completed.source_timestamp_us < remote_cache.source_timestamp_us))) {
+        return false;
+    }
+    const bool set_key_changed = remote_cache.selection_epoch != completed.selection_epoch
+        || remote_cache.source_timestamp_us != completed.source_timestamp_us
+        || remote_cache.candidate_set_kind != completed.candidate_set_kind;
+    const RemoteDecisionCache & peer = m_remote_decision_caches[index];
+    const auto retain_selected = [&](const RemoteCandidateCache & cache) {
+        if (!peer.valid || !peer.decision.coordination_qualified
+            || !peer.decision.ownship_candidate_valid) return;
+        const auto selected_id = peer.decision.ownship_candidate_id;
+        const auto revision = peer.decision.selected_candidate_input_revisions[index];
+        const auto end = cache.candidates.begin() + cache.count;
+        const auto selected = std::find_if(cache.candidates.begin(), end,
+            [selected_id, revision](const auto & candidate) {
+                return candidate.candidate_id == selected_id
+                    && candidate.candidate_input_revision == revision;
+            });
+        if (selected != end) {
+            m_remote_selected_caches[index].intent = *selected;
+            m_remote_selected_caches[index].valid = true;
+        }
     };
-
-    const std::size_t required_candidate_count = packet.candidate_set_size;
-    const bool set_metadata_valid = required_candidate_count > 0
-        && required_candidate_count <= kExhaustiveCandidatesPerAircraft
-        && (packet.candidate_set_kind
-                == estimation::CandidateSetKind::LegacyRoll
-            || packet.candidate_set_kind
-                == estimation::CandidateSetKind::V4SafeControl)
-        && ((packet.candidate_set_kind
-                    == estimation::CandidateSetKind::LegacyRoll
-                && required_candidate_count == activeCandidateCount())
-            || (packet.candidate_set_kind
-                    == estimation::CandidateSetKind::V4SafeControl
-                && required_candidate_count
-                    <= kMaximumSafeControlCandidates
-                && packet.candidate_id
-                    < kMaximumSafeControlCandidates));
-    if (!set_metadata_valid) {
-        return false;
+    if (current_complete && set_key_changed) {
+        m_remote_previous_caches[index] = remote_cache;
+        retain_selected(remote_cache);
     }
-    if (remote_cache.count == remote_cache.expected_count
-        && remote_cache.count > 0
-        && keyLess(
-            packet.selection_epoch,
-            packet.source_timestamp_us,
-            remote_cache.selection_epoch,
-            remote_cache.source_timestamp_us)) {
-        return false;
-    }
-
-    const bool staging_key_matches =
-        staging_cache.selection_epoch == packet.selection_epoch
-        && staging_cache.source_timestamp_us
-            == packet.source_timestamp_us
-        && staging_cache.candidate_set_kind == packet.candidate_set_kind
-        && staging_cache.expected_count == required_candidate_count;
-    // Reject an obsolete staging key before spline/covariance reconstruction.
-    // Do not reset staging until the incoming packet has passed validation.
-    if (!staging_key_matches && staging_cache.count > 0
-            && keyLess(
-                packet.selection_epoch,
-                packet.source_timestamp_us,
-                staging_cache.selection_epoch,
-                staging_cache.source_timestamp_us)) {
-        return false;
-    }
-    estimation::ReceivedTrajectoryIntent received;
-    if (!m_receiver.receive(packet, received)) {
-        return false;
-    }
-    if (!staging_key_matches) {
-        staging_cache = RemoteCandidateCache{};
-        staging_cache.selection_epoch = packet.selection_epoch;
-        staging_cache.source_timestamp_us = packet.source_timestamp_us;
-        staging_cache.candidate_set_kind = packet.candidate_set_kind;
-        staging_cache.expected_count = required_candidate_count;
-    }
-
-    for (std::size_t index = 0;
-         index < staging_cache.candidates.size(); ++index) {
-        if (staging_cache.occupied[index]
-            && staging_cache.candidates[index].candidate_id
-                == packet.candidate_id) {
-            staging_cache.candidates[index] = received;
-            return true;
-        }
-    }
-    for (std::size_t index = 0;
-         index < staging_cache.candidates.size(); ++index) {
-        if (!staging_cache.occupied[index]) {
-            staging_cache.occupied[index] = true;
-            staging_cache.candidates[index] = received;
-            ++staging_cache.count;
-            if (staging_cache.count == required_candidate_count) {
-                std::sort(
-                    staging_cache.candidates.begin(),
-                    staging_cache.candidates.begin()
-                        + static_cast<std::ptrdiff_t>(required_candidate_count),
-                    [](const auto & lhs, const auto & rhs) {
-                        return lhs.candidate_id < rhs.candidate_id;
-                    });
-                const bool current_complete = remote_cache.count > 0
-                    && remote_cache.count == remote_cache.expected_count;
-                const bool set_key_changed =
-                    remote_cache.selection_epoch
-                            != staging_cache.selection_epoch
-                    || remote_cache.source_timestamp_us
-                            != staging_cache.source_timestamp_us
-                    || remote_cache.candidate_set_kind
-                            != staging_cache.candidate_set_kind;
-                if (current_complete && set_key_changed) {
-                    RemoteCandidateCache & previous_cache =
-                        m_remote_previous_caches[
-                            static_cast<std::size_t>(remote_vehicle_id)];
-                    RemoteSelectedIntentCache & selected_cache =
-                        m_remote_selected_caches[
-                            static_cast<std::size_t>(remote_vehicle_id)];
-                    const RemoteDecisionCache & peer =
-                        m_remote_decision_caches[
-                            static_cast<std::size_t>(remote_vehicle_id)];
-                    const auto findPeerSelection = [remote_vehicle_id, &peer](
-                                                       const RemoteCandidateCache & cache)
-                        -> const estimation::ReceivedTrajectoryIntent * {
-                        if (!peer.valid
-                            || !peer.decision.coordination_qualified
-                            || !peer.decision.ownship_candidate_valid) {
-                            return nullptr;
-                        }
-                        const std::size_t peer_index =
-                            static_cast<std::size_t>(remote_vehicle_id);
-                        const std::uint8_t selected_id =
-                            peer.decision.ownship_candidate_id;
-                        const std::uint64_t selected_revision =
-                            peer.decision
-                                .selected_candidate_input_revisions[peer_index];
-                        const auto found = std::find_if(
-                            cache.candidates.begin(),
-                            cache.candidates.begin()
-                                + static_cast<std::ptrdiff_t>(cache.count),
-                            [selected_id, selected_revision](
-                                const auto & candidate) {
-                                return candidate.candidate_id == selected_id
-                                    && candidate.candidate_input_revision
-                                        == selected_revision;
-                            });
-                        return found == cache.candidates.begin()
-                                + static_cast<std::ptrdiff_t>(cache.count)
-                            ? nullptr
-                            : &(*found);
-                    };
-                    previous_cache = remote_cache;
-                    if (const auto * selected =
-                            findPeerSelection(remote_cache)) {
-                        selected_cache.intent = *selected;
-                        selected_cache.valid = true;
-                    }
-                }
-                remote_cache = staging_cache;
-                freezeRemoteCertificationCandidatesForCurrentEpoch(
-                    remote_vehicle_id);
-                const RemoteDecisionCache & peer =
-                    m_remote_decision_caches[
-                        static_cast<std::size_t>(remote_vehicle_id)];
-                if (peer.valid && peer.decision.coordination_qualified
-                    && peer.decision.ownship_candidate_valid) {
-                    const std::size_t peer_index =
-                        static_cast<std::size_t>(remote_vehicle_id);
-                    const std::uint8_t selected_id =
-                        peer.decision.ownship_candidate_id;
-                    const std::uint64_t selected_revision =
-                        peer.decision.selected_candidate_input_revisions[
-                            peer_index];
-                    const auto selected = std::find_if(
-                        remote_cache.candidates.begin(),
-                        remote_cache.candidates.begin()
-                            + static_cast<std::ptrdiff_t>(remote_cache.count),
-                        [selected_id, selected_revision](const auto & candidate) {
-                            return candidate.candidate_id == selected_id
-                                && candidate.candidate_input_revision
-                                    == selected_revision;
-                        });
-                    if (selected != remote_cache.candidates.begin()
-                            + static_cast<std::ptrdiff_t>(remote_cache.count)) {
-                        m_remote_selected_caches[peer_index].intent = *selected;
-                        m_remote_selected_caches[peer_index].valid = true;
-                    }
-                }
-            }
-            return true;
-        }
-    }
-    return false;
+    remote_cache = completed;
+    freezeRemoteCertificationCandidatesForCurrentEpoch(remote_vehicle_id);
+    retain_selected(remote_cache);
+    return true;
 }
 
 void ManeuverSelectionWorker::freezeRemoteCertificationCandidatesForCurrentEpoch(
@@ -937,10 +837,6 @@ void ManeuverSelectionWorker::freezeRemoteCertificationCandidatesForCurrentEpoch
     }
     if (selected_cache == nullptr) {
         return;
-    }
-    if (!m_epoch_certification_candidate_sets) {
-        m_epoch_certification_candidate_sets = std::make_unique<
-            MultiAircraftExhaustiveCandidateIntentSets>();
     }
     if (m_epoch_certification_candidate_ready[remote_index]
         && selected_cache->source_timestamp_us
