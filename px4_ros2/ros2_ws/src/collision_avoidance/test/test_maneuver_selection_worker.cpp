@@ -1402,6 +1402,184 @@ TEST(ManeuverSelectionWorker, ImplementsTwentyAndFourHertzCadenceWithoutSleeps)
     }
 }
 
+TEST(ManeuverSelectionWorker, TimerRefreshesSevenCandidatesWithoutAnotherBelief)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    cs::ManeuverSelectionWorker worker(p);
+    constexpr std::uint64_t start = 1'000'000;
+    const auto actual = publishedInput(start, 3.0);
+    ASSERT_TRUE(worker.pushPublishedSetpoint(actual));
+    pushBeliefAndProcess(worker, beliefSnapshot(start, 0, 0, 20, 0));
+    const auto early = beliefSnapshot(start + 48'000, .96, 0, 20, 0);
+    ASSERT_TRUE(worker.pushOwnshipBelief(early));
+    ASSERT_TRUE(worker.processPendingForTest());
+    EXPECT_FALSE(worker.tryPopOutput());
+    EXPECT_FALSE(worker.processPendingForTest(1'999));
+    EXPECT_FALSE(worker.tryPopOutput());
+
+    ASSERT_TRUE(worker.processPendingForTest(2'000));
+    const auto output = worker.tryPopOutput();
+    ASSERT_TRUE(output);
+    ASSERT_EQ(output->intent_packet_count, 7U);
+    for (const auto & packet : output->intent_packets)
+        EXPECT_EQ(packet.source_timestamp_us, start + 50'000);
+
+    ce::TrajectoryUncertainty uncertainty(p.uncertainty_params);
+    ce::TrajectoryPredict predictor(p.predictor_params);
+    ce::PredictState state;
+    ce::PredictStateCovariance covariance;
+    ASSERT_TRUE(uncertainty.initializeFromEstimatorBelief(early.belief, state, covariance));
+    state.phi_setpoint = predictor.rollSetpointAfter(0.0, actual.input, .048);
+    ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
+        predictor, actual.input, .002, state, covariance));
+    expectPacketInitialState(*output, state, covariance);
+    EXPECT_FALSE(worker.processPendingForTest(2'000));
+    EXPECT_FALSE(worker.tryPopOutput());
+}
+
+TEST(ManeuverSelectionWorker, TimerDoesNotDiscardMeasurementsBehindPredictedTime)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    cs::ManeuverSelectionWorker worker(p);
+    constexpr std::uint64_t start = 2'000'000;
+    const auto actual = publishedInput(start, 0.0);
+    ASSERT_TRUE(worker.pushPublishedSetpoint(actual));
+    pushBeliefAndProcess(worker, beliefSnapshot(start, 0, 0, 20, 0));
+    ASSERT_TRUE(worker.processPendingForTest(50'000));
+    ASSERT_TRUE(worker.tryPopOutput());
+
+    // A newer measured state can legitimately precede the last predicted frame.
+    const auto late = beliefSnapshot(start + 49'000, 100, 0, 20, 0);
+    ASSERT_TRUE(worker.pushOwnshipBelief(late));
+    ASSERT_TRUE(worker.processPendingForTest());
+    EXPECT_FALSE(worker.tryPopOutput());
+    ASSERT_TRUE(worker.processPendingForTest(51'000));
+    const auto output = worker.tryPopOutput();
+    ASSERT_TRUE(output);
+    ce::TrajectoryUncertainty uncertainty(p.uncertainty_params);
+    ce::TrajectoryPredict predictor(p.predictor_params);
+    ce::PredictState state;
+    ce::PredictStateCovariance covariance;
+    ASSERT_TRUE(uncertainty.initializeFromEstimatorBelief(late.belief, state, covariance));
+    state.phi_setpoint = 0.0;
+    ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
+        predictor, actual.input, .051, state, covariance));
+    expectPacketInitialState(*output, state, covariance);
+    EXPECT_FALSE(worker.processPendingForTest(0)); // no time reversal / duplicate
+    EXPECT_FALSE(worker.tryPopOutput());
+}
+
+TEST(ManeuverSelectionWorker, TimerCannotInventHistoryOrRefreshAStaleBelief)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    cs::ManeuverSelectionWorker missing(p), stale(p);
+    constexpr std::uint64_t start = 3'000'000;
+    pushBeliefAndProcess(missing, beliefSnapshot(start, 0, 0, 20, 0));
+    EXPECT_FALSE(missing.processPendingForTest(50'000));
+    EXPECT_FALSE(missing.tryPopOutput());
+    ASSERT_TRUE(stale.pushPublishedSetpoint(publishedInput(start, 0)));
+    pushBeliefAndProcess(stale, beliefSnapshot(start, 0, 0, 20, 0));
+    EXPECT_FALSE(stale.processPendingForTest(p.maximum_belief_delay_us + 1));
+    EXPECT_FALSE(stale.tryPopOutput());
+    const auto fresh = pushBeliefAndProcess(stale,
+        beliefSnapshot(start + 1'100'000, 22, 0, 20, 0));
+    EXPECT_EQ(fresh.intent_packet_count, 7U);
+}
+
+TEST(ManeuverSelectionWorker, TimerSelectionKeepsTheCommonEpochAndFrozenLibrary)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    p.interaction_graph_params.enabled = true;
+    cs::ManeuverSelectionWorker local(p);
+    p.vehicle_id = 1;
+    cs::ManeuverSelectionWorker peer(p);
+    constexpr std::uint64_t start = 4'000'000;
+    ASSERT_TRUE(local.pushPublishedSetpoint(publishedInput(start, 0)));
+    const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+    const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+    exchangePackets(local, peer, own, other);
+    for (std::uint64_t elapsed : {50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
+        ASSERT_TRUE(local.processPendingForTest(elapsed));
+        ASSERT_TRUE(local.tryPopOutput());
+    }
+    ASSERT_TRUE(local.processPendingForTest(250'000));
+    const auto output = local.tryPopOutput();
+    ASSERT_TRUE(output);
+    ASSERT_TRUE(output->has_decision);
+    EXPECT_TRUE(output->decision.proposal_valid);
+    EXPECT_EQ(output->decision.proposal_epoch, start / 250'000);
+    EXPECT_EQ(output->decision.proposal_timestamp_us, start + 250'000);
+    EXPECT_EQ(output->selection_epoch, start / 250'000 + 1);
+    EXPECT_FALSE(output->decision.coordination_qualified);
+    EXPECT_FALSE(output->decision.command_execution_requested);
+}
+
+TEST(ManeuverSelectionWorker, PeerAgreementDoesNotRequireANewTimerPrediction)
+{
+    for (const std::uint64_t elapsed : {2'000ULL, 60'000ULL}) {
+        auto p = params();
+        p.exhaustive_test_mode = true;
+        p.interaction_graph_params.enabled = true;
+        cs::ManeuverSelectionWorker local(p);
+        p.vehicle_id = 1;
+        cs::ManeuverSelectionWorker peer(p);
+        constexpr std::uint64_t start = 4'000'000;
+        const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+        const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+        exchangePackets(local, peer, own, other);
+        const auto proposal = pushBeliefAndProcess(local,
+            beliefSnapshot(start + 250'000, 5, 0, 20, 0));
+        const auto peer_proposal = pushBeliefAndProcess(peer,
+            beliefSnapshot(start + 250'000, 1005, 0, 20, 0));
+        ASSERT_TRUE(proposal.decision.proposal_valid);
+        ASSERT_TRUE(peer_proposal.decision.proposal_valid);
+
+        // No published-input history: generating a future frame is forbidden,
+        // but receiving agreement on an already-evaluated proposal is not.
+        ASSERT_TRUE(local.pushRemoteDecision(1, peerDecision(peer_proposal.decision)));
+        ASSERT_TRUE(local.processPendingForTest(elapsed));
+        const auto committed = local.tryPopOutput();
+        ASSERT_TRUE(committed);
+        EXPECT_TRUE(committed->decision.coordination_qualified);
+        EXPECT_EQ(committed->generated_timestamp_us, start + 250'000);
+        EXPECT_EQ(committed->intent_packet_count, 0U);
+        EXPECT_FALSE(local.processPendingForTest(60'000));
+        EXPECT_FALSE(local.tryPopOutput());
+    }
+}
+
+TEST(ManeuverSelectionWorker, RunningTimerRefreshesWithoutMoreInputOrDiagnostics)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    ASSERT_FALSE(p.stopped_stage_timing_enabled);
+    auto worker = std::make_unique<cs::ManeuverSelectionWorker>(p);
+    constexpr std::uint64_t start = 5'000'000;
+    ASSERT_TRUE(worker->pushPublishedSetpoint(publishedInput(start, 0)));
+    ASSERT_TRUE(worker->pushOwnshipBelief(beliefSnapshot(start, 0, 0, 20, 0)));
+    ASSERT_TRUE(worker->start());
+    std::array<std::uint64_t, 2> stamps{};
+    std::size_t count = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (count < stamps.size() && std::chrono::steady_clock::now() < deadline) {
+        if (const auto output = worker->tryPopOutput()) {
+            EXPECT_EQ(output->intent_packet_count, 7U);
+            stamps[count++] = output->intent_packets[0].source_timestamp_us;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    worker->stop();
+    ASSERT_EQ(count, stamps.size());
+    EXPECT_EQ(stamps[0], start);
+    EXPECT_GE(stamps[1], start + p.trajectory_refresh_period_us);
+    EXPECT_EQ(worker->droppedOutputCount(), 0U);
+}
+
 TEST(ManeuverSelectionWorker, DoesNotMixAdjacentIncompleteRemoteEpochs)
 {
     const auto worker_params = params();

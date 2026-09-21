@@ -13,6 +13,15 @@ namespace collision_avoidance::selection
 {
 using namespace worker_detail;
 
+namespace
+{
+std::uint64_t steadyNowNs() noexcept
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}  // namespace
+
 ManeuverSelectionWorker::ManeuverSelectionWorker(
     const ManeuverSelectionWorkerParams & params)
 : m_params(params),
@@ -111,9 +120,11 @@ bool ManeuverSelectionWorker::pushOwnshipBelief(
     WorkerInput input;
     input.kind = InputKind::OwnshipBelief;
     input.belief = snapshot;
+    // This arrival anchor drives scheduling, independently of diagnostics.
+    // Retain the common-state clock; do not substitute the Pi's wall clock.
+    input.belief_enqueue_ns = steadyNowNs();
     if (m_stopped_stage_timing) {
         input.arrival = arrival;
-        input.belief_enqueue_ns = StoppedStageTiming::now();
     }
     if (!enqueueInput(input)) {
         m_dropped_inputs.fetch_add(1, std::memory_order_relaxed);
@@ -206,12 +217,13 @@ ManeuverSelectionWorker::tryPopOutput() noexcept
     return m_output_queue.try_pop();
 }
 
-bool ManeuverSelectionWorker::processPendingForTest()
+bool ManeuverSelectionWorker::processPendingForTest(
+    std::uint64_t belief_elapsed_us)
 {
     if (running() || !validParams(m_params)) {
         return false;
     }
-    return processPending();
+    return processPending(belief_elapsed_us);
 }
 
 std::uint64_t ManeuverSelectionWorker::droppedInputCount() const noexcept
@@ -270,12 +282,14 @@ void ManeuverSelectionWorker::workerLoop()
     processPending();
 }
 
-bool ManeuverSelectionWorker::processPending()
+bool ManeuverSelectionWorker::processPending(
+    std::optional<std::uint64_t> belief_elapsed_us)
 {
     const bool measure = static_cast<bool>(m_stopped_stage_timing);
     PipelineTimingRecord pipeline{};
     if (measure) pipeline.start_ns = StoppedStageTiming::now();
     bool consumed_input = false;
+    bool accepted_belief = false;
     const auto input_count = m_input_storage->inbox.drainTo(m_input_storage->batch);
     for (std::size_t index = 0; index < input_count; ++index) {
         const auto * input = &m_input_storage->batch[index];
@@ -283,7 +297,13 @@ bool ManeuverSelectionWorker::processPending()
         if (measure) ++pipeline.input_count;
         if (input->kind == InputKind::OwnshipBelief) {
             const auto begin = measure ? StoppedStageTiming::now() : 0;
+            const bool newer_belief = !m_has_latest_belief
+                || input->belief.timestamp_us > m_latest_belief_timestamp_us;
             const bool accepted = acceptOwnshipBelief(input->belief);
+            if (accepted && newer_belief) {
+                accepted_belief = true;
+                m_latest_belief_received_steady_ns = input->belief_enqueue_ns;
+            }
             if (measure) {
                 const auto end = StoppedStageTiming::now();
                 ++pipeline.belief_count;
@@ -317,18 +337,56 @@ bool ManeuverSelectionWorker::processPending()
         // unknown interval using the previous command as if it were confirmed.
         m_published_input_head = 0;
         m_published_input_count = 0;
+        m_has_latest_belief = false;
         m_has_latest_state = false;
     }
-    if (!m_has_latest_state) {
+    const auto finish_without_frame = [&]() {
         if (measure && consumed_input) {
             pipeline.source_us = m_latest_state_timestamp_us;
             pipeline.end_ns = StoppedStageTiming::now();
             m_stopped_stage_timing->appendPipeline(pipeline);
         }
         return consumed_input;
+    };
+    if (!m_has_latest_belief) {
+        return finish_without_frame();
     }
 
+    // Fresh input keeps its source time. Between inputs, let due frames run
+    // using elapsed monotonic time, as the existing command-history publisher
+    // does. This is not a network-age estimate or a new clock conversion.
+    const std::uint64_t elapsed_us = belief_elapsed_us.value_or(
+        accepted_belief ? 0 :
+        (steadyNowNs() - m_latest_belief_received_steady_ns) / 1000);
+    if (elapsed_us > m_params.maximum_belief_delay_us
+        || elapsed_us > std::numeric_limits<std::uint64_t>::max()
+            - m_latest_belief_timestamp_us) {
+        m_has_latest_state = false;
+        return finish_without_frame();
+    }
+    const std::uint64_t due_time_us = std::max(m_last_processing_timestamp_us,
+        m_latest_belief_timestamp_us + elapsed_us);
+    if (due_time_us - m_latest_belief_sample_timestamp_us
+        > m_params.maximum_belief_delay_us) {
+        m_has_latest_state = false;
+        return finish_without_frame();
+    }
+    const bool frame_due = !m_candidate_set_initialized
+        || due_time_us >= m_next_candidate_refresh_timestamp_us
+        || due_time_us >= m_next_trajectory_refresh_timestamp_us
+        || (!m_epoch_evaluated && due_time_us >= m_epoch_generation_timestamp_us
+            && due_time_us - m_epoch_generation_timestamp_us >= m_params.coordination_delay_us);
+    const bool frame_ready = frame_due && prepareStateAt(due_time_us);
+    // Peer agreement is an input event, not a new prediction frame. It may use
+    // the existing valid state/trajectory at their unchanged source times;
+    // do not make it wait for history needed only to advance the next frame.
+    if (!frame_ready && !(consumed_input && m_pending_proposal.valid
+            && !m_pending_proposal.resolved && m_has_latest_state
+            && m_latest_state_timestamp_us >= m_last_processing_timestamp_us)) {
+        return finish_without_frame();
+    }
     const std::uint64_t now_us = m_latest_state_timestamp_us;
+    m_last_processing_timestamp_us = now_us;
     if (!m_candidate_set_initialized) {
         initializeCandidateSet(now_us);
     }
@@ -341,7 +399,7 @@ bool ManeuverSelectionWorker::processPending()
     std::array<StageTimingRecord, 3> timing{};
     std::size_t timing_count = 0;
 
-    const bool selection_due = !m_epoch_evaluated
+    const bool selection_due = frame_ready && !m_epoch_evaluated
         && now_us >= m_epoch_generation_timestamp_us
         && now_us - m_epoch_generation_timestamp_us
             >= m_params.coordination_delay_us;
@@ -360,13 +418,13 @@ bool ManeuverSelectionWorker::processPending()
         m_epoch_evaluated = true;
     }
 
-    if (now_us >= m_next_candidate_refresh_timestamp_us) {
+    if (frame_ready && now_us >= m_next_candidate_refresh_timestamp_us) {
         refreshCandidateSet(now_us);
         output.selection_epoch = m_selection_epoch;
     }
 
     bool trajectory_refreshed = false;
-    if (now_us >= m_next_trajectory_refresh_timestamp_us) {
+    if (frame_ready && now_us >= m_next_trajectory_refresh_timestamp_us) {
         const auto begin = measure ? StoppedStageTiming::now() : 0;
         if (!v4CutoverMode() || !m_v4_cutover_ready) {
             buildCurrentIntentSet(now_us, output);
@@ -474,14 +532,38 @@ bool ManeuverSelectionWorker::processPending()
             m_stopped_stage_timing->append(timing[i]);
         }
     }
-    return consumed_input;
+    return consumed_input || selection_due || trajectory_refreshed
+        || coordination_committed;
+}
+
+bool ManeuverSelectionWorker::prepareStateAt(std::uint64_t timestamp_us)
+{
+    if (!m_has_latest_belief || timestamp_us < m_latest_belief_timestamp_us
+        || timestamp_us - m_latest_belief_sample_timestamp_us
+            > m_params.maximum_belief_delay_us) {
+        m_has_latest_state = false;
+        return false;
+    }
+    auto state = m_latest_belief_state;
+    auto covariance = m_latest_belief_covariance;
+    if (timestamp_us > m_latest_belief_timestamp_us
+        && !compensateUsingPublishedInputs(
+            m_latest_belief_timestamp_us, timestamp_us, state, covariance)) {
+        return false;
+    }
+    m_latest_state = state;
+    m_latest_covariance = covariance;
+    m_latest_state_timestamp_us = timestamp_us;
+    m_latest_state_sample_timestamp_us = m_latest_belief_sample_timestamp_us;
+    m_has_latest_state = true;
+    return true;
 }
 
 bool ManeuverSelectionWorker::acceptOwnshipBelief(
     const ManeuverSelectionBeliefSnapshot & snapshot)
 {
     if (!snapshot.valid || snapshot.timestamp_us < snapshot.timestamp_sample_us
-        || snapshot.timestamp_us < m_latest_state_timestamp_us) {
+        || snapshot.timestamp_us < m_latest_belief_timestamp_us) {
         return false;
     }
     const std::uint64_t delay_us =
@@ -508,6 +590,11 @@ bool ManeuverSelectionWorker::acceptOwnshipBelief(
     m_latest_state_timestamp_us = snapshot.timestamp_us;
     m_latest_state_sample_timestamp_us = snapshot.timestamp_sample_us;
     m_has_latest_state = true;
+    m_latest_belief_state = state;
+    m_latest_belief_covariance = covariance;
+    m_latest_belief_timestamp_us = snapshot.timestamp_us;
+    m_latest_belief_sample_timestamp_us = snapshot.timestamp_sample_us;
+    m_has_latest_belief = true;
     return true;
 }
 

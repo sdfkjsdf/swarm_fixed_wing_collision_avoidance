@@ -612,8 +612,10 @@ public:
     void setActivationEnabled(bool enabled) noexcept;
     std::optional<ManeuverSelectionWorkerOutput> tryPopOutput() noexcept;
 
-    // Deterministic test/benchmark entry point. Do not call while start() is active.
-    bool processPendingForTest();
+    // Deterministic clock injection: elapsed time since the latest accepted
+    // belief arrived. Production advances this clock even without new inputs.
+    // Do not call while start() is active.
+    bool processPendingForTest(std::uint64_t belief_elapsed_us = 0);
 
     std::uint64_t droppedInputCount() const noexcept;
     std::uint64_t droppedOutputCount() const noexcept;
@@ -722,7 +724,9 @@ private:
 
     // Core event loop and input-cache ownership.
     void workerLoop();
-    bool processPending();
+    bool processPending(
+        std::optional<std::uint64_t> belief_elapsed_us = std::nullopt);
+    bool prepareStateAt(std::uint64_t timestamp_us);
     bool acceptOwnshipBelief(const ManeuverSelectionBeliefSnapshot & snapshot);
     bool acceptPublishedSetpoint(
         const ManeuverSelectionPublishedSetpointSnapshot & snapshot);
@@ -900,6 +904,16 @@ private:
     estimation::PredictStateCovariance m_latest_covariance{};
     std::uint64_t m_latest_state_timestamp_us{0};
     std::uint64_t m_latest_state_sample_timestamp_us{0};
+    // Preserve the measured posterior separately from the per-frame propagated
+    // state. Timer ticks must not repeatedly propagate an already-aged estimate
+    // or reject a newer measurement merely because a timer ran ahead of it.
+    estimation::PredictState m_latest_belief_state{};
+    estimation::PredictStateCovariance m_latest_belief_covariance{};
+    std::uint64_t m_latest_belief_timestamp_us{0};
+    std::uint64_t m_latest_belief_sample_timestamp_us{0};
+    std::uint64_t m_latest_belief_received_steady_ns{0};
+    std::uint64_t m_last_processing_timestamp_us{0};
+    bool m_has_latest_belief{false};
     std::unique_ptr<StoppedBudgetRecords> m_budget_records;
     std::unique_ptr<StoppedStageTiming> m_stopped_stage_timing;
     void recordBudgetTrace(ManeuverBudgetTrace trace);
