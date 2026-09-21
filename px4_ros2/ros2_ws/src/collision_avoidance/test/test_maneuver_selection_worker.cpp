@@ -3085,6 +3085,53 @@ static void verifyDeferredComponentActivation(
     EXPECT_EQ(
         coordinated.decision.ownship_candidate_id,
         commits[1].decision.selected_candidate_ids[1]);
+
+    if (peer_ended) {
+        return;
+    }
+
+    auto active = coordinated;
+    if (stale || mismatched_tuple) {
+        // A temporarily ineligible status must not consume the episode. A
+        // fresh matching heartbeat, without a new start edge, can still join.
+        heartbeat = matching_trigger;
+        heartbeat.activation_just_started = false;
+        heartbeat.proposal_timestamp_us = start + 400'000;
+        ++heartbeat.local_selection_epoch;
+        ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+        active = pushBeliefAndProcess(
+            *workers[1], beliefSnapshot(start + 400'000, 500.0, 0.0, 20.0, 0.0));
+        ASSERT_TRUE(active.decision.activation_requested);
+        EXPECT_TRUE(active.decision.activation_just_started);
+    }
+
+    // Repeated active status is idempotent: it cannot restart the local
+    // episode or replace the already latched command.
+    ASSERT_TRUE(active.decision.activation_requested);
+    heartbeat.proposal_timestamp_us = start + 450'000;
+    ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+    ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+    const auto repeated = pushBeliefAndProcess(
+        *workers[1], beliefSnapshot(start + 450'000, 500.0, 0.0, 20.0, 0.0));
+    EXPECT_TRUE(repeated.decision.activation_requested);
+    EXPECT_FALSE(repeated.decision.activation_just_started);
+    EXPECT_EQ(repeated.decision.activation_timestamp_us,
+              active.decision.activation_timestamp_us);
+    EXPECT_EQ(repeated.decision.ownship_candidate_id,
+              active.decision.ownship_candidate_id);
+    EXPECT_DOUBLE_EQ(repeated.decision.ownship_input.a_lat_cmd,
+                     active.decision.ownship_input.a_lat_cmd);
+    EXPECT_DOUBLE_EQ(repeated.decision.ownship_input.V_cmd,
+                     active.decision.ownship_input.V_cmd);
+    EXPECT_DOUBLE_EQ(repeated.decision.ownship_input.h_dot_cmd,
+                     active.decision.ownship_input.h_dot_cmd);
+    // NaN h_cmd selects vertical-speed control, not an invalid command.
+    if (std::isnan(active.decision.ownship_input.h_cmd)) {
+        EXPECT_TRUE(std::isnan(repeated.decision.ownship_input.h_cmd));
+    } else {
+        EXPECT_DOUBLE_EQ(repeated.decision.ownship_input.h_cmd,
+                         active.decision.ownship_input.h_cmd);
+    }
 }
 
 TEST(ManeuverSelectionWorker,
