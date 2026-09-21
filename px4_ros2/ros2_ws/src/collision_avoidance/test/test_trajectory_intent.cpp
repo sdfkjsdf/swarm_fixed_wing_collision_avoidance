@@ -63,6 +63,32 @@ TEST(TrajectoryIntent, BuildsRequiredRollCandidateLookup)
         1.0e-12);
 }
 
+TEST(TrajectoryIntent, SharesTheCommandFilterSeedNotTheActualRoll)
+{
+    ce::TrajectoryPredict predictor(ce::PredictParams{});
+    const auto table = ce::makeLevelTurnCandidateTable(20.0,100.0);
+    ce::TrajectoryIntentSender sender(predictor,table);
+    ce::TrajectoryIntentReceiver receiver(predictor);
+    ce::PredictState x{0,0,100,20,0,0,.1};
+    x.phi_setpoint = .4;
+    ce::TrajectoryIntentPacket packet;
+    ASSERT_TRUE(sender.buildForSelectedCandidate(1000000,0,x,diagonalCovariance(.04),packet,4));
+    EXPECT_FLOAT_EQ(packet.initial_roll_setpoint_rad,.4F);
+    ce::ReceivedTrajectoryIntent received;
+    ASSERT_TRUE(receiver.receive(packet,received));
+    x.phi_setpoint = packet.initial_roll_setpoint_rad;
+    ce::PredictionMeanTrajectory mean;
+    predictor.predict(x,*table.find(0),.1,mean);
+    for (std::size_t k=0;k<mean.size();++k) {
+        EXPECT_NEAR(received.reconstructed_mean[k].phi,mean[k].phi,2e-7);
+        EXPECT_NEAR(received.cone[k].mean.phi_setpoint,mean[k].phi_setpoint,2e-7);
+        EXPECT_TRUE(ce::TrajectoryUncertainty::covarianceIsFiniteAndPsd(received.cone[k].state_covariance));
+        EXPECT_LT(received.cone[k].state_covariance[48],1.0);
+    }
+    packet.initial_roll_setpoint_rad = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_FALSE(receiver.receive(packet,received));
+}
+
 TEST(TrajectoryIntent, ReconstructorsKeepIndependentState)
 {
     ce::ReconstructTrajectory first;

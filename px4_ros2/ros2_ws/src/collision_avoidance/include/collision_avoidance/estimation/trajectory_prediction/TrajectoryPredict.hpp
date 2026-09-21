@@ -24,14 +24,15 @@
        → matches types::FwSetpoint::lateral_acceleration.
      - Internal state and ODE use phi (roll angle) as state variable
        and phi_cmd as control, following Beard-McLain (9.19) exactly.
-     - Conversion phi_cmd = atan2(a_lat_cmd, g) is applied once per
-       stepRK4() entry, not per ODE evaluation.
+     - atan2(a_lat_cmd, g) is the requested target. The deterministic roll
+       setpoint slews toward it before the first-order aircraft response.
      - Altitude channel: PD form reduced to 1st-order lag (b_h = 0).
 
    PX4 parameter relationship:
      tau_V    <-> FW_T_TAS_TC
      tau_hdot <-> FW_T_ALT_TC
      phi_rate_max <-> FW_R_RMAX
+     phi_setpoint_rate_max <-> FW_PN_R_SLEW_MAX
 
    tau_phi is an effective reduced-order response constant, not a direct copy
    of FW_R_TC.  FW_R_TC maps roll-attitude error to a body-rate setpoint;
@@ -64,12 +65,16 @@ public:
     explicit TrajectoryPredict(const PredictParams & params);
 
     /* ── 단일 step RK4 ───────────────────────────────────────────────
-       입력 u 는 zero-order hold 가정 (k1~k4 모두 같은 u 평가).
+       External u is zero-order held; the roll setpoint ramps within each step.
        psi 는 [-pi, pi] 로 wrap. saturation 재적용 후 반환.
        호출자가 매 step 마다 다른 u 를 쓰고 싶으면 직접 stepRK4 를 N 회 호출. */
     PredictState stepRK4(const PredictState & x,
                          const PredictInput & u,
                          double dt) const;
+
+    // Shared by rollout and published-command history; no additional delay.
+    double rollSetpointAfter(double initial_roll_setpoint,
+                             const PredictInput & input, double dt) const;
 
     /* ── 다중 step 예측 (zero-order hold) ────────────────────────────
        out_traj[0]   = x0  (입력 그대로)

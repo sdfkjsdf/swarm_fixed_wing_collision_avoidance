@@ -83,6 +83,7 @@ collision_avoidance::msg::TrajectoryIntent toRosMessage(
     message.nominal_lateral_acceleration_mps2 =
         packet.nominal_lateral_acceleration_mps2;
     message.safe_rejoin_requested = packet.safe_rejoin_requested;
+    message.initial_roll_setpoint_rad = packet.initial_roll_setpoint_rad;
     std::copy(
         packet.initial_state.begin(),
         packet.initial_state.end(),
@@ -117,6 +118,7 @@ estimation::TrajectoryIntentPacket fromRosMessage(
     packet.nominal_lateral_acceleration_mps2 =
         message.nominal_lateral_acceleration_mps2;
     packet.safe_rejoin_requested = message.safe_rejoin_requested;
+    packet.initial_roll_setpoint_rad = message.initial_roll_setpoint_rad;
     std::copy(
         message.initial_state.begin(),
         message.initial_state.end(),

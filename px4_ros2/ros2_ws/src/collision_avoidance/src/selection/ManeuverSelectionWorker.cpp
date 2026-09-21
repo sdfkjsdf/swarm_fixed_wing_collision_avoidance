@@ -517,7 +517,8 @@ bool ManeuverSelectionWorker::acceptPublishedSetpoint(
     if (snapshot.timestamp_us == 0
         || snapshot.timestamp_us < m_latest_published_input_timestamp_us) return false;
     m_latest_published_input_timestamp_us = snapshot.timestamp_us;
-    auto entry = snapshot;
+    PublishedInputEntry entry;
+    static_cast<ManeuverSelectionPublishedSetpointSnapshot &>(entry) = snapshot;
     const auto & u = entry.input;
     entry.valid = entry.valid && std::isfinite(u.V_cmd) && u.V_cmd > 0.0
         && (std::isfinite(u.h_cmd) || std::isnan(u.h_cmd))
@@ -527,9 +528,14 @@ bool ManeuverSelectionWorker::acceptPublishedSetpoint(
             + m_published_inputs->size() - 1) % m_published_inputs->size()];
         if (entry.timestamp_us < last.timestamp_us) return false;
         if (entry.timestamp_us == last.timestamp_us) {
+            entry.roll_setpoint_rad = last.roll_setpoint_rad;
             last = entry;
             return true;
         }
+        entry.roll_setpoint_rad = last.valid
+            ? m_predictor.rollSetpointAfter(last.roll_setpoint_rad, last.input,
+                static_cast<double>(entry.timestamp_us-last.timestamp_us)*1.0e-6)
+            : (m_has_latest_state ? m_latest_state.phi : 0.0);
         const auto & previous = last.input;
         if (entry.valid == last.valid && (!entry.valid
             || (u.V_cmd == previous.V_cmd
@@ -553,12 +559,16 @@ bool ManeuverSelectionWorker::compensateUsingPublishedInputs(
     estimation::PredictState & state,
     estimation::PredictStateCovariance & covariance)
 {
-    if (start_us == end_us) return true;
-    const ManeuverSelectionPublishedSetpointSnapshot * held = nullptr;
+    const PublishedInputEntry * held = nullptr;
     auto cursor_us = start_us;
     const auto oldest = (m_published_input_head + m_published_inputs->size()
         - m_published_input_count) % m_published_inputs->size();
     const auto advance = [&](std::uint64_t until_us) {
+        if (held && held->valid && cursor_us == start_us) {
+            state.phi_setpoint = m_predictor.rollSetpointAfter(
+                held->roll_setpoint_rad, held->input,
+                static_cast<double>(start_us-held->timestamp_us)*1.0e-6);
+        }
         if (until_us == cursor_us) return true;
         if (!held || !held->valid) return false;
         return m_uncertainty.compensateFusionHorizonDelay(
@@ -865,7 +875,11 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
     if (remote_vehicle_id < 0
         || remote_vehicle_id >= m_params.total_agent_count
         || remote_vehicle_id == m_params.vehicle_id
-        || decision.vehicle_id != remote_vehicle_id) {
+        || decision.vehicle_id != remote_vehicle_id
+        || (decision.local_activation_request_timestamp_us != 0
+            && (decision.activation_timestamp_us == 0
+                || decision.local_activation_request_timestamp_us
+                    < decision.activation_timestamp_us))) {
         return false;
     }
     const auto candidatesValid = [this](
@@ -966,6 +980,8 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
     const auto previous_activation_timestamp =
         cache.decision.activation_timestamp_us;
     const bool previous_activation_requested = cache.decision.activation_requested;
+    const auto previous_local_request_timestamp =
+        cache.decision.local_activation_request_timestamp_us;
     const bool retain_bootstrap_readiness = cache.valid
         && cache.decision.v4_cutover_candidate_ready
         && !cache.decision.selected_v4_cutover
@@ -975,6 +991,9 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
     if (!stale_activation_status && !decision.activation_requested) {
         cache.activation_ended_through_us = std::max(
             cache.activation_ended_through_us, decision.activation_timestamp_us);
+        cache.local_activation_request_consumed_through_us = std::max(
+            cache.local_activation_request_consumed_through_us,
+            decision.local_activation_request_timestamp_us);
     }
     cache.decision = decision;
     if (stale_activation_status) {
@@ -983,6 +1002,14 @@ bool ManeuverSelectionWorker::acceptRemoteDecision(
         cache.decision.activation_timestamp_us = previous_activation_timestamp;
         cache.decision.activation_requested = previous_activation_requested;
         cache.decision.activation_just_started = false;
+        cache.decision.local_activation_request_timestamp_us =
+            previous_local_request_timestamp;
+    } else if (decision.activation_timestamp_us == previous_activation_timestamp) {
+        // A delayed peer-only heartbeat must not erase a local request that
+        // originated later within the same execution episode.
+        cache.decision.local_activation_request_timestamp_us = std::max(
+            previous_local_request_timestamp,
+            decision.local_activation_request_timestamp_us);
     }
     // Readiness advertises that this peer has demonstrated the selected V4
     // architecture, not that its latest 20 Hz diagnostic sample is a command.

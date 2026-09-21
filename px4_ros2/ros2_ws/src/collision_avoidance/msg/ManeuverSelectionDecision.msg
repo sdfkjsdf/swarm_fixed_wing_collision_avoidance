@@ -61,6 +61,9 @@ float32 communication_delay_margin_m
 float32 ad_m
 float32 reciprocal_cost_sum
 uint64 activation_timestamp_us
+# First local AD trigger in this execution episode; zero for peer-only
+# participation. Held across heartbeats/selection epochs and retained on end.
+uint64 local_activation_request_timestamp_us
 uint8 deactivation_reason
 bool coordination_qualified
 bool new_best_accepted

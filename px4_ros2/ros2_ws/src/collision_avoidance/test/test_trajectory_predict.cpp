@@ -151,6 +151,7 @@ TEST(Accuracy, RollRateSaturationMatchesPx4Limit)
     constexpr double deg_to_rad = M_PI / 180.0;
     auto x = calmInit(20.0);
     x.phi = -13.0 * deg_to_rad;
+    x.phi_setpoint = 50.0 * deg_to_rad; // Isolate the inner roll-rate clamp.
     PredictInput u{
         20.0,
         std::nan(""),
@@ -172,6 +173,7 @@ TEST(Accuracy, RollRateLimitLeavesSmallSignalResponseUnchanged)
     constexpr double deg_to_rad = M_PI / 180.0;
     auto x = calmInit(20.0);
     const double phi_command = 15.0 * deg_to_rad;
+    x.phi_setpoint = phi_command; // Already-slewed setpoint: inner loop only.
     PredictInput u{
         20.0,
         std::nan(""),
@@ -186,6 +188,44 @@ TEST(Accuracy, RollRateLimitLeavesSmallSignalResponseUnchanged)
 
 /* 3. 조정선회 원궤도 — 정상상태에서 R = V² / (g·tan(phi))  (5%)
    ★ PATCH: a_lat 직접 → g·tan(phi) 사용. 정상상태 phi = atan(a_lat_cmd/g). */
+TEST(Accuracy, RollSetpointRampAndInnerLagAreDistinct)
+{
+    auto params = defaultParams();
+    TrajectoryPredict pred(params);
+    auto x = calmInit(20.0);
+    x.phi_setpoint = 0.0;
+    PredictInput u{20.0, std::nan(""), 0.0, kG*std::tan(50.0*M_PI/180.0)};
+    const auto next = pred.stepRK4(x, u, .1);
+    const double rate = params.phi_setpoint_rate_max;
+    // Exact first-order response to a ramp, before either limit saturates.
+    const double expected = rate*(.1-params.tau_phi*(1-std::exp(-.1/params.tau_phi)));
+    EXPECT_NEAR(next.phi_setpoint, rate*.1, 1e-12);
+    // RK4's fourth-order exponential polynomial: first omitted alternating
+    // term bounds the one-step ramp-response error (dt/tau < 1).
+    const double rk4_error_bound = rate*std::pow(.1,5)
+        /(120.0*std::pow(params.tau_phi,4));
+    EXPECT_NEAR(next.phi, expected, rk4_error_bound+1e-12);
+    EXPECT_GT(next.phi, 0.0); // It turns during the ramp, not after a fixed wait.
+    EXPECT_LT(next.phi, next.phi_setpoint);
+    auto advanced = pred.stepRK4(next, u, .1);
+    EXPECT_NEAR(advanced.phi_setpoint, rate*.2, 1e-12);
+}
+
+TEST(Accuracy, RollSlewCornerMatchesFineIntegrationAndReversal)
+{
+    TrajectoryPredict pred(defaultParams());
+    auto x = calmInit(20.0);
+    x.phi = 20.0*M_PI/180.0;
+    x.phi_setpoint = 30.0*M_PI/180.0;
+    PredictInput u{20.0, std::nan(""), 0.0, -kG*std::tan(50.0*M_PI/180.0)};
+    auto coarse=x, fine=x;
+    for (int k=0;k<10;++k) coarse=pred.stepRK4(coarse,u,.1);
+    for (int k=0;k<1000;++k) fine=pred.stepRK4(fine,u,.001);
+    EXPECT_NEAR(coarse.phi_setpoint, -50.0*M_PI/180.0, 1e-12);
+    EXPECT_NEAR(coarse.phi,fine.phi,1e-4);
+    EXPECT_NEAR(coarse.psi,fine.psi,1e-4);
+}
+
 TEST(Accuracy, CoordinatedTurnRadius)
 {
     auto params = defaultParams();

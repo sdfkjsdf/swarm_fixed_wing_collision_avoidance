@@ -217,8 +217,13 @@ bool TrajectoryUncertainty::propagateCovarianceOneStep(
         auto perturbed_array = state_array;
         const double step = m_params.finite_difference_step[column];
         perturbed_array[column] += step;
+        auto perturbed_state = fromArray(perturbed_array);
+        // The command-filter state is conditioned on the input history. Do not
+        // reset it to perturbed actual roll while forming the 7x7 Jacobian.
+        perturbed_state.phi_setpoint = std::isfinite(linearization_state.phi_setpoint)
+            ? linearization_state.phi_setpoint : linearization_state.phi;
         const auto perturbed_next = toArray(
-            predictor.stepRK4(fromArray(perturbed_array), input, dt));
+            predictor.stepRK4(perturbed_state, input, dt));
         for (std::size_t row = 0; row < kX; ++row) {
             double delta = perturbed_next[row] - next_array[row];
             if (row == 4 || row == 6) {

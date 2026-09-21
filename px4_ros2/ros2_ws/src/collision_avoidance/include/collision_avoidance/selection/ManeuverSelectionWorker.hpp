@@ -310,6 +310,9 @@ struct ManeuverSelectionDecision
     double ad_m{0.0};
     double reciprocal_cost_sum{0.0};
     std::uint64_t activation_timestamp_us{0};
+    // Nonzero only after this aircraft itself observes the AD activation
+    // condition in this episode. Joining a peer is not a new request.
+    std::uint64_t local_activation_request_timestamp_us{0};
     ManeuverDeactivationReason deactivation_reason{
         ManeuverDeactivationReason::None};
     bool coordination_qualified{false};
@@ -432,6 +435,7 @@ struct ManeuverSelectionPeerDecision
     bool activation_just_started{false};
     bool command_execution_requested{false};
     std::uint64_t activation_timestamp_us{0};
+    std::uint64_t local_activation_request_timestamp_us{0};
     bool nominal_setpoint_available{false};
     std::uint64_t nominal_setpoint_timestamp_us{0};
     double nominal_ground_speed_command_mps{
@@ -668,8 +672,8 @@ private:
     struct RemoteDecisionCache
     {
         ManeuverSelectionPeerDecision decision{};
-        // Episode identity belongs to this sender, not a selection epoch.
-        std::uint64_t activation_consumed_through_us{0};
+        // Consume originating requests, not a participant's execution start.
+        std::uint64_t local_activation_request_consumed_through_us{0};
         std::uint64_t activation_ended_through_us{0};
         bool valid{false};
     };
@@ -863,6 +867,7 @@ private:
     InteractionGraphBuilder m_interaction_graph_builder;
     HeuristicCandidateSelector m_candidate_selector;
     ManeuverActivationController m_activation_controller;
+    std::uint64_t m_local_activation_request_timestamp_us{0};
     SafeControlSetV4 m_v4_safe_control;
     BackupControlInterpolatorV4 m_mode_b_interpolator;
     BackupThreatIntentAdapterV4 m_mode_b_intent_adapter;
@@ -908,8 +913,11 @@ private:
     // Bounded history, allocated once at construction (not on the control stack):
     // 256 entries cover >1 s at 100 Hz, with no allocations during propagation.
     // Overwritten/missing history is rejected, never filled with a candidate.
-    using PublishedInputHistory =
-        std::array<ManeuverSelectionPublishedSetpointSnapshot, 256>;
+    struct PublishedInputEntry : ManeuverSelectionPublishedSetpointSnapshot {
+        // Modelled at publication, not an acknowledgement of PX4 receipt.
+        double roll_setpoint_rad{0.0};
+    };
+    using PublishedInputHistory = std::array<PublishedInputEntry, 256>;
     std::unique_ptr<PublishedInputHistory> m_published_inputs{
         std::make_unique<PublishedInputHistory>()};
     std::size_t m_published_input_head{0};

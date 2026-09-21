@@ -17,6 +17,10 @@ bool safe_rejoin_requested
 # Predictor state order: [p_n, p_e, h, V_ground, course, h_dot, roll].
 float32[7] initial_state
 
+# Deterministic PX4 roll-setpoint slew state at source_timestamp_us.
+# Separate from the seven uncertain EKF-derived flight states below.
+float32 initial_roll_setpoint_rad
+
 # Row-major 7x7 covariance of initial_state.
 float32[49] initial_covariance
 

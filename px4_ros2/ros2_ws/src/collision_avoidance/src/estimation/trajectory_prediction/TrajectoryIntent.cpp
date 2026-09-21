@@ -210,9 +210,15 @@ bool TrajectoryIntentSender::buildForCandidateInput(
         return false;
     }
 
+    PredictState rollout_initial_state = initial_state;
+    // Use exactly the transmitted command-filter seed on both sides.
+    const float initial_roll_setpoint = static_cast<float>(
+        std::isfinite(initial_state.phi_setpoint)
+            ? initial_state.phi_setpoint : initial_state.phi);
+    rollout_initial_state.phi_setpoint = initial_roll_setpoint;
     PredictionMeanTrajectory predicted_mean{};
     m_predictor.predict(
-        initial_state,
+        rollout_initial_state,
         transmitted_input,
         kTrajectoryIntentStepSeconds,
         predicted_mean);
@@ -230,6 +236,7 @@ bool TrajectoryIntentSender::buildForCandidateInput(
     candidate_packet.candidate_input_revision = inputRevision(
         candidate_id, encoded_input);
     candidate_packet.initial_state = encodeState(initial_state);
+    candidate_packet.initial_roll_setpoint_rad = initial_roll_setpoint;
     std::transform(
         initial_covariance.begin(),
         initial_covariance.end(),
@@ -253,7 +260,8 @@ bool TrajectoryIntentReceiver::receive(
     ReceivedTrajectoryIntent & received)
 {
     const PredictInput input = decodeInput(packet.candidate_input);
-    const PredictState initial_state = decodeState(packet.initial_state);
+    PredictState initial_state = decodeState(packet.initial_state);
+    initial_state.phi_setpoint = packet.initial_roll_setpoint_rad;
     const PredictStateCovariance initial_covariance =
         decodeCovariance(packet.initial_covariance);
     if (packet.candidate_id >= kManeuverCandidateCount
@@ -269,6 +277,7 @@ bool TrajectoryIntentReceiver::receive(
         || packet.candidate_input_revision != inputRevision(
             packet.candidate_id, packet.candidate_input)
         || !finiteState(initial_state)
+        || !std::isfinite(initial_state.phi_setpoint)
         || !validateKeySamples(packet.compressed_mean)
         || !TrajectoryUncertainty::covarianceIsFiniteAndPsd(initial_covariance)) {
         return false;
@@ -285,6 +294,7 @@ bool TrajectoryIntentReceiver::receive(
                 pose_velocity, roll_state.phi, reconstructed_mean[point])) {
             return false;
         }
+        reconstructed_mean[point].phi_setpoint = roll_state.phi_setpoint;
         if (point + 1 < kTrajectoryPointCount) {
             roll_state = m_predictor.stepRK4(
                 roll_state, input, kTrajectoryIntentStepSeconds);

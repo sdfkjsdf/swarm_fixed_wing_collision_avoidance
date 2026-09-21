@@ -56,6 +56,7 @@ struct TrajectoryIntentPacket
     std::uint64_t source_timestamp_us{0};
     std::uint64_t selection_epoch{0};
     std::array<float, kPredictStateDimension> initial_state{};
+    float initial_roll_setpoint_rad{0.0F};
     std::array<float,
         kPredictStateDimension * kPredictStateDimension> initial_covariance{};
     TrajectorySample compressed_mean{};

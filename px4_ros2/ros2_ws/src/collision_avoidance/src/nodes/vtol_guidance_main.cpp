@@ -67,6 +67,7 @@ int main(int argc, char * argv[])
     node->declare_parameter<double>(
         "roll_response_time_constant_s", 0.415);
     node->declare_parameter<double>("max_roll_rate_deg_per_s", 70.0);
+    node->declare_parameter<double>("max_roll_setpoint_rate_deg_per_s", 90.0);
     node->declare_parameter<double>("max_yaw_rate_deg_per_s", 50.0);
     node->declare_parameter<double>("v4_margin_time_constant_s", 5.0);
     node->declare_parameter<double>("v4_candidate_guard_deg_per_s", 0.5);
@@ -181,6 +182,9 @@ int main(int argc, char * argv[])
             "roll_response_time_constant_s").as_double();
         params.predictor_params.phi_rate_max =
             node->get_parameter("max_roll_rate_deg_per_s").as_double()
+            * std::acos(-1.0) / 180.0;
+        params.predictor_params.phi_setpoint_rate_max =
+            node->get_parameter("max_roll_setpoint_rate_deg_per_s").as_double()
             * std::acos(-1.0) / 180.0;
         params.evaluator_params.desired_separation_distance_m =
             node->get_parameter("desired_separation_distance").as_double();

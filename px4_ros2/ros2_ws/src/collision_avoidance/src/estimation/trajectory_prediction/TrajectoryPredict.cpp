@@ -210,13 +210,35 @@ PredictState TrajectoryPredict::evaluateODE(const PredictState & x,
    ★ PATCH: stepRK4 진입 시 a_lat_cmd → phi_cmd atan2 변환 1회.
             그 InternalInput 으로 4 stages 모두 평가.
    ───────────────────────────────────────────────────────────────── */
+double TrajectoryPredict::rollSetpointAfter(
+    double initial_roll_setpoint, const PredictInput & input, double dt) const
+{
+    const double requested = std::atan2(
+        clampFM(input.a_lat_cmd, -m_params.a_lat_max, m_params.a_lat_max), k_g);
+    const double limit = std::max(0.0, m_params.phi_setpoint_rate_max * dt);
+    return initial_roll_setpoint
+        + clampFM(requested - initial_roll_setpoint, -limit, limit);
+}
+
 PredictState TrajectoryPredict::stepRK4(const PredictState & x,
                                         const PredictInput & u,
                                         double dt) const
 {
     /* 1) 입력/상태 saturation 한번 적용 (수치 안전) */
     const PredictInput  u_sat = applyInputSaturation(u);
-    const PredictState  x_sat = applyStateSafety(x);
+    PredictState x_sat = applyStateSafety(x);
+    if (!std::isfinite(x_sat.phi_setpoint)) x_sat.phi_setpoint = x_sat.phi;
+    if (!(dt > 0.0)) return x_sat;
+    const double requested_roll = std::atan2(u_sat.a_lat_cmd, k_g);
+    const double ramp_time = m_params.phi_setpoint_rate_max > 0.0
+        ? std::abs(requested_roll - x_sat.phi_setpoint)
+            / m_params.phi_setpoint_rate_max : 0.0;
+    // Split at the only ramp/hold corner so RK4 does not integrate across it.
+    if (ramp_time > 1.0e-9 && ramp_time < dt - 1.0e-9) {
+        auto at_target = stepRK4(x_sat, u_sat, ramp_time);
+        at_target.phi_setpoint = requested_roll;
+        return stepRK4(at_target, u_sat, dt - ramp_time);
+    }
 
     /* 2) ★ PATCH: 외부 a_lat_cmd → 내부 phi_cmd 변환 (RK4 진입 시 1회).
                    atan2(a_sat, g) 가 자동으로 |phi_cmd| ≤ FW_R_LIM 보장
@@ -230,16 +252,19 @@ PredictState TrajectoryPredict::stepRK4(const PredictState & x,
     u_int.V_cmd     = u_sat.V_cmd;
     u_int.h_cmd     = std::isfinite(u_sat.h_cmd) ? u_sat.h_cmd : x_sat.h;
     u_int.h_dot_cmd = u_sat.h_dot_cmd;
-    u_int.phi_cmd   = std::atan2(u_sat.a_lat_cmd, k_g);
+    u_int.phi_cmd   = x_sat.phi_setpoint;
 
     /* 3) RK4 — k1, k2, k3, k4 (모두 같은 u_int 평가, ZOH) */
     const PredictState k1 = evaluateODE(x_sat,                                u_int);
+    u_int.phi_cmd = rollSetpointAfter(x_sat.phi_setpoint, u_sat, 0.5 * dt);
     const PredictState k2 = evaluateODE(scaleAndAdd(x_sat, 0.5 * dt, k1),     u_int);
     const PredictState k3 = evaluateODE(scaleAndAdd(x_sat, 0.5 * dt, k2),     u_int);
+    u_int.phi_cmd = rollSetpointAfter(x_sat.phi_setpoint, u_sat, dt);
     const PredictState k4 = evaluateODE(scaleAndAdd(x_sat,        dt, k3),    u_int);
 
     /* 4) 가중평균 */
-    const PredictState x_next_raw = rk4Combine(x_sat, dt / 6.0, k1, k2, k3, k4);
+    PredictState x_next_raw = rk4Combine(x_sat, dt / 6.0, k1, k2, k3, k4);
+    x_next_raw.phi_setpoint = u_int.phi_cmd;
 
     /* 5) 후처리: applyStateSafety 재적용 (수치오차로 phi/V_h_min 깨질 가능성 차단) */
     return applyStateSafety(x_next_raw);

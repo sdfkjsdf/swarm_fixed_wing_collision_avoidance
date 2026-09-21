@@ -108,6 +108,8 @@ void expectPacketInitialState(
     const std::array<double, 7> mean{state.p_n,state.p_e,state.h,state.V,
                                    state.psi,state.h_dot,state.phi};
     for (std::size_t i = 0; i < output.intent_packet_count; ++i) {
+        EXPECT_FLOAT_EQ(output.intent_packets[i].initial_roll_setpoint_rad,
+                        float(state.phi_setpoint));
         for (std::size_t k = 0; k < mean.size(); ++k)
             EXPECT_FLOAT_EQ(output.intent_packets[i].initial_state[k], float(mean[k]));
         for (std::size_t k = 0; k < covariance.size(); ++k)
@@ -387,6 +389,8 @@ cs::ManeuverSelectionPeerDecision peerDecision(
     peer.activation_requested = decision.activation_requested;
     peer.activation_just_started = decision.activation_just_started;
     peer.activation_timestamp_us = decision.activation_timestamp_us;
+    peer.local_activation_request_timestamp_us =
+        decision.local_activation_request_timestamp_us;
     peer.command_execution_requested =
         decision.command_execution_requested;
     peer.nominal_setpoint_available =
@@ -2986,6 +2990,7 @@ TEST(ManeuverSelectionWorker,
     matching_trigger.activation_requested = true;
     matching_trigger.activation_just_started = true;
     matching_trigger.activation_timestamp_us = start + 250'000;
+    matching_trigger.local_activation_request_timestamp_us = start + 250'000;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
     ASSERT_TRUE(workers[1]->processPendingForTest());
     const auto coordinated = pushBeliefAndProcess(
@@ -2993,14 +2998,34 @@ TEST(ManeuverSelectionWorker,
         beliefSnapshot(start + 300'000ULL, 500.0, 0.0, 20.0, 0.0));
     EXPECT_TRUE(coordinated.decision.activation_requested);
     EXPECT_TRUE(coordinated.decision.activation_just_started);
+    EXPECT_EQ(coordinated.decision.local_activation_request_timestamp_us, 0U);
     EXPECT_EQ(
         coordinated.decision.ownship_candidate_id,
         commits[1].decision.selected_candidate_ids[1]);
+
+    // Joining alone must not originate a request. A subsequent local unsafe
+    // pair must originate one, without changing the execution episode ID.
+    const auto local_risk = pushBeliefAndProcess(*workers[1],
+        beliefSnapshot(start + 350'000, 5.0, 0.0, 20.0, 0.0));
+    ASSERT_TRUE(local_risk.decision.activation_requested);
+    ASSERT_LT(local_risk.decision.ad_m, 0.0);
+    EXPECT_FALSE(local_risk.decision.activation_just_started);
+    EXPECT_EQ(local_risk.decision.activation_timestamp_us,
+              coordinated.decision.activation_timestamp_us);
+    EXPECT_EQ(local_risk.decision.local_activation_request_timestamp_us,
+              start + 350'000);
+    const auto still_unsafe = pushBeliefAndProcess(*workers[1],
+        beliefSnapshot(start + 400'000, 5.0, 0.0, 20.0, 0.0));
+    ASSERT_TRUE(still_unsafe.decision.activation_requested);
+    ASSERT_LT(still_unsafe.decision.ad_m, 0.0);
+    EXPECT_EQ(still_unsafe.decision.local_activation_request_timestamp_us,
+              local_risk.decision.local_activation_request_timestamp_us);
 }
 
 static void verifyDeferredComponentActivation(
     bool peer_ended, bool lost_edge = false, bool late_active = false,
-    bool stale = false, bool mismatched_tuple = false)
+    bool stale = false, bool mismatched_tuple = false, bool peer_only = false,
+    bool reordered_participation = false)
 {
     constexpr std::uint64_t start = 15'500'000ULL;
     std::array<std::unique_ptr<cs::ManeuverSelectionWorker>, 2> workers;
@@ -3051,6 +3076,8 @@ static void verifyDeferredComponentActivation(
     matching_trigger.activation_requested = true;
     matching_trigger.activation_just_started = !lost_edge;
     matching_trigger.activation_timestamp_us = start + 250'000;
+    matching_trigger.local_activation_request_timestamp_us =
+        peer_only ? 0 : start + 250'000;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
     ASSERT_TRUE(workers[1]->processPendingForTest());
     const auto unavailable = pushBeliefAndProcess(
@@ -3059,6 +3086,7 @@ static void verifyDeferredComponentActivation(
     auto heartbeat = matching_trigger;
     heartbeat.activation_just_started = false;
     heartbeat.activation_requested = !peer_ended;
+    if (reordered_participation) heartbeat.local_activation_request_timestamp_us = 0;
     ++heartbeat.local_selection_epoch;  // Must not relabel the saved event.
     if (stale) heartbeat.proposal_timestamp_us = start - 1'000'000;
     if (mismatched_tuple) {
@@ -3079,14 +3107,18 @@ static void verifyDeferredComponentActivation(
     const auto coordinated = pushBeliefAndProcess(
         *workers[1],
         beliefSnapshot(start + 350'000ULL, 500.0, 0.0, 20.0, 0.0));
-    const bool should_activate = !peer_ended && !stale && !mismatched_tuple;
+    const bool should_activate = !peer_ended && !stale && !mismatched_tuple && !peer_only;
     EXPECT_EQ(coordinated.decision.activation_requested, should_activate);
     EXPECT_EQ(coordinated.decision.activation_just_started, should_activate);
     EXPECT_EQ(
         coordinated.decision.ownship_candidate_id,
         commits[1].decision.selected_candidate_ids[1]);
 
-    if (peer_ended) {
+    if (peer_only) {
+        EXPECT_GT(coordinated.decision.ad_m, 0.0);
+        EXPECT_EQ(coordinated.decision.local_activation_request_timestamp_us, 0U);
+    }
+    if (peer_ended || peer_only) {
         return;
     }
 
@@ -3151,6 +3183,16 @@ TEST(ManeuverSelectionWorker, ComponentActivationRecoveredFromHeartbeatWithoutEd
     verifyDeferredComponentActivation(false, true);
 }
 
+TEST(ManeuverSelectionWorker, PeerParticipationIsNotAnOriginatingRequest)
+{
+    verifyDeferredComponentActivation(false, false, false, false, false, true);
+}
+
+TEST(ManeuverSelectionWorker, ReorderedParticipationDoesNotEraseOriginatingRequest)
+{
+    verifyDeferredComponentActivation(false, false, false, false, false, false, true);
+}
+
 TEST(ManeuverSelectionWorker, EndedComponentEpisodeRejectsLateDuplicateStart)
 {
     verifyDeferredComponentActivation(true, false, true);
@@ -3210,6 +3252,7 @@ TEST(ManeuverSelectionWorker, ComponentEpisodeSurvivesLocalCommitInEitherArrival
         heartbeat.activation_requested = true;
         heartbeat.activation_just_started = false; // periodic status suffices
         heartbeat.activation_timestamp_us = start + 450'000;
+        heartbeat.local_activation_request_timestamp_us = start + 450'000;
         ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
         ASSERT_TRUE(workers[1]->processPendingForTest());
         if (!start_after_commit) {
@@ -3247,13 +3290,24 @@ TEST(ManeuverSelectionWorker, ComponentEpisodeSurvivesLocalCommitInEitherArrival
         const auto duplicate = pushBeliefAndProcess(*workers[1],
             beliefSnapshot(start + 650'000, 500.0, 0.0, 22.0, 0.0));
         EXPECT_FALSE(duplicate.decision.activation_requested);
-        // A genuinely new episode is still eligible after release; this is
-        // not a fixed cooldown or a permanent inhibit.
+        // A later execution start caused by joining another peer is not a
+        // fresh risk request. This used to reopen the released local episode.
         heartbeat.activation_timestamp_us = start + 650'000;
+        heartbeat.local_activation_request_timestamp_us = 0;
         heartbeat.proposal_timestamp_us = start + 650'000;
         ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
-        const auto next_episode = pushBeliefAndProcess(*workers[1],
+        const auto participation = pushBeliefAndProcess(*workers[1],
             beliefSnapshot(start + 700'000, 500.0, 0.0, 22.0, 0.0));
+        EXPECT_FALSE(participation.decision.activation_requested);
+        EXPECT_GT(participation.decision.ad_m, 0.0);
+        // A genuinely new episode is still eligible after release; this is
+        // not a fixed cooldown or a permanent inhibit.
+        // The participant can itself detect risk without restarting execution.
+        heartbeat.local_activation_request_timestamp_us = start + 700'000;
+        heartbeat.proposal_timestamp_us = start + 700'000;
+        ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
+        const auto next_episode = pushBeliefAndProcess(*workers[1],
+            beliefSnapshot(start + 750'000, 500.0, 0.0, 22.0, 0.0));
         EXPECT_TRUE(next_episode.decision.activation_requested);
         EXPECT_TRUE(next_episode.decision.activation_just_started);
     }
@@ -3393,6 +3447,7 @@ TEST(ManeuverSelectionWorker,
     other_component_trigger.activation_requested = true;
     other_component_trigger.activation_just_started = true;
     other_component_trigger.activation_timestamp_us = start + 250'000;
+    other_component_trigger.local_activation_request_timestamp_us = start + 250'000;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, other_component_trigger));
     ASSERT_TRUE(workers[1]->processPendingForTest());
     const auto unaffected = pushBeliefAndProcess(
@@ -3417,6 +3472,7 @@ TEST(FusionInputHistory, UsesPublishedInputForAllCandidateStartingStates)
     ce::TrajectoryPredict predictor(p.predictor_params);
     ce::PredictState state; ce::PredictStateCovariance covariance;
     ASSERT_TRUE(uncertainty.initializeFromEstimatorBelief(b.belief, state, covariance));
+    state.phi_setpoint = 0.0;
     ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
         predictor, actual.input, .152, state, covariance));
     EXPECT_GT(state.phi, 0.0);
@@ -3443,6 +3499,7 @@ TEST(FusionInputHistory, SplitsMeanAndCovarianceAtActualCommandSwitch)
     ce::TrajectoryPredict predictor(p.predictor_params);
     ce::PredictState state; ce::PredictStateCovariance covariance;
     ASSERT_TRUE(uncertainty.initializeFromEstimatorBelief(b.belief, state, covariance));
+    state.phi_setpoint = predictor.rollSetpointAfter(0.0, first.input, .010);
     ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
         predictor, first.input, .070, state, covariance));
     ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
@@ -3493,6 +3550,7 @@ TEST(FusionInputHistory, IgnoresStaleInputAndCoalescesUnchangedPublications)
     ce::TrajectoryPredict predictor(p.predictor_params);
     ce::PredictState state; ce::PredictStateCovariance covariance;
     ASSERT_TRUE(uncertainty.initializeFromEstimatorBelief(b.belief, state, covariance));
+    state.phi_setpoint = predictor.rollSetpointAfter(0.0, actual.input, .100);
     ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
         predictor, actual.input, .152, state, covariance));
     expectPacketInitialState(result, state, covariance);
@@ -3505,6 +3563,22 @@ TEST(FusionInputHistory, UndelayedBeliefNeedsNoCommandHistory)
         worker, beliefSnapshot(1'000'000, 0, 0, 20, 0));
     ASSERT_GT(result.intent_packet_count, 0U);
     EXPECT_FLOAT_EQ(result.intent_packets[0].initial_state[6], 0.0F);
+}
+
+TEST(FusionInputHistory, UndelayedBeliefCarriesContinuingSetpointRamp)
+{
+    auto p=params(); p.exhaustive_test_mode=true;
+    cs::ManeuverSelectionWorker worker(p);
+    const auto first=publishedInput(1'000'000,11.0);
+    ASSERT_TRUE(worker.pushPublishedSetpoint(first));
+    const auto output=pushBeliefAndProcess(worker,beliefSnapshot(1'100'000,0,0,20,0));
+    ASSERT_EQ(output.intent_packet_count,7U);
+    const ce::TrajectoryPredict predictor(p.predictor_params);
+    const double expected=predictor.rollSetpointAfter(0.0,first.input,.1);
+    for (std::size_t i=0;i<output.intent_packet_count;++i) {
+        EXPECT_NEAR(output.intent_packets[i].initial_roll_setpoint_rad,expected,1e-7);
+        EXPECT_FLOAT_EQ(output.intent_packets[i].initial_state[6],0.0F);
+    }
 }
 
 TEST(FusionInputHistory, OverwrittenHistoryCannotBeUsedForAnOlderBelief)
@@ -3576,6 +3650,7 @@ TEST(FusionInputHistory, PeerBurstCannotDropLocalHistoryOrBelief)
         ce::PredictState state;
         ce::PredictStateCovariance covariance;
         ASSERT_TRUE(uncertainty.initializeFromEstimatorBelief(belief.belief, state, covariance));
+        state.phi_setpoint = 0.0;
         ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
             predictor, actual.input, .152, state, covariance));
         expectPacketInitialState(*output, state, covariance);

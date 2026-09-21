@@ -53,10 +53,10 @@ bool ManeuverSelectionWorker::selectedComponentActivationRequested(
             m_remote_decision_caches[aircraft_index];
         if (peer.valid && peer.decision.coordination_qualified
             && peer.decision.activation_requested
-            && peer.decision.activation_timestamp_us
-                > peer.activation_consumed_through_us
-            && peer.decision.activation_timestamp_us
-                > peer.activation_ended_through_us
+            && peer.decision.local_activation_request_timestamp_us
+                > peer.local_activation_request_consumed_through_us
+            && peer.decision.local_activation_request_timestamp_us
+                <= m_latest_state_timestamp_us
             && peer.decision.proposal_timestamp_us != 0
             && peer.decision.proposal_timestamp_us <= m_latest_state_timestamp_us
             && m_latest_state_timestamp_us - peer.decision.proposal_timestamp_us
@@ -660,10 +660,12 @@ void ManeuverSelectionWorker::updateActivationState(
         // semantics separate allows the coordinated V4 tuple to be refreshed
         // instead of being frozen for the AMAC active duration.
         m_activation_controller.reset();
+        m_local_activation_request_timestamp_us = 0;
         m_latest_selection_decision.activation_requested = false;
         m_latest_selection_decision.activation_just_started = false;
         m_latest_selection_decision.activation_just_ended = false;
         m_latest_selection_decision.activation_timestamp_us = 0;
+        m_latest_selection_decision.local_activation_request_timestamp_us = 0;
         m_latest_selection_decision.deactivation_reason =
             ManeuverDeactivationReason::None;
         if (m_params.execution_policy
@@ -684,10 +686,12 @@ void ManeuverSelectionWorker::updateActivationState(
 
     if (v4CutoverMode() && !m_selected_v4_cutover) {
         m_activation_controller.reset();
+        m_local_activation_request_timestamp_us = 0;
         m_latest_selection_decision.activation_requested = false;
         m_latest_selection_decision.activation_just_started = false;
         m_latest_selection_decision.activation_just_ended = false;
         m_latest_selection_decision.activation_timestamp_us = 0;
+        m_latest_selection_decision.local_activation_request_timestamp_us = 0;
         m_latest_selection_decision.deactivation_reason =
             ManeuverDeactivationReason::None;
         if (force_decision_output) {
@@ -699,10 +703,12 @@ void ManeuverSelectionWorker::updateActivationState(
 
     if (!m_activation_enabled.load(std::memory_order_acquire)) {
         m_activation_controller.reset();
+        m_local_activation_request_timestamp_us = 0;
         m_latest_selection_decision.activation_requested = false;
         m_latest_selection_decision.activation_just_started = false;
         m_latest_selection_decision.activation_just_ended = false;
         m_latest_selection_decision.activation_timestamp_us = 0;
+        m_latest_selection_decision.local_activation_request_timestamp_us = 0;
         m_latest_selection_decision.deactivation_reason =
             ManeuverDeactivationReason::None;
         if (force_decision_output) {
@@ -816,6 +822,16 @@ void ManeuverSelectionWorker::updateActivationState(
     }
     const ManeuverActivationStatus status =
         m_activation_controller.update(sample);
+    if (status.just_activated) {
+        m_local_activation_request_timestamp_us = 0;
+    }
+    if (status.active && local_activation_trigger
+        && m_local_activation_request_timestamp_us == 0) {
+        // Originate once, including when a peer-only participant later
+        // encounters a local unsafe pair. Never relay a peer's request as a
+        // fresh one, nor refresh this token on heartbeats or maneuver changes.
+        m_local_activation_request_timestamp_us = now_us;
+    }
     if (m_selected_component_graph && (status.active || status.just_deactivated)) {
         const auto component_mask =
             selectedComponentMemberMask(activation_ownship_index);
@@ -827,16 +843,16 @@ void ManeuverSelectionWorker::updateActivationState(
             // Consume only when actually participating, not merely when a
             // sample happened to be valid. An epoch change cannot drop intent.
             if ((component_mask & (std::uint32_t{1} << index)) != 0U) {
-                peer.activation_consumed_through_us = std::max(
-                    peer.activation_consumed_through_us,
-                    peer.decision.activation_timestamp_us);
+                peer.local_activation_request_consumed_through_us = std::max(
+                    peer.local_activation_request_consumed_through_us,
+                    peer.decision.local_activation_request_timestamp_us);
             }
             if (status.just_deactivated) {
                 // Release already requires fresh safe post-release reports
                 // from all peers. Retire earlier starts in each sender's own
                 // clock domain so late heartbeats cannot undo that release.
-                peer.activation_consumed_through_us = std::max(
-                    peer.activation_consumed_through_us,
+                peer.local_activation_request_consumed_through_us = std::max(
+                    peer.local_activation_request_consumed_through_us,
                     peer.decision.post_release_evaluation_timestamp_us);
             }
         }
@@ -845,6 +861,8 @@ void ManeuverSelectionWorker::updateActivationState(
     decision.activation_just_started = status.just_activated;
     decision.activation_just_ended = status.just_deactivated;
     decision.activation_timestamp_us = status.activation_timestamp_us;
+    decision.local_activation_request_timestamp_us =
+        m_local_activation_request_timestamp_us;
     decision.deactivation_reason = status.deactivation_reason;
     if (!status.active) {
         m_safe_rejoin_active = false;

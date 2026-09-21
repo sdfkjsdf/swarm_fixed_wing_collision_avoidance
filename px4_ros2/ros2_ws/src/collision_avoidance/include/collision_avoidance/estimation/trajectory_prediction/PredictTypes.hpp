@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <limits>
 
 /* ═══════════════════════════════════════════════════════════════
    PredictTypes.hpp — trajectory prediction 알고리즘 입출력 POD 정의
@@ -23,7 +24,7 @@
 namespace collision_avoidance::estimation
 {
 
-/* §2.1 — 7-state, 56 byte = 1 cache line.
+/* Seven uncertain flight states plus a deterministic command-filter state.
    ★ PATCH (2026-05-11): 마지막 변수 a_lat → phi (롤각 [rad]).
        Beard-McLain (9.19) 정형 모델로 전환. 외부 PredictInput 은 그대로
        a_lat_cmd 받음 (stepRK4 진입 시 atan2 로 phi_cmd 변환). */
@@ -35,9 +36,12 @@ struct PredictState {
     double psi;     /* [rad]  ground course, wrapped to [-pi, pi]      */
     double h_dot;   /* [m/s]  current climb rate (autopilot tracking)  */
     double phi;     /* [rad]  current roll angle (autopilot tracking)  */
+    // Conditioned on published inputs, not an eighth EKF uncertainty state.
+    // NaN initializes an isolated prediction at the current measured roll.
+    double phi_setpoint{std::numeric_limits<double>::quiet_NaN()};
 };
-static_assert(sizeof(PredictState) == 56,
-              "PredictState must remain a single cache line (56B / 64B).");
+static_assert(sizeof(PredictState) == 64,
+              "PredictState must remain a single 64-byte cache line.");
 
 /* §2.2 — 4-input (★ 본 작업: h_cmd 추가, Beard-McLain (9.19) PD 형태). */
 struct PredictInput {
@@ -58,6 +62,7 @@ struct PredictParams {
                                       roll setpoint -> measured roll, using
                                       FW_R_TC only as the outer-loop anchor */
     double phi_rate_max = 1.2217304763960306; /* FW_R_RMAX = 70 deg/s [rad/s] */
+    double phi_setpoint_rate_max = 1.5707963267948966; /* FW_PN_R_SLEW_MAX = 90 deg/s */
 
     /* ★ 신규 — 종 채널 PD 의 altitude P 게인 [1/s].
        collision_avoidance::FlockingGuidance 의 alt_hold_p_gain 과 등가.

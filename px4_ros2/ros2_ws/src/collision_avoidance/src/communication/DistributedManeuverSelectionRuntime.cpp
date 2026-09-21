@@ -183,6 +183,8 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                         message->activation_just_started;
                     decision.activation_timestamp_us =
                         message->activation_timestamp_us;
+                    decision.local_activation_request_timestamp_us =
+                        message->local_activation_request_timestamp_us;
                     decision.command_execution_requested =
                         message->command_execution_requested;
                     decision.nominal_setpoint_available =
@@ -551,6 +553,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.reciprocal_cost_sum);
                 message.activation_timestamp_us =
                     decision.activation_timestamp_us;
+                message.local_activation_request_timestamp_us =
+                    decision.local_activation_request_timestamp_us;
                 message.deactivation_reason = static_cast<std::uint8_t>(
                     decision.deactivation_reason);
                 message.coordination_qualified =

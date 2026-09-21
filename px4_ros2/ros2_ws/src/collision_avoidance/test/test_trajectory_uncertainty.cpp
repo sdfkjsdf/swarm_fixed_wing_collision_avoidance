@@ -59,3 +59,35 @@ TEST(TrajectoryUncertainty, RejectsNonFiniteBelief)
     ce::PredictStateCovariance covariance;
     EXPECT_FALSE(uncertainty.initializeFromEstimatorBelief(belief, state, covariance));
 }
+
+TEST(TrajectoryUncertainty, HoldsCommandFilterFixedInFlightStateJacobian)
+{
+    ce::UncertaintyParams uncertainty_params;
+    uncertainty_params.process_noise_diagonal.fill(0.0);
+    ce::TrajectoryUncertainty uncertainty(uncertainty_params);
+    ce::PredictParams params;
+    ce::TrajectoryPredict predictor(params);
+    ce::PredictState state{0,0,100,20,0,0,.1};
+    state.phi_setpoint=.4;
+    ce::PredictStateCovariance covariance{};
+    covariance[48]=.0001;
+    ce::PredictInput input{20,100,0,-5};
+    ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(predictor,input,.1,state,covariance));
+    EXPECT_NEAR(covariance[48],.0001*std::exp(-.2/params.tau_phi),2e-9);
+    EXPECT_NEAR(state.phi_setpoint,.4-params.phi_setpoint_rate_max*.1,1e-12);
+}
+
+TEST(TrajectoryUncertainty, ImplicitSeedIsConditionedOnTheUnperturbedMean)
+{
+    ce::TrajectoryUncertainty uncertainty;
+    ce::TrajectoryPredict predictor(ce::PredictParams{});
+    ce::PredictState implicit{0,0,100,20,0,0,.1};
+    auto explicit_seed=implicit;
+    explicit_seed.phi_setpoint=implicit.phi;
+    ce::PredictStateCovariance a{}, b{};
+    a[48]=b[48]=.0001;
+    ce::PredictInput input{20,100,0,5};
+    ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(predictor,input,.1,implicit,a));
+    ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(predictor,input,.1,explicit_seed,b));
+    for (std::size_t k=0;k<a.size();++k) EXPECT_DOUBLE_EQ(a[k],b[k]);
+}

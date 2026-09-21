@@ -37,6 +37,7 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
     source.candidate_input_revision = 123456789012345ULL;
     source.nominal_lateral_acceleration_mps2 = 1.75F;
     source.safe_rejoin_requested = true;
+    source.initial_roll_setpoint_rad = -0.42F;
     for (std::size_t index = 0; index < source.initial_state.size(); ++index) {
         source.initial_state[index] = static_cast<float>(index) + 0.25F;
     }
@@ -68,6 +69,7 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
         source.nominal_lateral_acceleration_mps2);
     EXPECT_EQ(received.safe_rejoin_requested, source.safe_rejoin_requested);
     EXPECT_EQ(received.initial_state, source.initial_state);
+    EXPECT_FLOAT_EQ(received.initial_roll_setpoint_rad, source.initial_roll_setpoint_rad);
     EXPECT_EQ(received.initial_covariance, source.initial_covariance);
     EXPECT_FLOAT_EQ(
         received.compressed_mean.pos_t0.x,
