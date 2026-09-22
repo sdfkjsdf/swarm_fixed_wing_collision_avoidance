@@ -270,7 +270,8 @@ bool ManeuverSelectionWorker::buildCurrentIntentSet(
     return true;
 }
 
-void ManeuverSelectionWorker::submitSelectionEvaluation(std::uint64_t now_us)
+void ManeuverSelectionWorker::submitSelectionEvaluation(
+    std::uint64_t now_us, ManeuverSelectionWorkerOutput & output)
 {
     const auto begin = m_stopped_stage_timing ? StoppedStageTiming::now() : 0;
     auto * available = m_evaluation_worker.beginRequest();
@@ -351,6 +352,23 @@ void ManeuverSelectionWorker::submitSelectionEvaluation(std::uint64_t now_us)
 
     if (request.complete)
         request.complete = constrainV4ActiveAircraftCandidates(candidate_sets, candidate_counts);
+    if (m_params.interaction_graph_params.enabled
+        && !m_selection_inputs_initialized && !request.complete) {
+        // An incomplete first epoch is readiness collection, not a search job.
+        // Keep publishing trajectories on the normal schedule; do not admit
+        // late/foreign-epoch candidates or move the shared cutoff. beginRequest
+        // only borrows idle storage: without submit no evaluator owns it.
+        ManeuverEvaluationResult waiting;
+        waiting.graph = request.graph;
+        waiting.graph.graph.status = InteractionGraphStatus::InvalidCertification;
+        waiting.graph.graph.evaluation_timestamp_us = now_us;
+        waiting.graph.graph.selection_epoch = request.epoch;
+        waiting.graph.graph.aircraft_count = request.aircraft_count;
+        waiting.graph.status =
+            InteractionGraphEvaluationStatus::StartupWaitingForCandidates;
+        applySelectionEvaluation(request, waiting, output);
+        return;
+    }
     if (m_stopped_stage_timing) {
         m_selection_snapshot_timing = StageTimingRecord{
             now_us, request.epoch, m_params.candidate_refresh_period_us,
@@ -358,6 +376,7 @@ void ManeuverSelectionWorker::submitSelectionEvaluation(std::uint64_t now_us)
             static_cast<std::uint8_t>(activeCandidateCount()), request.complete, false};
     }
     m_evaluation_worker.submit();
+    m_selection_inputs_initialized |= request.complete;
     ++m_selection_submitted;
 }
 
@@ -379,7 +398,7 @@ bool ManeuverSelectionWorker::consumeSelectionEvaluation(
     if (expired) {
         ++m_selection_expired;
     } else {
-        applySelectionEvaluation(*task, output);
+        applySelectionEvaluation(request, result, output);
         ++m_selection_completed;
     }
     if (m_stopped_stage_timing) {
@@ -400,10 +419,9 @@ bool ManeuverSelectionWorker::consumeSelectionEvaluation(
 }
 
 void ManeuverSelectionWorker::applySelectionEvaluation(
-    const ManeuverEvaluationTask & task, ManeuverSelectionWorkerOutput & output)
+    const ManeuverEvaluationRequest & request,
+    const ManeuverEvaluationResult & result, ManeuverSelectionWorkerOutput & output)
 {
-    const auto & request = task.request;
-    const auto & result = task.result;
     const auto now_us = request.timestamp_us;
     const auto & candidate_sets = request.candidates;
     const auto & candidate_counts = request.counts;

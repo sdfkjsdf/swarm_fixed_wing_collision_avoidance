@@ -168,6 +168,9 @@ def interaction_graph_summary(messages, start_ns):
     incomplete = [
         message for message in records
         if int(message.evaluation_status) == 2]
+    startup_wait = [
+        message for message in records
+        if int(message.evaluation_status) == 7]
     missing_candidate_aircraft = Counter()
     observed_candidate_counts = {
         vehicle: Counter() for vehicle in range(AIRCRAFT_COUNT)}
@@ -208,6 +211,10 @@ def interaction_graph_summary(messages, start_ns):
                 int(message.evaluation_status)
                 for message in records).items())},
         "candidate_sets_incomplete_count": len(incomplete),
+        "startup_waiting_for_candidates_count": len(startup_wait),
+        "startup_waiting_evaluation_times_s": sorted({
+            (int(message.evaluation_timestamp_us) * 1000 - start_ns) * 1.0e-9
+            for message in startup_wait}),
         "missing_candidate_aircraft_counts": {
             str(vehicle): missing_candidate_aircraft[vehicle]
             for vehicle in range(AIRCRAFT_COUNT)},
@@ -446,6 +453,40 @@ def intent_records(messages):
         messages.get(f"/common/px4_{vehicle}/trajectory_intent", [])
         for vehicle in range(AIRCRAFT_COUNT)
     ]
+
+
+def startup_readiness_summary(messages, start_ns):
+    """Readiness is peer-confirmed selection, not a candidate or proposal.
+
+    Use the existing decision stream; add no live instrumentation. These are
+    receiver observation times, not PX4 execution times. Include pre-start
+    records so an already-ready node is not reported as just initialized.
+    """
+    nodes = []
+    for vehicle in range(AIRCRAFT_COUNT):
+        rows = sorted(messages.get(
+            f"/common/px4_{vehicle}/maneuver_selection_decision", []),
+            key=lambda row: row[0])
+        def first_time(field):
+            return next(((stamp - start_ns) * 1.0e-9 for stamp, message in rows
+                         if bool(getattr(message, field))), None)
+        nodes.append({
+            "vehicle_id": vehicle,
+            "first_valid_proposal_observed_s": first_time("proposal_valid"),
+            "first_qualified_observed_s": first_time("coordination_qualified"),
+            "unqualified_execution_request_count": sum(
+                bool(message.command_execution_requested)
+                and not bool(message.coordination_qualified)
+                for _, message in rows),
+        })
+    ready_times = [node["first_qualified_observed_s"] for node in nodes]
+    return {
+        "basis": "existing decision receipt time relative to common Formation start",
+        "ready_definition": "first peer-confirmed selection; not a guarantee that the selected tuple is safe",
+        "vehicles": nodes,
+        "last_node_first_qualified_observed_s": (
+            max(ready_times) if all(t is not None for t in ready_times) else None),
+    }
 
 
 def decision_summary(decisions):
@@ -1706,6 +1747,7 @@ def analyze(args):
         "final_position_standard_deviation_m": float(position_sigma[-1]),
         "final_velocity_standard_deviation_mps": float(velocity_sigma[-1]),
         "decision_diagnostics": decision_summary(decisions),
+        "startup_readiness": startup_readiness_summary(messages, int(grid_ns[0])),
         "communication_delay_diagnostics": communication_delay_summary(
             decisions),
         "v4_shadow_diagnostics": v4_shadow_summary(decisions),

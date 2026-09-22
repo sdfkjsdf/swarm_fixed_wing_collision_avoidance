@@ -443,7 +443,7 @@ bool ManeuverSelectionWorker::processPending(
         const std::uint64_t common_evaluation_timestamp_us =
             m_epoch_generation_timestamp_us
             + m_params.coordination_delay_us;
-        submitSelectionEvaluation(common_evaluation_timestamp_us);
+        submitSelectionEvaluation(common_evaluation_timestamp_us, output);
         if (run_selection_inline) {
             m_evaluation_worker.processOneForTest();
             selection_completed |= consumeSelectionEvaluation(due_time_us, output);

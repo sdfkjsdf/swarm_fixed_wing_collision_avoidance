@@ -1,7 +1,7 @@
 """Offline-only regression: a missing commit must not disappear in intersection."""
 import unittest
 from types import SimpleNamespace
-from analyze_point_convergence_bag import decision_consensus_summary
+from analyze_point_convergence_bag import decision_consensus_summary, startup_readiness_summary
 
 
 def decision(epoch):
@@ -29,6 +29,42 @@ class CommitCoverageTest(unittest.TestCase):
         result = decision_consensus_summary([[] for _ in range(5)], [])
         self.assertIsNone(result['all_vehicle_commit_coverage_ratio'])
         self.assertIsNone(result['observed_first_commit_spread_ms']['max'])
+
+    def test_startup_proposal_does_not_mean_ready(self):
+        rows = {}
+        for v in range(5):
+            rows[f'/common/px4_{v}/maneuver_selection_decision'] = [
+                (1_100_000_000, SimpleNamespace(proposal_valid=False,
+                    coordination_qualified=False, command_execution_requested=False)),
+                (1_500_000_000, SimpleNamespace(proposal_valid=True,
+                    coordination_qualified=False, command_execution_requested=False)),
+            ]
+        result = startup_readiness_summary(rows, 1_000_000_000)
+        self.assertIsNone(result['last_node_first_qualified_observed_s'])
+        for node in result['vehicles']:
+            self.assertAlmostEqual(node['first_valid_proposal_observed_s'], 0.5)
+            self.assertIsNone(node['first_qualified_observed_s'])
+        for v in range(5):
+            rows[f'/common/px4_{v}/maneuver_selection_decision'].append(
+                (1_520_000_000 + v * 1_000_000, SimpleNamespace(proposal_valid=True,
+                    coordination_qualified=True, command_execution_requested=False)))
+        result = startup_readiness_summary(rows, 1_000_000_000)
+        self.assertAlmostEqual(result['last_node_first_qualified_observed_s'], .524)
+        self.assertTrue(all(n['unqualified_execution_request_count'] == 0
+                            for n in result['vehicles']))
+
+    def test_missing_readiness_and_unauthorized_request_are_not_hidden(self):
+        self.assertIsNone(startup_readiness_summary({}, 1)['last_node_first_qualified_observed_s'])
+        result = startup_readiness_summary({
+            '/common/px4_0/maneuver_selection_decision': [
+                (10, SimpleNamespace(proposal_valid=True, coordination_qualified=False,
+                                     command_execution_requested=True)),
+                (20, SimpleNamespace(proposal_valid=True, coordination_qualified=True,
+                                     command_execution_requested=False)),
+            ]}, 30)
+        self.assertEqual(result['vehicles'][0]['unqualified_execution_request_count'], 1)
+        self.assertLess(result['vehicles'][0]['first_qualified_observed_s'], 0)
+        self.assertIsNone(result['last_node_first_qualified_observed_s'])
 
 
 if __name__ == '__main__':

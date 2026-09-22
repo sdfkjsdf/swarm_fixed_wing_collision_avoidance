@@ -3130,22 +3130,28 @@ TEST(ManeuverSelectionWorker, ExhaustiveTestModeEvaluatesAllFiveAircraftRollTupl
 }
 
 TEST(ManeuverSelectionWorker,
-    InteractionGraphReportsWhichCandidateLibraryIsIncomplete)
+    InteractionGraphWaitsForInitialLibraryWithoutSubmittingSearch)
 {
     constexpr std::uint64_t start = 13'750'000ULL;
     auto worker_params = params(0, 2);
     worker_params.exhaustive_test_mode = true;
     worker_params.interaction_graph_params.enabled = true;
     worker_params.masd_diagnostics_enabled = true;
+    worker_params.stopped_stage_timing_enabled = true;
     cs::ManeuverSelectionWorker worker(worker_params);
     ASSERT_TRUE(worker.pushNominalSetpoint(nominalSnapshot(start)));
 
     const auto first_output = pushGraphBeliefAndProcess(
         worker, beliefSnapshot(start, 0.0, 0.0, 20.0, 0.0));
     ASSERT_EQ(first_output.intent_packet_count, 7U);
-    static_cast<void>(pushGraphBeliefAndProcess(
+    const auto waiting = pushGraphBeliefAndProcess(
         worker,
-        beliefSnapshot(start + 250'000ULL, 5.0, 0.0, 20.0, 0.0)));
+        beliefSnapshot(start + 250'000ULL, 5.0, 0.0, 20.0, 0.0));
+    ASSERT_TRUE(waiting.has_decision);
+    EXPECT_EQ(waiting.intent_packet_count, 7U);
+    EXPECT_FALSE(waiting.decision.proposal_valid);
+    EXPECT_FALSE(waiting.decision.coordination_qualified);
+    EXPECT_FALSE(waiting.decision.command_execution_requested);
 
     const auto diagnostics_message =
         worker.stoppedGraphDiagnostics();
@@ -3154,12 +3160,63 @@ TEST(ManeuverSelectionWorker,
     const auto & diagnostics = diagnostics_message->records[diagnostics_message->size - 1].value;
     EXPECT_EQ(
         diagnostics.status,
-        cs::InteractionGraphEvaluationStatus::CandidateSetsIncomplete);
+        cs::InteractionGraphEvaluationStatus::StartupWaitingForCandidates);
+    EXPECT_FALSE(diagnostics.component_search_evaluated);
+    EXPECT_EQ(diagnostics.assembled_candidate_valid_mask, 0U);
     EXPECT_EQ(diagnostics.candidate_ready_mask, 0b01U);
     EXPECT_EQ(diagnostics.candidate_counts[0], 7U);
     EXPECT_EQ(diagnostics.candidate_counts[1], 0U);
     EXPECT_GT(diagnostics.candidate_source_timestamps_us[0], 0U);
     EXPECT_EQ(diagnostics.dropped_remote_intent_count, 0U);
+    std::ostringstream timing;
+    worker.stopAndWriteStageTiming(timing);
+    EXPECT_NE(timing.str().find("[stop-selection-worker],0,0,0,0,0\n"), std::string::npos);
+}
+
+TEST(ManeuverSelectionWorker, LateStartupKeepsCutoffAndRequiresPeerCommit)
+{
+    auto p = params();
+    p.exhaustive_test_mode = true;
+    p.interaction_graph_params.enabled = true;
+    p.masd_diagnostics_enabled = true;
+    cs::ManeuverSelectionWorker local(p);
+    p.vehicle_id = 1;
+    cs::ManeuverSelectionWorker peer(p);
+    constexpr std::uint64_t start = 4'000'000;
+    // Local's first library is past this epoch's 100 ms source cutoff.
+    auto other = pushGraphBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+    auto own = pushGraphBeliefAndProcess(local, beliefSnapshot(start + 150'000, 3, 0, 20, 0));
+    exchangePackets(local, peer, own, other);
+    own = pushGraphBeliefAndProcess(local, beliefSnapshot(start + 250'000, 5, 0, 20, 0));
+    other = pushGraphBeliefAndProcess(peer, beliefSnapshot(start + 250'000, 1005, 0, 20, 0));
+    for (auto * worker : {&local, &peer}) {
+        const auto * records = worker->stoppedGraphDiagnostics();
+        ASSERT_NE(records, nullptr);
+        ASSERT_GT(records->size, 0U);
+        const auto & graph = records->records[records->size - 1].value;
+        EXPECT_EQ(graph.status, cs::InteractionGraphEvaluationStatus::StartupWaitingForCandidates);
+        EXPECT_EQ(graph.candidate_ready_mask, 0b10U);
+        EXPECT_EQ(graph.candidate_counts[0], 7U); // present, but not eligible
+    }
+    EXPECT_FALSE(own.decision.coordination_qualified);
+    EXPECT_FALSE(other.decision.coordination_qualified);
+    // No extra startup frame: the very next complete common epoch is evaluated.
+    exchangePackets(local, peer, own, other);
+    own = pushGraphBeliefAndProcess(local, beliefSnapshot(start + 500'000, 10, 0, 20, 0));
+    other = pushGraphBeliefAndProcess(peer, beliefSnapshot(start + 500'000, 1010, 0, 20, 0));
+    ASSERT_TRUE(own.decision.proposal_valid);
+    ASSERT_TRUE(other.decision.proposal_valid);
+    EXPECT_EQ(own.decision.proposal_epoch, (start + 250'000) / 250'000);
+    EXPECT_EQ(own.decision.proposal_timestamp_us, start + 500'000);
+    EXPECT_FALSE(own.decision.coordination_qualified);
+    EXPECT_FALSE(own.decision.command_execution_requested);
+    ASSERT_TRUE(local.pushRemoteDecision(1, peerDecision(other.decision)));
+    ASSERT_TRUE(local.processPendingForTest());
+    const auto confirmed = local.tryPopOutput();
+    ASSERT_TRUE(confirmed);
+    EXPECT_TRUE(confirmed->decision.coordination_qualified);
+    EXPECT_TRUE(confirmed->decision.proposal_consensus_confirmed);
+    EXPECT_FALSE(confirmed->decision.command_execution_requested); // far apart
 }
 
 TEST(ManeuverSelectionWorker,

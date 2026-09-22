@@ -103,6 +103,9 @@ enum class InteractionGraphEvaluationStatus : std::uint8_t
     ComponentEvaluationFailed,
     GlobalCrosscheckFailed,
     Evaluated,
+    // No complete common-epoch library has been available since startup.
+    // Not an evaluated graph and not permission to execute a maneuver.
+    StartupWaitingForCandidates,
 };
 
 struct InteractionGraphDiagnostics

@@ -721,11 +721,13 @@ private:
         ManeuverSelectionWorkerOutput & output);
 
     // Current legacy candidate-set evaluation.
-    void submitSelectionEvaluation(std::uint64_t now_us);
+    void submitSelectionEvaluation(std::uint64_t now_us,
+                                   ManeuverSelectionWorkerOutput & output);
     bool consumeSelectionEvaluation(std::uint64_t now_us,
                                     ManeuverSelectionWorkerOutput & output);
     void applySelectionEvaluation(
-        const ManeuverEvaluationTask & task,
+        const ManeuverEvaluationRequest & request,
+        const ManeuverEvaluationResult & result,
         ManeuverSelectionWorkerOutput & output);
 
     // Interaction-graph component search and diagnostics.
@@ -852,6 +854,9 @@ private:
     RemoteTrajectoryWorker m_remote_trajectory_worker;
     std::atomic<std::uint64_t> m_selection_submitted{0}, m_selection_completed{0};
     std::atomic<std::uint64_t> m_selection_busy{0}, m_selection_expired{0};
+    // Owner-thread latch: later input loss is not reclassified as startup.
+    // Execution readiness remains m_has_selected_combination (peer commit).
+    bool m_selection_inputs_initialized{false};
     std::optional<StageTimingRecord> m_completed_selection_timing;
     std::optional<StageTimingRecord> m_selection_snapshot_timing;
     std::optional<StageTimingRecord> m_selection_apply_timing;
