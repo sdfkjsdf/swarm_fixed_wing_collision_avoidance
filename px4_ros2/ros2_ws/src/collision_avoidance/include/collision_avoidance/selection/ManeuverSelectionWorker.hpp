@@ -684,6 +684,8 @@ private:
     bool acceptOwnshipBelief(const ManeuverSelectionBeliefSnapshot & snapshot);
     bool acceptPublishedSetpoint(
         const ManeuverSelectionPublishedSetpointSnapshot & snapshot);
+    bool publishedInputAt(std::uint64_t timestamp_us,
+        estimation::PredictInput & input) const noexcept;
     bool compensateUsingPublishedInputs(
         std::uint64_t start_us, std::uint64_t end_us,
         estimation::PredictState & state,
@@ -784,6 +786,7 @@ private:
         std::array<std::size_t, kMaximumSelectionAircraft> counts{};
         bool attempted{false};
         bool valid{false};
+        bool ownship_transition_safe{false};
     };
     bool buildNominalIntentSet(
         std::uint64_t now_us,

@@ -63,6 +63,57 @@ TEST(TrajectoryIntent, BuildsRequiredRollCandidateLookup)
         1.0e-12);
 }
 
+TEST(TrajectoryIntent, AlignsStateAndCovarianceUsingPublishedInputNotCandidate)
+{
+    ce::TrajectoryPredict predictor(ce::PredictParams{});
+    ce::TrajectoryUncertainty uncertainty;
+    const auto table = ce::makeLevelTurnCandidateTable(20,100);
+    ce::TrajectoryIntentSender sender(predictor,table);
+    ce::TrajectoryIntentReceiver receiver(predictor);
+    ce::PredictState initial{0,0,100,20,0,0,.25};
+    initial.phi_setpoint = .4;
+    ce::TrajectoryIntentPacket packet;
+    ASSERT_TRUE(sender.buildForSelectedCandidate(1'000'000,0,initial,
+        diagonalCovariance(.04),packet));
+    packet.source_execution_input = {19,100,0,8};
+    packet.source_execution_input_available = true;
+    ce::ReceivedTrajectoryIntent received;
+    ASSERT_TRUE(receiver.receive(packet,received));
+    auto expected_state = received.cone.front().mean;
+    auto expected_covariance = received.cone.front().state_covariance;
+    ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(predictor,
+        received.source_execution_input,.2,expected_state,expected_covariance));
+    ce::PredictState aligned{};
+    ce::PredictStateCovariance covariance{};
+    ASSERT_TRUE(receiver.executionStateAt(received,1'200'000,aligned,covariance));
+    EXPECT_DOUBLE_EQ(aligned.p_n,expected_state.p_n);
+    EXPECT_DOUBLE_EQ(aligned.p_e,expected_state.p_e);
+    EXPECT_DOUBLE_EQ(aligned.phi,expected_state.phi);
+    EXPECT_DOUBLE_EQ(aligned.phi_setpoint,expected_state.phi_setpoint);
+    for (std::size_t i=0;i<covariance.size();++i)
+        EXPECT_NEAR(covariance[i],expected_covariance[i],1e-10);
+    EXPECT_GT(aligned.phi,received.cone[2].mean.phi);
+
+    // A new future command begins at the aligned state, never before it.
+    ce::TrajectoryIntentPacket rejoin;
+    ASSERT_TRUE(sender.buildForCandidateInput(1'200'000,3,{20,100,0,-4},
+        aligned,covariance,rejoin));
+    EXPECT_FLOAT_EQ(rejoin.initial_state[0],static_cast<float>(aligned.p_n));
+    EXPECT_FLOAT_EQ(rejoin.initial_state[1],static_cast<float>(aligned.p_e));
+    EXPECT_FALSE(receiver.executionStateAt(received,999'999,aligned,covariance));
+    EXPECT_FALSE(receiver.executionStateAt(received,2'000'001,aligned,covariance));
+
+    // Missing/invalid auxiliary input blocks extrapolation, not the candidates.
+    packet.source_execution_input_available = false;
+    ASSERT_TRUE(receiver.receive(packet,received));
+    EXPECT_FALSE(receiver.executionStateAt(received,1'200'000,aligned,covariance));
+    EXPECT_TRUE(receiver.executionStateAt(received,1'000'000,aligned,covariance));
+    packet.source_execution_input_available = true;
+    packet.source_execution_input[3] = std::numeric_limits<float>::quiet_NaN();
+    ASSERT_TRUE(receiver.receive(packet,received));
+    EXPECT_FALSE(receiver.executionStateAt(received,1'200'000,aligned,covariance));
+}
+
 TEST(TrajectoryIntent, SharesTheCommandFilterSeedNotTheActualRoll)
 {
     ce::TrajectoryPredict predictor(ce::PredictParams{});

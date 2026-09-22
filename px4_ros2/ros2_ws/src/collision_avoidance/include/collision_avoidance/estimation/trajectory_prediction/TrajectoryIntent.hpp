@@ -69,6 +69,10 @@ struct TrajectoryIntentPacket
     std::array<float, kTrajectoryIntentInputDimension> candidate_input{};
     // Deterministic identity of candidate_id + transmitted float32 input.
     std::uint64_t candidate_input_revision{0};
+    // Last locally published control held at source_timestamp_us, NOT the
+    // hypothetical candidate. This is not an acknowledgement from PX4.
+    std::array<float, kTrajectoryIntentInputDimension> source_execution_input{};
+    bool source_execution_input_available{false};
     // Formation command and rejoin request captured with this candidate
     // library revision. They make the component-selection objective part of
     // the same frozen, distributed snapshot as the seven trajectories.
@@ -88,6 +92,8 @@ struct ReceivedTrajectoryIntent
     CandidateSetKind candidate_set_kind{CandidateSetKind::LegacyRoll};
     PredictInput candidate_input{};
     std::uint64_t candidate_input_revision{0};
+    PredictInput source_execution_input{};
+    bool source_execution_input_available{false};
     double nominal_lateral_acceleration_mps2{
         std::numeric_limits<double>::quiet_NaN()};
     bool safe_rejoin_requested{false};
@@ -139,6 +145,15 @@ public:
     bool receive(
         const TrajectoryIntentPacket & packet,
         ReceivedTrajectoryIntent & received);
+
+    // Extrapolate the source state/covariance under the reported held control
+    // before starting a new hypothetical maneuver. Unreported input switches
+    // during transport remain prediction uncertainty, not observed history.
+    bool executionStateAt(
+        const ReceivedTrajectoryIntent & intent,
+        std::uint64_t timestamp_us,
+        PredictState & state,
+        PredictStateCovariance & covariance) const;
 
 private:
     TrajectoryPredict m_predictor;

@@ -45,9 +45,15 @@ inline std::uint64_t assembledCandidateHash(
 } // namespace
 
 ManeuverEvaluationWorker::ManeuverEvaluationWorker(
-    const ManeuverCombinationEvaluatorParams & evaluator, const InteractionGraphParams & graph)
+    const ManeuverCombinationEvaluatorParams & evaluator, const InteractionGraphParams & graph,
+    const estimation::PredictParams & predictor, const estimation::UncertaintyParams & uncertainty)
 : m_graph_params(graph), m_joint(evaluator), m_exhaustive(evaluator),
   m_pairwise(evaluator), m_graph_builder(graph),
+  m_sender(estimation::TrajectoryPredict(predictor), {}),
+  m_receiver(estimation::TrajectoryPredict(predictor), uncertainty),
+  m_stale_timeout_s(evaluator.stale_timeout_s),
+  m_evaluation_candidates(graph.enabled
+      ? std::make_unique<MultiAircraftExhaustiveCandidateIntentSets>() : nullptr),
   m_task(std::make_unique<ManeuverEvaluationTask>())
 {
 }
@@ -203,7 +209,23 @@ void ManeuverEvaluationWorker::evaluateGraph()
 
         return;
     }
-    const auto & certified_candidate_sets = request.candidates;
+    // Advancing an old hypothetical candidate along itself credits the new
+    // command with execution BEFORE it was selected. First advance the common
+    // source state/P under the reported held control, then start every candidate
+    // at the evaluation timestamp. Do this once per library, not per pair.
+    // No added application delay or distance margin is introduced here.
+    if (!rebuildGraphLibraryAtEvaluationTime()) {
+        diagnostics.graph.status = InteractionGraphStatus::InvalidCertification;
+        diagnostics.graph.evaluation_timestamp_us = now_us;
+        diagnostics.graph.selection_epoch = request.epoch;
+        diagnostics.graph.aircraft_count = aircraft_count;
+        diagnostics.status = InteractionGraphEvaluationStatus::GraphInvalid;
+        diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - total_start).count());
+        return;
+    }
+    const auto & certified_candidate_sets = *m_evaluation_candidates;
 
     auto & certifications = m_task->result.certifications;
     if (!m_pairwise.evaluate(
@@ -231,6 +253,11 @@ void ManeuverEvaluationWorker::evaluateGraph()
     const PairwiseAdCertificationSet & certified_pairs = certifications;
 
     diagnostics.graph = m_graph_builder.build(certified_pairs);
+    // Public source timestamps remain packet provenance (for age/replay
+    // analysis), not the start time of our private derived rollout.
+    for (std::size_t aircraft = 0; aircraft < aircraft_count; ++aircraft)
+        diagnostics.graph.source_timestamps_us[aircraft] =
+            request.candidates[aircraft][0].source_timestamp_us;
     if (!diagnostics.graph.valid()) {
         diagnostics.status = InteractionGraphEvaluationStatus::GraphInvalid;
         diagnostics.total_evaluation_time_ns = static_cast<std::uint64_t>(
@@ -356,5 +383,48 @@ void ManeuverEvaluationWorker::evaluateGraph()
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             Clock::now() - total_start).count());
 
+}
+
+bool ManeuverEvaluationWorker::rebuildGraphLibraryAtEvaluationTime()
+{
+    const auto & request = m_task->request;
+    if (!m_evaluation_candidates || request.aircraft_count < 2
+        || request.aircraft_count > kMaximumSelectionAircraft) return false;
+    for (std::size_t aircraft = 0; aircraft < request.aircraft_count; ++aircraft) {
+        const auto & originals = request.candidates[aircraft];
+        const auto & source = originals[0];
+        if (source.source_timestamp_us > request.timestamp_us
+            || static_cast<double>(request.timestamp_us - source.source_timestamp_us) * 1e-6
+                > std::min(m_stale_timeout_s, estimation::kTrajectoryIntentHorizonSeconds)
+            || request.counts[aircraft] != kExhaustiveCandidatesPerAircraft) return false;
+        estimation::PredictState state;
+        estimation::PredictStateCovariance covariance;
+        if (!m_receiver.executionStateAt(source, request.timestamp_us, state, covariance))
+            return false; // Missing actual-input metadata cannot certify an aged library.
+        for (std::size_t slot = 0; slot < kExhaustiveCandidatesPerAircraft; ++slot) {
+            const auto & original = originals[slot];
+            if (original.source_timestamp_us != source.source_timestamp_us
+                || original.selection_epoch != request.epoch
+                || original.candidate_id != slot
+                || original.candidate_set_size != kExhaustiveCandidatesPerAircraft
+                || original.candidate_set_kind != estimation::CandidateSetKind::LegacyRoll)
+                return false;
+            auto & aligned = (*m_evaluation_candidates)[aircraft][slot];
+            if (source.source_timestamp_us == request.timestamp_us) {
+                aligned = original;
+                continue;
+            }
+            estimation::TrajectoryIntentPacket packet;
+            if (!m_sender.buildForCandidateInput(request.timestamp_us, original.candidate_id,
+                    original.candidate_input, state, covariance, packet, request.epoch))
+                return false;
+            packet.candidate_set_size = original.candidate_set_size;
+            packet.nominal_lateral_acceleration_mps2 =
+                static_cast<float>(original.nominal_lateral_acceleration_mps2);
+            packet.safe_rejoin_requested = original.safe_rejoin_requested;
+            if (!m_receiver.receive(packet, aligned)) return false;
+        }
+    }
+    return true;
 }
 } // namespace collision_avoidance::selection

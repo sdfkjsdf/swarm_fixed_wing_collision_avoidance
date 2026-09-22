@@ -10,6 +10,11 @@ uint8 candidate_set_kind
 float32[4] candidate_input
 uint64 candidate_input_revision
 
+# Published control held at source_timestamp_us, distinct from candidate_input.
+# ZOH extrapolation seed, not an acknowledgement of PX4 application.
+float32[4] source_execution_input
+bool source_execution_input_available
+
 # Formation rejoin metadata sampled with this trajectory-library revision.
 float32 nominal_lateral_acceleration_mps2
 bool safe_rejoin_requested

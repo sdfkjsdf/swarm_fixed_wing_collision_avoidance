@@ -35,6 +35,8 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
     source.candidate_set_kind = ce::CandidateSetKind::V4SafeControl;
     source.candidate_input = {19.5F, 120.0F, 0.0F, -4.25F};
     source.candidate_input_revision = 123456789012345ULL;
+    source.source_execution_input = {17.0F, 100.0F, 0.0F, 8.0F};
+    source.source_execution_input_available = true;
     source.nominal_lateral_acceleration_mps2 = 1.75F;
     source.safe_rejoin_requested = true;
     source.initial_roll_setpoint_rad = -0.42F;
@@ -61,6 +63,8 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
     EXPECT_EQ(received.candidate_set_size, source.candidate_set_size);
     EXPECT_EQ(received.candidate_set_kind, source.candidate_set_kind);
     EXPECT_EQ(received.candidate_input, source.candidate_input);
+    EXPECT_EQ(received.source_execution_input, source.source_execution_input);
+    EXPECT_EQ(received.source_execution_input_available, source.source_execution_input_available);
     EXPECT_EQ(
         received.candidate_input_revision,
         source.candidate_input_revision);

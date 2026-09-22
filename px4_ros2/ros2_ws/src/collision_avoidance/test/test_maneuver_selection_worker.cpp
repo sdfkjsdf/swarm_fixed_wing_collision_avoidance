@@ -326,6 +326,16 @@ cs::ManeuverSelectionWorkerOutput pushBeliefAndProcess(
     return output.value_or(cs::ManeuverSelectionWorkerOutput{});
 }
 
+cs::ManeuverSelectionWorkerOutput pushGraphBeliefAndProcess(
+    cs::ManeuverSelectionWorker & worker,
+    const cs::ManeuverSelectionBeliefSnapshot & belief)
+{
+    // These straight-flight coordination fixtures now supply the actual held
+    // command explicitly. Production receives this from Formation's publisher.
+    EXPECT_TRUE(worker.pushPublishedSetpoint(publishedInput(belief.timestamp_us, 0)));
+    return pushBeliefAndProcess(worker, belief);
+}
+
 void exchangePackets(
     cs::ManeuverSelectionWorker & first,
     cs::ManeuverSelectionWorker & second,
@@ -1499,8 +1509,8 @@ TEST(ManeuverSelectionWorker, TimerSelectionKeepsTheCommonEpochAndFrozenLibrary)
     cs::ManeuverSelectionWorker peer(p);
     constexpr std::uint64_t start = 4'000'000;
     ASSERT_TRUE(local.pushPublishedSetpoint(publishedInput(start, 0)));
-    const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
-    const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+    const auto own = pushGraphBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+    const auto other = pushGraphBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
     exchangePackets(local, peer, own, other);
     for (std::uint64_t elapsed : {50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
         ASSERT_TRUE(local.processPendingForTest(elapsed));
@@ -1528,12 +1538,12 @@ TEST(ManeuverSelectionWorker, ReusedFrozenStorageDoesNotLeakAcrossIncompleteEpoc
     p.vehicle_id = 1;
     cs::ManeuverSelectionWorker peer(p);
     constexpr std::uint64_t start = 4'000'000;
-    const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
-    const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+    const auto own = pushGraphBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+    const auto other = pushGraphBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
     exchangePackets(local, peer, own, other);
 
     const auto check = [&](std::uint64_t elapsed, bool complete) {
-        const auto output = pushBeliefAndProcess(local,
+        const auto output = pushGraphBeliefAndProcess(local,
             beliefSnapshot(start + elapsed, 20.0e-6 * elapsed, 0, 20, 0));
         const auto * records = local.stoppedGraphDiagnostics();
         ASSERT_NE(records, nullptr);
@@ -1550,7 +1560,7 @@ TEST(ManeuverSelectionWorker, ReusedFrozenStorageDoesNotLeakAcrossIncompleteEpoc
     check(250'000, true);
     // Storage still contains the peer's old library, but epoch readiness is reset.
     check(500'000, false);
-    const auto fresh = pushBeliefAndProcess(peer,
+    const auto fresh = pushGraphBeliefAndProcess(peer,
         beliefSnapshot(start + 500'000, 1010, 0, 20, 0));
     for (std::size_t i = 0; i < fresh.intent_packet_count; ++i)
         ASSERT_TRUE(local.pushRemoteIntent(1, fresh.intent_packets[i]));
@@ -1568,18 +1578,20 @@ TEST(ManeuverSelectionWorker, PeerAgreementDoesNotRequireANewTimerPrediction)
         p.vehicle_id = 1;
         cs::ManeuverSelectionWorker peer(p);
         constexpr std::uint64_t start = 4'000'000;
-        const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
-        const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+        const auto own = pushGraphBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+        const auto other = pushGraphBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
         exchangePackets(local, peer, own, other);
-        const auto proposal = pushBeliefAndProcess(local,
+        const auto proposal = pushGraphBeliefAndProcess(local,
             beliefSnapshot(start + 250'000, 5, 0, 20, 0));
-        const auto peer_proposal = pushBeliefAndProcess(peer,
+        const auto peer_proposal = pushGraphBeliefAndProcess(peer,
             beliefSnapshot(start + 250'000, 1005, 0, 20, 0));
         ASSERT_TRUE(proposal.decision.proposal_valid);
         ASSERT_TRUE(peer_proposal.decision.proposal_valid);
 
-        // No published-input history: generating a future frame is forbidden,
-        // but receiving agreement on an already-evaluated proposal is not.
+        // Invalidate subsequent execution history AFTER the frozen library was
+        // built: this forbids a new timer prediction, not proposal agreement.
+        ASSERT_TRUE(local.pushPublishedSetpoint(
+            publishedInput(start + 250'001, 0, 20, false)));
         ASSERT_TRUE(local.pushRemoteDecision(1, peerDecision(peer_proposal.decision)));
         ASSERT_TRUE(local.processPendingForTest(elapsed));
         const auto committed = local.tryPopOutput();
@@ -1601,8 +1613,8 @@ TEST(ManeuverSelectionWorker, DeferredRemoteReconstructionDoesNotBlockTrajectory
     p.vehicle_id = 1;
     cs::ManeuverSelectionWorker peer(p);
     constexpr std::uint64_t start = 4'000'000;
-    const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
-    const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+    const auto own = pushGraphBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+    const auto other = pushGraphBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
     ASSERT_EQ(own.intent_packet_count, 7U);
     for (std::size_t i = 0; i < other.intent_packet_count; ++i)
         ASSERT_TRUE(local.pushRemoteIntent(1, other.intent_packets[i]));
@@ -1631,11 +1643,11 @@ TEST(ManeuverSelectionWorker, PeerAgreementBypassesPendingRemoteReconstruction)
     p.vehicle_id = 1;
     cs::ManeuverSelectionWorker peer(p);
     constexpr std::uint64_t start = 4'000'000;
-    const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
-    const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
+    const auto own = pushGraphBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
+    const auto other = pushGraphBeliefAndProcess(peer, beliefSnapshot(start, 1000, 0, 20, 0));
     exchangePackets(local, peer, own, other);
-    const auto proposal = pushBeliefAndProcess(local, beliefSnapshot(start + 250'000, 5, 0, 20, 0));
-    const auto peer_proposal = pushBeliefAndProcess(peer, beliefSnapshot(start + 250'000, 1005, 0, 20, 0));
+    const auto proposal = pushGraphBeliefAndProcess(local, beliefSnapshot(start + 250'000, 5, 0, 20, 0));
+    const auto peer_proposal = pushGraphBeliefAndProcess(peer, beliefSnapshot(start + 250'000, 1005, 0, 20, 0));
     ASSERT_TRUE(proposal.decision.proposal_valid);
     ASSERT_TRUE(peer_proposal.decision.proposal_valid);
     for (std::size_t i = 0; i < peer_proposal.intent_packet_count; ++i)
@@ -1689,9 +1701,9 @@ TEST(ManeuverSelectionWorker, DeferredSearchKeepsRefreshingAndPreservesFrozenPro
     constexpr std::uint64_t start = 6'000'000;
     for (std::uint64_t offset : {0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
         const auto own = beliefSnapshot(start + offset, 20e-6 * offset, 0, 20, 0);
-        pushBeliefAndProcess(*reference, own);
-        pushBeliefAndProcess(*deferred, own);
-        const auto other = pushBeliefAndProcess(*peer,
+        pushGraphBeliefAndProcess(*reference, own);
+        pushGraphBeliefAndProcess(*deferred, own);
+        const auto other = pushGraphBeliefAndProcess(*peer,
             beliefSnapshot(start + offset, 1000 + 20e-6 * offset, 0, 20, 0));
         for (std::size_t i = 0; i < other.intent_packet_count; ++i) {
             ASSERT_TRUE(reference->pushRemoteIntent(1, other.intent_packets[i]));
@@ -1699,7 +1711,7 @@ TEST(ManeuverSelectionWorker, DeferredSearchKeepsRefreshingAndPreservesFrozenPro
         }
     }
     const auto own = beliefSnapshot(start + 250'000, 5, 0, 20, 0);
-    const auto expected = pushBeliefAndProcess(*reference, own);
+    const auto expected = pushGraphBeliefAndProcess(*reference, own);
     ASSERT_TRUE(expected.decision.proposal_valid);
     ASSERT_TRUE(deferred->pushOwnshipBelief(own));
     ASSERT_TRUE(deferred->processPendingForTest(0, false)); // search queued, not run
@@ -1791,6 +1803,90 @@ TEST(ManeuverEvaluationWorker, BoundedMailboxHoldsSnapshotUntilReleaseAndRestart
         evaluator.release();
         evaluator.stop();
     }
+}
+
+TEST(ManeuverEvaluationWorker, FrozenGraphStartsCandidatesAfterHeldExecution)
+{
+    cs::InteractionGraphParams graph;
+    graph.enabled = true;
+    cs::ManeuverEvaluationWorker worker({}, graph);
+    auto * request = worker.beginRequest();
+    ASSERT_NE(request, nullptr);
+    request->timestamp_us = 1'200'000;
+    request->epoch = 4;
+    request->aircraft_count = 2;
+    request->complete = true;
+    request->counts[0] = request->counts[1] = 7;
+    ce::TrajectoryPredict predictor(ce::PredictParams{});
+    const auto table = ce::makeLevelTurnCandidateTable(20, 100);
+    ce::TrajectoryIntentSender sender(predictor, table);
+    ce::TrajectoryIntentReceiver receiver(predictor);
+    ce::TrajectoryUncertainty uncertainty;
+    auto reference = std::make_unique<cs::MultiAircraftExhaustiveCandidateIntentSets>();
+    for (int v = 0; v < 2; ++v) {
+        ce::PredictState state{30.0 * v, 10.0 * v, 100, 20, 3.0 * v, 0, .3};
+        state.phi_setpoint = -.2;
+        ce::PredictStateCovariance covariance{};
+        for (int k = 0; k < 7; ++k) covariance[k * 7 + k] = .01;
+        const auto held = table.inputs[0];
+        ce::TrajectoryIntentPacket packet;
+        for (int id = 0; id < 7; ++id) {
+            ASSERT_TRUE(sender.buildForSelectedCandidate(1'000'000, id,
+                state, covariance, packet, 4));
+            packet.candidate_set_size = 7;
+            packet.source_execution_input_available = true;
+            packet.source_execution_input = {20, 100, 0, float(held.a_lat_cmd)};
+            ASSERT_TRUE(receiver.receive(packet, request->candidates[v][id]));
+        }
+        auto x = request->candidates[v][0].cone[0].mean;
+        auto p = request->candidates[v][0].cone[0].state_covariance;
+        ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(predictor,
+            request->candidates[v][0].source_execution_input, .2, x, p));
+        // Independent construction: actual held input first, then each candidate.
+        for (int id = 0; id < 7; ++id) {
+            ASSERT_TRUE(sender.buildForSelectedCandidate(request->timestamp_us,
+                id, x, p, packet, 4));
+            packet.candidate_set_size = 7;
+            ASSERT_TRUE(receiver.receive(packet, (*reference)[v][id]));
+        }
+    }
+    worker.submit();
+    ASSERT_TRUE(worker.processOneForTest());
+    const auto * result = worker.readyResult();
+    ASSERT_NE(result, nullptr);
+    ASSERT_TRUE(result->result.certifications.valid);
+    cs::ManeuverCombinationEvaluator pair_evaluator;
+    for (int a = 0; a < 7; ++a) for (int b = 0; b < 7; ++b) {
+        cs::CombinationEvaluation expected;
+        ASSERT_TRUE(pair_evaluator.evaluatePair(request->timestamp_us,
+            (*reference)[0][a], (*reference)[1][b], expected));
+        ASSERT_NE(result->result.certifications.findPair(0, 1), nullptr);
+        EXPECT_NEAR(result->result.certifications.findPair(0, 1)->find(a, b)->ad_m,
+            expected.ad_m, 1e-9);
+    }
+    // Coordination must retain original wire identities, not the derived time.
+    EXPECT_EQ(result->request.candidates[0][6].source_timestamp_us, 1'000'000U);
+    EXPECT_EQ(result->request.candidates[0][6].candidate_input_revision,
+        request->candidates[0][6].candidate_input_revision);
+    EXPECT_EQ(result->result.certifications.source_timestamps_us[0], 1'200'000U);
+    EXPECT_EQ(result->result.graph.graph.source_timestamps_us[0], 1'000'000U);
+    worker.release();
+    // No silent use of a hypothetical input if execution metadata is missing.
+    request = worker.beginRequest();
+    request->candidates[0][0].source_execution_input_available = false;
+    worker.submit();
+    ASSERT_TRUE(worker.processOneForTest());
+    EXPECT_FALSE(worker.readyResult()->result.evaluated);
+    EXPECT_EQ(worker.readyResult()->result.graph.status,
+        cs::InteractionGraphEvaluationStatus::GraphInvalid);
+    worker.release();
+    request = worker.beginRequest();
+    request->candidates[0][0].source_execution_input_available = true;
+    request->timestamp_us = 5'000'001;
+    worker.submit();
+    ASSERT_TRUE(worker.processOneForTest());
+    EXPECT_FALSE(worker.readyResult()->result.evaluated); // stale stays stale
+    worker.release();
 }
 
 TEST(ManeuverSelectionWorker, DoesNotMixAdjacentIncompleteRemoteEpochs)
@@ -2298,6 +2394,8 @@ TEST(ManeuverSelectionWorker,
 
     cs::ManeuverSelectionWorkerOutput first_output;
     cs::ManeuverSelectionWorkerOutput second_output;
+    ASSERT_TRUE(first.pushPublishedSetpoint(publishedInput(start, 0.0)));
+    ASSERT_TRUE(second.pushPublishedSetpoint(publishedInput(start, 0.0)));
     for (const std::uint64_t offset : {
              0ULL, 50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
         const double elapsed_s = static_cast<double>(offset) * 1.0e-6;
@@ -2400,6 +2498,8 @@ TEST(ManeuverSelectionWorker, NominalIntentReuseIsLimitedToOneActivationUpdate)
     cs::ManeuverSelectionWorker local(params());
     cs::ManeuverSelectionWorker peer(params(1));
     constexpr std::uint64_t start = 6'500'000;
+    ASSERT_TRUE(local.pushPublishedSetpoint(publishedInput(start, 0.0)));
+    ASSERT_TRUE(peer.pushPublishedSetpoint(publishedInput(start, 0.0)));
     const auto own = pushBeliefAndProcess(local, beliefSnapshot(start, 0, 0, 20, 0));
     const auto other = pushBeliefAndProcess(peer, beliefSnapshot(start, 0, 100, 20, 0));
     exchangePackets(local, peer, own, other);
@@ -2451,6 +2551,8 @@ TEST(ManeuverSelectionWorker, UnavailableRejoinMetadataDoesNotSuppressSevenCandi
         auto first = std::make_unique<cs::ManeuverSelectionWorker>(p0);
         auto second = std::make_unique<cs::ManeuverSelectionWorker>(p1);
         constexpr std::uint64_t start = 6'500'000;
+        ASSERT_TRUE(first->pushPublishedSetpoint(publishedInput(start, 0.0)));
+        ASSERT_TRUE(second->pushPublishedSetpoint(publishedInput(start, 0.0)));
         cs::ManeuverSelectionWorkerOutput a, b;
         for (std::uint64_t offset = 0; offset <= 250'000; offset += 50'000) {
             ASSERT_TRUE(first->pushNominalSetpoint(nominalSnapshot(start + offset)));
@@ -3050,10 +3152,10 @@ TEST(ManeuverSelectionWorker,
     cs::ManeuverSelectionWorker worker(worker_params);
     ASSERT_TRUE(worker.pushNominalSetpoint(nominalSnapshot(start)));
 
-    const auto first_output = pushBeliefAndProcess(
+    const auto first_output = pushGraphBeliefAndProcess(
         worker, beliefSnapshot(start, 0.0, 0.0, 20.0, 0.0));
     ASSERT_EQ(first_output.intent_packet_count, 7U);
-    static_cast<void>(pushBeliefAndProcess(
+    static_cast<void>(pushGraphBeliefAndProcess(
         worker,
         beliefSnapshot(start + 250'000ULL, 5.0, 0.0, 20.0, 0.0)));
 
@@ -3089,20 +3191,20 @@ TEST(ManeuverSelectionWorker,
     ASSERT_TRUE(ownship.pushNominalSetpoint(nominalSnapshot(start)));
     ASSERT_TRUE(remote.pushNominalSetpoint(nominalSnapshot(start)));
 
-    static_cast<void>(pushBeliefAndProcess(
+    static_cast<void>(pushGraphBeliefAndProcess(
         ownship, beliefSnapshot(start, 0.0, 0.0, 20.0, 0.0)));
-    static_cast<void>(pushBeliefAndProcess(
+    static_cast<void>(pushGraphBeliefAndProcess(
         remote, beliefSnapshot(start, 80.0, 0.0, -20.0, 0.0)));
     for (std::uint64_t offset : {
             50'000ULL, 100'000ULL, 150'000ULL, 200'000ULL}) {
-        static_cast<void>(pushBeliefAndProcess(
+        static_cast<void>(pushGraphBeliefAndProcess(
             ownship,
             beliefSnapshot(
                 start + offset, 20.0e-6 * offset,
                 0.0, 20.0, 0.0)));
     }
 
-    const auto future_epoch_output = pushBeliefAndProcess(
+    const auto future_epoch_output = pushGraphBeliefAndProcess(
         remote,
         beliefSnapshot(start + 250'000ULL, 75.0, 0.0, -20.0, 0.0));
     ASSERT_EQ(future_epoch_output.selection_epoch, 65U);
@@ -3114,7 +3216,7 @@ TEST(ManeuverSelectionWorker,
     }
     ASSERT_TRUE(ownship.processPendingForTest());
 
-    static_cast<void>(pushBeliefAndProcess(
+    static_cast<void>(pushGraphBeliefAndProcess(
         ownship,
         beliefSnapshot(start + 250'000ULL, 5.0, 0.0, 20.0, 0.0)));
     const auto old_epoch_diagnostics =
@@ -3123,13 +3225,13 @@ TEST(ManeuverSelectionWorker,
     ASSERT_GT(old_epoch_diagnostics->size, 0U);
     for (std::uint64_t offset : {
             300'000ULL, 350'000ULL, 400'000ULL, 450'000ULL}) {
-        static_cast<void>(pushBeliefAndProcess(
+        static_cast<void>(pushGraphBeliefAndProcess(
             ownship,
             beliefSnapshot(
                 start + offset, 20.0e-6 * offset,
                 0.0, 20.0, 0.0)));
     }
-    static_cast<void>(pushBeliefAndProcess(
+    static_cast<void>(pushGraphBeliefAndProcess(
         ownship,
         beliefSnapshot(start + 500'000ULL, 10.0, 0.0, 20.0, 0.0)));
 
@@ -3163,7 +3265,7 @@ TEST(ManeuverSelectionWorker,
             worker_params);
         ASSERT_TRUE(workers[aircraft]->pushNominalSetpoint(
             nominalSnapshot(start)));
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start,
@@ -3179,7 +3281,7 @@ TEST(ManeuverSelectionWorker,
     ASSERT_TRUE(workers[1]->pushRemoteDecision(
         0, nominalPeerDecision(0, start)));
     for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start + 250'000ULL,
@@ -3220,7 +3322,7 @@ TEST(ManeuverSelectionWorker,
             worker_params);
         ASSERT_TRUE(workers[aircraft]->pushNominalSetpoint(
             nominalSnapshot(start)));
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start,
@@ -3236,7 +3338,7 @@ TEST(ManeuverSelectionWorker,
     ASSERT_TRUE(workers[1]->pushRemoteDecision(
         0, nominalPeerDecision(0, start)));
     for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start + 250'000ULL,
@@ -3280,7 +3382,7 @@ TEST(ManeuverSelectionWorker,
             worker_params);
         ASSERT_TRUE(workers[aircraft]->pushNominalSetpoint(
             nominalSnapshot(start)));
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start,
@@ -3296,7 +3398,7 @@ TEST(ManeuverSelectionWorker,
     ASSERT_TRUE(workers[1]->pushRemoteDecision(
         0, nominalPeerDecision(0, start)));
     for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start + 250'000ULL,
@@ -3389,7 +3491,7 @@ TEST(ManeuverSelectionWorker,
         workers[aircraft]->setActivationEnabled(false);
         ASSERT_TRUE(workers[aircraft]->pushNominalSetpoint(
             nominalSnapshot(start)));
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start,
@@ -3405,7 +3507,7 @@ TEST(ManeuverSelectionWorker,
     ASSERT_TRUE(workers[1]->pushRemoteDecision(
         0, nominalPeerDecision(0, start)));
     for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start + 250'000ULL,
@@ -3445,7 +3547,7 @@ TEST(ManeuverSelectionWorker,
 
     // Joining alone must not originate a request. A subsequent local unsafe
     // pair must originate one, without changing the execution episode ID.
-    const auto local_risk = pushBeliefAndProcess(*workers[1],
+    const auto local_risk = pushGraphBeliefAndProcess(*workers[1],
         beliefSnapshot(start + 350'000, 5.0, 0.0, 20.0, 0.0));
     ASSERT_TRUE(local_risk.decision.activation_requested);
     ASSERT_LT(local_risk.decision.ad_m, 0.0);
@@ -3454,7 +3556,7 @@ TEST(ManeuverSelectionWorker,
               coordinated.decision.activation_timestamp_us);
     EXPECT_EQ(local_risk.decision.local_activation_request_timestamp_us,
               start + 350'000);
-    const auto still_unsafe = pushBeliefAndProcess(*workers[1],
+    const auto still_unsafe = pushGraphBeliefAndProcess(*workers[1],
         beliefSnapshot(start + 400'000, 5.0, 0.0, 20.0, 0.0));
     ASSERT_TRUE(still_unsafe.decision.activation_requested);
     ASSERT_LT(still_unsafe.decision.ad_m, 0.0);
@@ -3482,7 +3584,7 @@ static void verifyDeferredComponentActivation(
         workers[aircraft]->setActivationEnabled(false);
         ASSERT_TRUE(workers[aircraft]->pushNominalSetpoint(
             nominalSnapshot(start)));
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start,
@@ -3498,7 +3600,7 @@ static void verifyDeferredComponentActivation(
     ASSERT_TRUE(workers[1]->pushRemoteDecision(
         0, nominalPeerDecision(0, start)));
     for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start + 250'000ULL,
@@ -3520,7 +3622,7 @@ static void verifyDeferredComponentActivation(
         peer_only ? 0 : start + 250'000;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
     ASSERT_TRUE(workers[1]->processPendingForTest());
-    const auto unavailable = pushBeliefAndProcess(
+    const auto unavailable = pushGraphBeliefAndProcess(
         *workers[1], beliefSnapshot(start + 300'000ULL, 500.0, 0.0, 20.0, 0.0));
     ASSERT_FALSE(unavailable.decision.activation_requested);
     auto heartbeat = matching_trigger;
@@ -3539,12 +3641,12 @@ static void verifyDeferredComponentActivation(
         ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
         ASSERT_TRUE(workers[1]->pushRemoteDecision(0, matching_trigger));
     }
-    const auto fresh_peer = pushBeliefAndProcess(
+    const auto fresh_peer = pushGraphBeliefAndProcess(
         *workers[0], beliefSnapshot(start + 350'000ULL, 7.0, 0.0, 20.0, 0.0));
     for (std::size_t i = 0; i < fresh_peer.intent_packet_count; ++i) {
         ASSERT_TRUE(workers[1]->pushRemoteIntent(0, fresh_peer.intent_packets[i]));
     }
-    const auto coordinated = pushBeliefAndProcess(
+    const auto coordinated = pushGraphBeliefAndProcess(
         *workers[1],
         beliefSnapshot(start + 350'000ULL, 500.0, 0.0, 20.0, 0.0));
     const bool should_activate = !peer_ended && !stale && !mismatched_tuple && !peer_only;
@@ -3571,7 +3673,7 @@ static void verifyDeferredComponentActivation(
         heartbeat.proposal_timestamp_us = start + 400'000;
         ++heartbeat.local_selection_epoch;
         ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
-        active = pushBeliefAndProcess(
+        active = pushGraphBeliefAndProcess(
             *workers[1], beliefSnapshot(start + 400'000, 500.0, 0.0, 20.0, 0.0));
         ASSERT_TRUE(active.decision.activation_requested);
         EXPECT_TRUE(active.decision.activation_just_started);
@@ -3583,7 +3685,7 @@ static void verifyDeferredComponentActivation(
     heartbeat.proposal_timestamp_us = start + 450'000;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
-    const auto repeated = pushBeliefAndProcess(
+    const auto repeated = pushGraphBeliefAndProcess(
         *workers[1], beliefSnapshot(start + 450'000, 500.0, 0.0, 20.0, 0.0));
     EXPECT_TRUE(repeated.decision.activation_requested);
     EXPECT_FALSE(repeated.decision.activation_just_started);
@@ -3658,11 +3760,12 @@ TEST(ManeuverSelectionWorker, ComponentEpisodeSurvivesLocalCommitInEitherArrival
             p.interaction_graph_params.ad_screen_m = 1.0e6;
             workers[i] = std::make_unique<cs::ManeuverSelectionWorker>(p);
             workers[i]->setActivationEnabled(false);
+            ASSERT_TRUE(workers[i]->pushPublishedSetpoint(publishedInput(start, 0.0)));
             ASSERT_TRUE(workers[i]->pushNominalSetpoint(nominalSnapshot(start)));
         }
         for (std::uint64_t offset = 0; offset <= 500'000; offset += 50'000) {
             for (int i = 0; i < 2; ++i)
-                outputs[i] = pushBeliefAndProcess(*workers[i], beliefSnapshot(
+                outputs[i] = pushGraphBeliefAndProcess(*workers[i], beliefSnapshot(
                     start + offset, 500.0 * i, 0.0, 20.0, 0.0));
             if (offset == 250'000) {
                 auto commits = confirmTwoAircraftProposal(
@@ -3701,7 +3804,7 @@ TEST(ManeuverSelectionWorker, ComponentEpisodeSurvivesLocalCommitInEitherArrival
             EXPECT_EQ(result->decision.local_selection_epoch, new_epoch);
             EXPECT_TRUE(result->decision.activation_requested);
         } else {
-            const auto result = pushBeliefAndProcess(*workers[1],
+            const auto result = pushGraphBeliefAndProcess(*workers[1],
                 beliefSnapshot(start + 550'000, 500.0, 0.0, 20.0, 0.0));
             EXPECT_EQ(result.decision.local_selection_epoch, new_epoch);
             EXPECT_TRUE(result.decision.activation_requested);
@@ -3717,7 +3820,7 @@ TEST(ManeuverSelectionWorker, ComponentEpisodeSurvivesLocalCommitInEitherArrival
         heartbeat.nominal_lateral_acceleration_mps2 = 0.0;
         ASSERT_TRUE(workers[1]->pushNominalSetpoint(nominalSnapshot(start + 600'000)));
         ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
-        const auto released = pushBeliefAndProcess(*workers[1],
+        const auto released = pushGraphBeliefAndProcess(*workers[1],
             beliefSnapshot(start + 600'000, 500.0, 0.0, 22.0, 0.0));
         ASSERT_FALSE(released.decision.activation_requested)
             << "CPA=" << released.decision.cpa_clear
@@ -3727,7 +3830,7 @@ TEST(ManeuverSelectionWorker, ComponentEpisodeSurvivesLocalCommitInEitherArrival
             << " AD=" << released.decision.ad_m;
         ASSERT_TRUE(released.decision.activation_just_ended);
         ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
-        const auto duplicate = pushBeliefAndProcess(*workers[1],
+        const auto duplicate = pushGraphBeliefAndProcess(*workers[1],
             beliefSnapshot(start + 650'000, 500.0, 0.0, 22.0, 0.0));
         EXPECT_FALSE(duplicate.decision.activation_requested);
         // A later execution start caused by joining another peer is not a
@@ -3736,7 +3839,7 @@ TEST(ManeuverSelectionWorker, ComponentEpisodeSurvivesLocalCommitInEitherArrival
         heartbeat.local_activation_request_timestamp_us = 0;
         heartbeat.proposal_timestamp_us = start + 650'000;
         ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
-        const auto participation = pushBeliefAndProcess(*workers[1],
+        const auto participation = pushGraphBeliefAndProcess(*workers[1],
             beliefSnapshot(start + 700'000, 500.0, 0.0, 22.0, 0.0));
         EXPECT_FALSE(participation.decision.activation_requested);
         EXPECT_GT(participation.decision.ad_m, 0.0);
@@ -3746,7 +3849,7 @@ TEST(ManeuverSelectionWorker, ComponentEpisodeSurvivesLocalCommitInEitherArrival
         heartbeat.local_activation_request_timestamp_us = start + 700'000;
         heartbeat.proposal_timestamp_us = start + 700'000;
         ASSERT_TRUE(workers[1]->pushRemoteDecision(0, heartbeat));
-        const auto next_episode = pushBeliefAndProcess(*workers[1],
+        const auto next_episode = pushGraphBeliefAndProcess(*workers[1],
             beliefSnapshot(start + 750'000, 500.0, 0.0, 22.0, 0.0));
         EXPECT_TRUE(next_episode.decision.activation_requested);
         EXPECT_TRUE(next_episode.decision.activation_just_started);
@@ -3777,7 +3880,7 @@ static void verifyComponentProposalActivationRace(bool superior)
     for (std::uint64_t offset = 0; offset <= 500'000; offset += 50'000) {
         for (int i = 0; i < 2; ++i) {
             // First epoch is head-on; the next common snapshot is offset.
-            outputs[i] = pushBeliefAndProcess(*workers[i], beliefSnapshot(
+            outputs[i] = pushGraphBeliefAndProcess(*workers[i], beliefSnapshot(
                 start + offset, i ? 40.0 : -40.0,
                 offset >= 300'000 ? (i ? -20.0 : 20.0) : 0.0,
                 i ? -20.0 : 20.0, 0.0));
@@ -3813,7 +3916,7 @@ static void verifyComponentProposalActivationRace(bool superior)
     const auto epoch = outputs[0].decision.proposal_epoch;
     workers[0]->setActivationEnabled(true);
     // Activate the old command before delivering the matching proposal.
-    const auto active = pushBeliefAndProcess(*workers[0],
+    const auto active = pushGraphBeliefAndProcess(*workers[0],
         beliefSnapshot(start + 550'000, 38.0, -20.0, 20.0, 0.0));
     ASSERT_TRUE(active.decision.activation_requested);
     ASSERT_TRUE(workers[0]->pushRemoteDecision(1, matching));
@@ -3853,7 +3956,7 @@ TEST(ManeuverSelectionWorker,
         workers[aircraft]->setActivationEnabled(false);
         ASSERT_TRUE(workers[aircraft]->pushNominalSetpoint(
             nominalSnapshot(start)));
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start,
@@ -3869,7 +3972,7 @@ TEST(ManeuverSelectionWorker,
     ASSERT_TRUE(workers[1]->pushRemoteDecision(
         0, nominalPeerDecision(0, start)));
     for (std::size_t aircraft = 0; aircraft < workers.size(); ++aircraft) {
-        outputs[aircraft] = pushBeliefAndProcess(
+        outputs[aircraft] = pushGraphBeliefAndProcess(
             *workers[aircraft],
             beliefSnapshot(
                 start + 250'000ULL,
@@ -3890,7 +3993,7 @@ TEST(ManeuverSelectionWorker,
     other_component_trigger.local_activation_request_timestamp_us = start + 250'000;
     ASSERT_TRUE(workers[1]->pushRemoteDecision(0, other_component_trigger));
     ASSERT_TRUE(workers[1]->processPendingForTest());
-    const auto unaffected = pushBeliefAndProcess(
+    const auto unaffected = pushGraphBeliefAndProcess(
         *workers[1],
         beliefSnapshot(start + 300'000ULL, 1'005.0, 0.0, 20.0, 0.0));
     EXPECT_FALSE(unaffected.decision.activation_requested);
@@ -3921,6 +4024,13 @@ TEST(FusionInputHistory, UsesPublishedInputForAllCandidateStartingStates)
     ASSERT_EQ(result.intent_packet_count, 7U);
     EXPECT_LT(result.intent_packets.front().candidate_input[3], 0.0F);
     EXPECT_GT(result.intent_packets.back().candidate_input[3], 0.0F);
+    for (std::size_t i = 0; i < result.intent_packet_count; ++i) {
+        const auto & packet = result.intent_packets[i];
+        EXPECT_TRUE(packet.source_execution_input_available);
+        EXPECT_FLOAT_EQ(packet.source_execution_input[0], 22.0F);
+        EXPECT_FLOAT_EQ(packet.source_execution_input[3], 3.0F);
+        EXPECT_NE(packet.source_execution_input[3], packet.candidate_input[3]);
+    }
 }
 
 TEST(FusionInputHistory, SplitsMeanAndCovarianceAtActualCommandSwitch)
@@ -3945,6 +4055,15 @@ TEST(FusionInputHistory, SplitsMeanAndCovarianceAtActualCommandSwitch)
     ASSERT_TRUE(uncertainty.compensateFusionHorizonDelay(
         predictor, second.input, .082, state, covariance));
     expectPacketInitialState(result, state, covariance);
+    ASSERT_GT(result.intent_packet_count, 0U);
+    for (std::size_t i = 0; i < result.intent_packet_count; ++i) {
+        const auto & packet = result.intent_packets[i];
+        EXPECT_TRUE(packet.source_execution_input_available);
+        // At the source time the new command is already published, even though
+        // past-state compensation above must use the preceding two commands.
+        EXPECT_FLOAT_EQ(packet.source_execution_input[0], 20.0F);
+        EXPECT_FLOAT_EQ(packet.source_execution_input[3], 11.0F);
+    }
 }
 
 TEST(FusionInputHistory, DoesNotBackfillMissingHistoryWithAFutureCommand)
@@ -4117,11 +4236,11 @@ TEST(StoppedObservations, GraphControlAndCommitAreIndependentOfRecording)
         constexpr std::uint64_t start = 30'000'000;
         EXPECT_TRUE(first.pushNominalSetpoint(nominalSnapshot(start)));
         EXPECT_TRUE(second.pushNominalSetpoint(nominalSnapshot(start)));
-        auto a = pushBeliefAndProcess(first, beliefSnapshot(start, -45, 0, 20, 0));
-        auto b = pushBeliefAndProcess(second, beliefSnapshot(start, 45, 0, -20, 0));
+        auto a = pushGraphBeliefAndProcess(first, beliefSnapshot(start, -45, 0, 20, 0));
+        auto b = pushGraphBeliefAndProcess(second, beliefSnapshot(start, 45, 0, -20, 0));
         exchangePackets(first, second, a, b);
-        a = pushBeliefAndProcess(first, beliefSnapshot(start+250'000, -40, 0, 20, 0));
-        b = pushBeliefAndProcess(second, beliefSnapshot(start+250'000, 40, 0, -20, 0));
+        a = pushGraphBeliefAndProcess(first, beliefSnapshot(start+250'000, -40, 0, 20, 0));
+        b = pushGraphBeliefAndProcess(second, beliefSnapshot(start+250'000, 40, 0, -20, 0));
         EXPECT_TRUE(a.decision.proposed_component_graph);
         EXPECT_TRUE(a.decision.proposal_valid);
         EXPECT_EQ(first.stoppedGraphDiagnostics() != nullptr, record);

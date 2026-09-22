@@ -319,6 +319,14 @@ static void fiveRuntimesPublishSameJointDecision(bool graph)
                 / static_cast<double>(aircraft_count);
             const double unit_north = std::cos(angle);
             const double unit_east = std::sin(angle);
+            if (graph) {
+                // This fixture flies straight before selection. Report that
+                // held input, just as the real Formation publisher does.
+                ASSERT_TRUE(runtimes[aircraft]->pushPublishedSetpoint({
+                    start + offset,
+                    {speed_mps, std::numeric_limits<double>::quiet_NaN(), 0, 0},
+                    true}));
+            }
             belief_publishers[aircraft]->publish(beliefMessage(
                 start + offset,
                 (radius_m - speed_mps * elapsed_s) * unit_north,

@@ -79,6 +79,8 @@ bool ManeuverSelectionWorker::buildV4IntentSet(
     std::array<
         estimation::TrajectoryIntentPacket,
         kExhaustiveCandidatesPerAircraft> packets{};
+    estimation::PredictInput execution_input{};
+    const bool execution_input_available = publishedInputAt(now_us, execution_input);
     for (std::size_t index = 0; index < candidate_count; ++index) {
         const std::uint8_t candidate_id = static_cast<std::uint8_t>(
             selected_candidates[index].role);
@@ -111,6 +113,12 @@ bool ManeuverSelectionWorker::buildV4IntentSet(
             candidate_count);
         packets[index].candidate_set_kind =
             estimation::CandidateSetKind::V4SafeControl;
+        packets[index].source_execution_input_available = execution_input_available;
+        packets[index].source_execution_input = {
+            static_cast<float>(execution_input.V_cmd),
+            static_cast<float>(execution_input.h_cmd),
+            static_cast<float>(execution_input.h_dot_cmd),
+            static_cast<float>(execution_input.a_lat_cmd)};
         if (!m_receiver.receive(packets[index], received_candidates[index])) {
             m_ownship_candidates_complete = false;
             m_ownship_candidate_count = 0;
@@ -823,4 +831,3 @@ bool ManeuverSelectionWorker::constrainV4ActiveAircraftCandidates(
 
 
 }  // namespace collision_avoidance::selection
-

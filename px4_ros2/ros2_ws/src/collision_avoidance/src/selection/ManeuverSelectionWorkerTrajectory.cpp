@@ -194,6 +194,8 @@ bool ManeuverSelectionWorker::buildCurrentIntentSet(
         estimation::TrajectoryIntentPacket,
         kExhaustiveCandidatesPerAircraft> packets{};
     const std::size_t candidate_count = activeCandidateCount();
+    estimation::PredictInput execution_input{};
+    const bool execution_input_available = publishedInputAt(now_us, execution_input);
     estimation::PredictInput nominal_input{};
     const bool nominal_input_available = m_has_latest_nominal
         && nominalPredictInput(
@@ -218,6 +220,12 @@ bool ManeuverSelectionWorker::buildCurrentIntentSet(
             candidate_count);
         packets[index].candidate_set_kind =
             estimation::CandidateSetKind::LegacyRoll;
+        packets[index].source_execution_input_available = execution_input_available;
+        packets[index].source_execution_input = {
+            static_cast<float>(execution_input.V_cmd),
+            static_cast<float>(execution_input.h_cmd),
+            static_cast<float>(execution_input.h_dot_cmd),
+            static_cast<float>(execution_input.a_lat_cmd)};
         packets[index].nominal_lateral_acceleration_mps2 =
             nominal_input_available
             ? static_cast<float>(nominal_input.a_lat_cmd)
@@ -628,10 +636,9 @@ void ManeuverSelectionWorker::applySelectionEvaluation(
                     && result.certifications.valid
                     && result.certifications.selection_epoch
                         == request.epoch) {
-                    // The incumbent and proposed tuples refer to the same
-                    // frozen candidate library and selection timestamp. Reuse
-                    // the already certified 7x7 pair matrices instead of
-                    // propagating the incumbent's ten aircraft pairs again.
+                    // Both tuples use the same execution-aligned 7x7 matrices.
+                    // The immutable request still supplies original IDs/input
+                    // revisions/source timestamps; it is NOT re-evaluated here.
                     current_evaluation_available =
                         m_certified_component_evaluator.evaluateTuple(
                             result.certifications,

@@ -48,7 +48,9 @@ class ManeuverEvaluationWorker
 {
 public:
     ManeuverEvaluationWorker(const ManeuverCombinationEvaluatorParams & evaluator,
-                             const InteractionGraphParams & graph);
+                             const InteractionGraphParams & graph,
+                             const estimation::PredictParams & predictor = {},
+                             const estimation::UncertaintyParams & uncertainty = {});
     ~ManeuverEvaluationWorker();
     void start();
     void stop();
@@ -63,6 +65,7 @@ private:
     bool processOne();
     void evaluate();
     void evaluateGraph();
+    bool rebuildGraphLibraryAtEvaluationTime();
     void loop();
 
     InteractionGraphParams m_graph_params;
@@ -71,6 +74,12 @@ private:
     PairwiseAdCertificationEvaluator m_pairwise;
     CertifiedComponentManeuverEvaluator m_component;
     InteractionGraphBuilder m_graph_builder;
+    // Private evaluation-thread scratch: the shared request and live caches
+    // keep their original source timestamps and compressed-trajectory meaning.
+    estimation::TrajectoryIntentSender m_sender;
+    estimation::TrajectoryIntentReceiver m_receiver;
+    double m_stale_timeout_s;
+    std::unique_ptr<MultiAircraftExhaustiveCandidateIntentSets> m_evaluation_candidates;
     std::unique_ptr<ManeuverEvaluationTask> m_task;
     common::SpscQueue<unsigned, 1> m_requests;
     common::SpscQueue<unsigned, 1> m_results;

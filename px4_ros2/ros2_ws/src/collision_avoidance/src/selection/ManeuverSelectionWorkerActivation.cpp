@@ -156,10 +156,11 @@ bool ManeuverSelectionWorker::buildActivationSample(
     }
 
     // Before activation, AD is evaluated on the coordinated best tuple. Once
-    // active, termination is evaluated on the commands actually being flown:
+    // active, monitoring follows the advertised execution commands:
     // this aircraft's latch, each active peer's advertised latch, and the
-    // Formation intent of every inactive peer. CPA always starts from the
-    // measured ownship flight vector.
+    // Formation intent of every inactive peer. Release additionally checks the
+    // proposed nominal transition below, not continuation of ownship avoidance.
+    // CPA always starts from the measured ownship flight vector.
     const double horizontal_speed_squared_m2ps2 =
         m_latest_state.V * m_latest_state.V
         - m_latest_state.h_dot * m_latest_state.h_dot;
@@ -183,6 +184,10 @@ bool ManeuverSelectionWorker::buildActivationSample(
     double minimum_ad = std::numeric_limits<double>::infinity();
     double reciprocal_cost_sum = 0.0;
     bool reciprocal_cost_defined = true;
+    // Check the command we would actually switch to against peers that may
+    // still be avoiding. Inactive peers are covered by the joint nominal check.
+    bool transition_safe = monitor_actual_execution
+        && buildNominalIntentSet(now_us, nominal);
     std::size_t evaluated_threat_count = 0;
     for (int remote_id = 0;
          remote_id < m_params.total_agent_count; ++remote_id) {
@@ -275,6 +280,12 @@ bool ManeuverSelectionWorker::buildActivationSample(
                 now_us, *ownship_intent, *remote_intent, pair)) {
             return false;
         }
+        if (transition_safe && remote_avoidance_active) {
+            CombinationEvaluation transition_pair;
+            transition_safe = m_pair_evaluator.evaluatePair(
+                now_us, nominal.candidates[ownship_index][0],
+                *remote_intent, transition_pair) && transition_pair.feasible;
+        }
         ++evaluated_threat_count;
         if (m_params.masd_diagnostics_enabled) {
             ManeuverBudgetTrace trace;
@@ -345,6 +356,7 @@ bool ManeuverSelectionWorker::buildActivationSample(
     }
     sample.minimum_ad_m = minimum_ad;
     sample.valid = true;
+    nominal.ownship_transition_safe = transition_safe;
     decision.ad_m = minimum_ad;
     decision.reciprocal_cost_sum = reciprocal_cost_defined
         ? reciprocal_cost_sum
@@ -457,12 +469,17 @@ bool ManeuverSelectionWorker::buildNominalIntentSet(
         };
         consider_cache(m_remote_caches[aircraft_index]);
         consider_cache(m_remote_previous_caches[aircraft_index]);
+        estimation::PredictState current_state{};
+        estimation::PredictStateCovariance current_covariance{};
         if (anchor == nullptr
+            || anchor->source_timestamp_us > now_us
+            || now_us - anchor->source_timestamp_us > m_params.maximum_belief_delay_us
+            || !m_receiver.executionStateAt(*anchor, now_us, current_state, current_covariance)
             || !build_intent(
-                anchor->source_timestamp_us,
+                now_us,
                 peer_input,
-                anchor->cone[0].mean,
-                anchor->cone[0].state_covariance,
+                current_state,
+                current_covariance,
                 candidate_sets[aircraft_index][0])) {
             return false;
         }
@@ -806,8 +823,8 @@ void ManeuverSelectionWorker::updateActivationState(
     if (previous_status.active && decision.cpa_clear) {
         decision.post_release_peer_confirmed =
             decision.post_release_safe
-            && std::isfinite(sample.minimum_ad_m)
-            && sample.minimum_ad_m >= 0.0
+            && decision.post_release_evaluation_timestamp_us == now_us
+            && nominal.ownship_transition_safe
             && allPeersConfirmPostRelease(now_us);
         sample.allow_deactivation =
             decision.post_release_peer_confirmed;

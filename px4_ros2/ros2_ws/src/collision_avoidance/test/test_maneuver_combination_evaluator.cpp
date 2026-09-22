@@ -11,6 +11,33 @@
 namespace ce = collision_avoidance::estimation;
 namespace cs = collision_avoidance::selection;
 
+TEST(ManeuverCombinationEvaluator, SafeEndpointsDoNotImplySafeAsynchronousReturn)
+{
+    ce::TrajectoryPredict predictor(ce::PredictParams{});
+    const auto candidates = ce::makeLevelTurnCandidateTable(20.0, 100.0);
+    ce::TrajectoryIntentSender sender(predictor, candidates);
+    ce::TrajectoryIntentReceiver receiver(predictor);
+    ce::PredictStateCovariance covariance{};
+    for (std::size_t k = 0; k < 7; ++k) covariance[k * 7 + k] = 0.01;
+    std::array<ce::ReceivedTrajectoryIntent, 2> active, nominal;
+    for (std::size_t aircraft = 0; aircraft < 2; ++aircraft) {
+        ce::PredictState state{0.0, 40.0 * aircraft, 100.0, 20.0, 0.0, 0.0, 0.0};
+        ce::TrajectoryIntentPacket packet;
+        ASSERT_TRUE(sender.buildForSelectedCandidate(1'000'000, 0, state, covariance, packet));
+        ASSERT_TRUE(receiver.receive(packet, active[aircraft]));
+        ASSERT_TRUE(sender.buildForSelectedCandidate(1'000'000, 3, state, covariance, packet));
+        ASSERT_TRUE(receiver.receive(packet, nominal[aircraft]));
+    }
+    cs::ManeuverCombinationEvaluator evaluator;
+    cs::CombinationEvaluation both_active, both_nominal, mixed;
+    ASSERT_TRUE(evaluator.evaluatePair(1'000'000, active[0], active[1], both_active));
+    ASSERT_TRUE(evaluator.evaluatePair(1'000'000, nominal[0], nominal[1], both_nominal));
+    ASSERT_TRUE(evaluator.evaluatePair(1'000'000, nominal[0], active[1], mixed));
+    EXPECT_TRUE(both_active.feasible) << both_active.ad_m;
+    EXPECT_TRUE(both_nominal.feasible) << both_nominal.ad_m;
+    EXPECT_FALSE(mixed.feasible) << mixed.ad_m;
+}
+
 namespace
 {
 

@@ -41,7 +41,8 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
   m_mode_b_interpolator(params.mode_b_interpolator_params),
   m_mode_b_intent_adapter(params.mode_b_intent_adapter_params),
   m_v4_candidate_adapter(params.v4_candidate_adapter_params),
-  m_evaluation_worker(params.evaluator_params, params.interaction_graph_params),
+  m_evaluation_worker(params.evaluator_params, params.interaction_graph_params,
+      params.predictor_params, params.uncertainty_params),
   m_remote_trajectory_worker(params.vehicle_id, params.total_agent_count,
       params.exhaustive_test_mode ? kExhaustiveCandidatesPerAircraft : kCandidatesPerAircraft,
       params.predictor_params, params.uncertainty_params, params.stopped_stage_timing_enabled),
@@ -723,6 +724,26 @@ bool ManeuverSelectionWorker::compensateUsingPublishedInputs(
         }
     }
     return advance(end_us);
+}
+
+bool ManeuverSelectionWorker::publishedInputAt(
+    std::uint64_t timestamp_us, estimation::PredictInput & input) const noexcept
+{
+    if (m_latest_published_input_timestamp_us < timestamp_us
+        && timestamp_us - m_latest_published_input_timestamp_us
+            > m_params.maximum_belief_delay_us) {
+        return false;
+    }
+    for (std::size_t offset = 0; offset < m_published_input_count; ++offset) {
+        const auto & entry = (*m_published_inputs)[(m_published_input_head
+            + m_published_inputs->size() - 1 - offset) % m_published_inputs->size()];
+        if (entry.timestamp_us <= timestamp_us) {
+            if (!entry.valid) return false;
+            input = entry.input;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool ManeuverSelectionWorker::acceptAirspeed(

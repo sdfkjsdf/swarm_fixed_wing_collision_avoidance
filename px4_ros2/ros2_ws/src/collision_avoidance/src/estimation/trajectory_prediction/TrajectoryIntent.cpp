@@ -310,6 +310,12 @@ bool TrajectoryIntentReceiver::receive(
     candidate_received.candidate_input = input;
     candidate_received.candidate_input_revision =
         packet.candidate_input_revision;
+    candidate_received.source_execution_input = decodeInput(packet.source_execution_input);
+    // Auxiliary execution metadata must not cancel seven valid candidates.
+    candidate_received.source_execution_input_available =
+        packet.source_execution_input_available
+        && usableInput(candidate_received.source_execution_input)
+        && candidate_received.source_execution_input.V_cmd > 0.0;
     candidate_received.nominal_lateral_acceleration_mps2 =
         static_cast<double>(packet.nominal_lateral_acceleration_mps2);
     candidate_received.safe_rejoin_requested =
@@ -328,6 +334,31 @@ bool TrajectoryIntentReceiver::receive(
     }
 
     received = candidate_received;
+    return true;
+}
+
+bool TrajectoryIntentReceiver::executionStateAt(
+    const ReceivedTrajectoryIntent & intent,
+    std::uint64_t timestamp_us,
+    PredictState & state,
+    PredictStateCovariance & covariance) const
+{
+    if (timestamp_us < intent.source_timestamp_us) {
+        return false;
+    }
+    auto aligned_state = intent.cone.front().mean;
+    auto aligned_covariance = intent.cone.front().state_covariance;
+    if (timestamp_us != intent.source_timestamp_us) {
+        if (!intent.source_execution_input_available
+            || !m_uncertainty.compensateFusionHorizonDelay(
+                m_predictor, intent.source_execution_input,
+                static_cast<double>(timestamp_us - intent.source_timestamp_us) * 1e-6,
+                aligned_state, aligned_covariance)) {
+            return false;
+        }
+    }
+    state = aligned_state;
+    covariance = aligned_covariance;
     return true;
 }
 
