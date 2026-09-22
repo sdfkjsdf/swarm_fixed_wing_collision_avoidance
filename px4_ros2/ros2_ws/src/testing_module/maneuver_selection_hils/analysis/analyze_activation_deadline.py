@@ -19,6 +19,7 @@ from rosidl_runtime_py.utilities import get_message
 from analyze_stopped_pipeline_timing import parse as parse_pipeline
 from analyze_stopped_stage_timing import analyze as validate_stages, stats
 from read_stopped_observations import parse as parse_observations
+from trajectory_intent_records import iter_candidate_intents
 
 
 def describe(values):
@@ -37,8 +38,10 @@ def read_topics(bag, wanted):
                 if name not in wanted:
                     continue
                 cls = get_message(kind)
-                result[name].extend((t, deserialize_message(b, cls)) for t, b in
-                    conn.execute('SELECT timestamp,data FROM messages WHERE topic_id=? ORDER BY timestamp', (tid,)))
+                for t, b in conn.execute('SELECT timestamp,data FROM messages WHERE topic_id=? ORDER BY timestamp', (tid,)):
+                    message = deserialize_message(b, cls)
+                    items = iter_candidate_intents(message) if name.endswith('/trajectory_intent') else (message,)
+                    result[name].extend((t, item) for item in items)
     for records in result.values():
         records.sort(key=lambda r: r[0])
     return result

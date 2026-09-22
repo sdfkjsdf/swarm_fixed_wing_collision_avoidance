@@ -20,6 +20,7 @@ from pyulog import ULog
 import rosbag2_py
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
+from trajectory_intent_records import iter_candidate_intents
 
 HERE = Path(__file__).resolve().parent
 ROLLS = np.array([-50, -30, -15, 0, 15, 30, 50])
@@ -161,8 +162,9 @@ class Audit:
             v = int(topic.split('/')[2].split('_')[-1])
             m = deserialize_message(data, types[topic])
             if topic.endswith('/trajectory_intent'):
-                key = (int(m.source_timestamp_us), int(m.candidate_id), int(m.candidate_input_revision))
-                self.intents[v][key] = m
+                for candidate in iter_candidate_intents(m):
+                    key = (int(candidate.source_timestamp_us), int(candidate.candidate_id), int(candidate.candidate_input_revision))
+                    self.intents[v][key] = candidate
             elif topic.endswith('/maneuver_selection_decision'):
                 self.decisions[v].append((stamp*1e-9, m))
             elif topic.endswith('/interaction_graph_diagnostics'):

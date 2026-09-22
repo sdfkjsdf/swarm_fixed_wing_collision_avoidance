@@ -419,9 +419,6 @@ bool ManeuverEvaluationWorker::rebuildGraphLibraryAtEvaluationTime()
                     original.candidate_input, state, covariance, packet, request.epoch))
                 return false;
             packet.candidate_set_size = original.candidate_set_size;
-            packet.nominal_lateral_acceleration_mps2 =
-                static_cast<float>(original.nominal_lateral_acceleration_mps2);
-            packet.safe_rejoin_requested = original.safe_rejoin_requested;
             if (!m_receiver.receive(packet, aligned)) return false;
         }
     }

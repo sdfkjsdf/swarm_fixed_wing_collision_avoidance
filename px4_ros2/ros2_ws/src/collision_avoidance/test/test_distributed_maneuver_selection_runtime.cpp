@@ -12,8 +12,8 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <collision_avoidance/communication/DistributedManeuverSelectionRuntime.hpp>
-#include <collision_avoidance/msg/trajectory_intent.hpp>
-#include <collision_avoidance/msg/maneuver_selection_decision.hpp>
+#include <collision_avoidance/msg/trajectory_intent_batch.hpp>
+#include <collision_avoidance/msg/maneuver_coordination.hpp>
 #include <px4_msgs/msg/airspeed_validated.hpp>
 #include <px4_msgs/msg/estimator_trajectory_belief.hpp>
 
@@ -122,29 +122,29 @@ TEST(DistributedManeuverSelectionRuntime, ExchangesIntentsAndScoresIndependently
     std::size_t intent_a_count = 0;
     std::size_t intent_b_count = 0;
     auto intent_a_subscription =
-        node->create_subscription<collision_avoidance::msg::TrajectoryIntent>(
+        node->create_subscription<collision_avoidance::msg::TrajectoryIntentBatch>(
             "/common/px4_0/trajectory_intent",
             rclcpp::SensorDataQoS(),
             [&intent_a_count](
-                collision_avoidance::msg::TrajectoryIntent::ConstSharedPtr) {
-                ++intent_a_count;
+                collision_avoidance::msg::TrajectoryIntentBatch::ConstSharedPtr message) {
+                intent_a_count += message->candidate_set_size;
             });
     auto intent_b_subscription =
-        node->create_subscription<collision_avoidance::msg::TrajectoryIntent>(
+        node->create_subscription<collision_avoidance::msg::TrajectoryIntentBatch>(
             "/common/px4_1/trajectory_intent",
             rclcpp::SensorDataQoS(),
             [&intent_b_count](
-                collision_avoidance::msg::TrajectoryIntent::ConstSharedPtr) {
-                ++intent_b_count;
+                collision_avoidance::msg::TrajectoryIntentBatch::ConstSharedPtr message) {
+                intent_b_count += message->candidate_set_size;
             });
-    std::optional<collision_avoidance::msg::ManeuverSelectionDecision>
+    std::optional<collision_avoidance::msg::ManeuverCoordination>
         decision_message_a;
     auto decision_a_subscription = node->create_subscription<
-        collision_avoidance::msg::ManeuverSelectionDecision>(
+        collision_avoidance::msg::ManeuverCoordination>(
         "/common/px4_0/maneuver_selection_decision",
         rclcpp::SensorDataQoS(),
         [&decision_message_a](
-            collision_avoidance::msg::ManeuverSelectionDecision::
+            collision_avoidance::msg::ManeuverCoordination::
                 ConstSharedPtr message) {
             decision_message_a = *message;
         });

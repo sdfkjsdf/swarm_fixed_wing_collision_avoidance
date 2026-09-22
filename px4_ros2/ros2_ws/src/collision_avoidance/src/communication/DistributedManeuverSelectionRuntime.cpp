@@ -63,19 +63,15 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
     const std::string airspeed_topic =
         "/px4_" + std::to_string(m_vehicle_id)
         + "/fmu/out/airspeed_validated_v1";
-    const std::size_t candidate_count = worker_params.exhaustive_test_mode
-        ? selection::kExhaustiveCandidatesPerAircraft
-        : selection::kCandidatesPerAircraft;
     const std::size_t intent_history_depth =
         requiredTrajectoryIntentHistoryDepth(
-            candidate_count,
             worker_params.coordination_delay_us,
             worker_params.trajectory_refresh_period_us);
 
     m_intent_publisher = std::make_unique<TrajectoryIntentPublisher>(
         m_node, own_intent_topic, intent_history_depth, worker_params.stopped_stage_timing_enabled);
     m_decision_publisher = m_node.create_publisher<
-        collision_avoidance::msg::ManeuverSelectionDecision>(
+        collision_avoidance::msg::ManeuverCoordination>(
         "/common/px4_" + std::to_string(m_vehicle_id)
             + "/maneuver_selection_decision",
         rclcpp::SensorDataQoS());
@@ -111,11 +107,11 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
             + "/maneuver_selection_decision";
         m_decision_subscriptions.push_back(
             m_node.create_subscription<
-                collision_avoidance::msg::ManeuverSelectionDecision>(
+                collision_avoidance::msg::ManeuverCoordination>(
                 remote_decision_topic,
                 rclcpp::SensorDataQoS(),
                 [this, remote_vehicle_id](
-                    collision_avoidance::msg::ManeuverSelectionDecision::
+                    collision_avoidance::msg::ManeuverCoordination::
                         ConstSharedPtr message) {
                     selection::ManeuverSelectionPeerDecision decision;
                     decision.vehicle_id = message->vehicle_id;
@@ -425,15 +421,14 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
     for (std::size_t output_index = 0; output_index < output_count; ++output_index) {
         const auto output = m_worker.tryPopOutput();
         if (!output) break;
-        if (m_intent_publisher) {
-            for (std::size_t index = 0;
-                 index < output->intent_packet_count; ++index) {
-                m_intent_publisher->publish(output->intent_packets[index]);
-            }
+        if (m_intent_publisher && output->intent_packet_count > 0
+            && !m_intent_publisher->publish(output->intent_packets, output->intent_packet_count)) {
+            RCLCPP_ERROR_THROTTLE(m_node.get_logger(), *m_node.get_clock(), 1000,
+                "[maneuver-selection] inconsistent trajectory batch; not published");
         }
         if (output->has_decision) {
             if (m_decision_publisher) {
-                collision_avoidance::msg::ManeuverSelectionDecision message;
+                collision_avoidance::msg::ManeuverCoordination message;
                 const auto & decision = output->decision;
                 message.selection_timestamp_us =
                     decision.selection_timestamp_us;
@@ -572,24 +567,8 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 message.activation_requested = decision.activation_requested;
                 message.command_execution_requested =
                     decision.command_execution_requested;
-                message.v4_horizon_gate_evaluated =
-                    decision.v4_horizon_gate_evaluated;
-                message.v4_horizon_gate_valid =
-                    decision.v4_horizon_gate_valid;
                 message.v4_horizon_local_gate_active =
                     decision.v4_horizon_local_gate_active;
-                message.v4_horizon_gate_active =
-                    decision.v4_horizon_gate_active;
-                message.v4_horizon_h_worst_m = static_cast<float>(
-                    decision.v4_horizon_h_worst_m);
-                message.v4_horizon_trigger_m = static_cast<float>(
-                    decision.v4_horizon_trigger_m);
-                message.v4_horizon_worst_time_offset_s = static_cast<float>(
-                    decision.v4_horizon_worst_time_offset_s);
-                message.v4_horizon_worst_first_vehicle_id =
-                    decision.v4_horizon_worst_first_vehicle_id;
-                message.v4_horizon_worst_second_vehicle_id =
-                    decision.v4_horizon_worst_second_vehicle_id;
                 message.activation_just_started =
                     decision.activation_just_started;
                 message.activation_just_ended =
@@ -608,122 +587,10 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                     decision.v4_shadow_evaluated;
                 message.v4_shadow_status = static_cast<std::uint8_t>(
                     decision.v4_shadow_status);
-                message.v4_airspeed_snapshot_status =
-                    static_cast<std::uint8_t>(
-                        decision.v4_airspeed_snapshot_status);
-                message.v4_airspeed_source = static_cast<std::uint8_t>(
-                    decision.v4_airspeed_source);
-                message.v4_px4_airspeed_source =
-                    decision.v4_px4_airspeed_source;
-                message.v4_airspeed_timestamp_us =
-                    decision.v4_airspeed_timestamp_us;
-                message.v4_airspeed_age_us = decision.v4_airspeed_age_us;
-                message.v4_nominal_snapshot_status =
-                    static_cast<std::uint8_t>(
-                        decision.v4_nominal_snapshot_status);
-                message.v4_nominal_available =
-                    decision.v4_nominal_available;
-                message.v4_nominal_timestamp_us =
-                    decision.v4_nominal_timestamp_us;
-                message.v4_nominal_age_us = decision.v4_nominal_age_us;
-                message.v4_core_status = static_cast<std::uint8_t>(
-                    decision.v4_safe_control.status);
-                message.v4_longitudinal_source = static_cast<std::uint8_t>(
-                    decision.v4_safe_control.longitudinal_source);
-                message.v4_effective_max_heading_rate_radps =
-                    static_cast<float>(decision.v4_safe_control
-                        .effective_max_heading_rate_radps);
-                message.v4_left_feasible =
-                    decision.v4_safe_control.left_safe.feasible;
-                message.v4_left_lower_radps = static_cast<float>(
-                    decision.v4_safe_control.left_safe.lower_radps);
-                message.v4_left_upper_radps = static_cast<float>(
-                    decision.v4_safe_control.left_safe.upper_radps);
-                message.v4_right_feasible =
-                    decision.v4_safe_control.right_safe.feasible;
-                message.v4_right_lower_radps = static_cast<float>(
-                    decision.v4_safe_control.right_safe.lower_radps);
-                message.v4_right_upper_radps = static_cast<float>(
-                    decision.v4_safe_control.right_safe.upper_radps);
-                message.v4_first_infeasible_vehicle_id =
-                    decision.v4_safe_control.first_infeasible_vehicle_id;
-                message.v4_first_infeasible_direction =
-                    static_cast<std::uint8_t>(decision.v4_safe_control
-                        .first_infeasible_direction);
-                message.v4_first_infeasible_residual_mps = 0.0F;
-                for (std::size_t index = 0;
-                     index < decision.v4_safe_control.diagnostic_count;
-                     ++index) {
-                    const auto & diagnostic =
-                        decision.v4_safe_control.diagnostics[index];
-                    if (!diagnostic.constraint_feasible
-                        && diagnostic.vehicle_id
-                            == decision.v4_safe_control
-                                .first_infeasible_vehicle_id
-                        && diagnostic.direction
-                            == decision.v4_safe_control
-                                .first_infeasible_direction) {
-                        message.v4_first_infeasible_residual_mps =
-                            static_cast<float>(
-                                diagnostic.constraint_shortfall_mps);
-                        break;
-                    }
-                }
-                message.mode_b_threat_status = static_cast<std::uint8_t>(
-                    decision.mode_b_threat_status);
-                message.mode_b_invalid_threat_vehicle_id =
-                    decision.mode_b_invalid_threat_vehicle_id;
-                message.mode_b_interpolation_status =
-                    static_cast<std::uint8_t>(
-                        decision.mode_b_interpolation_status);
-                message.mode_b_branch_classification =
-                    static_cast<std::uint8_t>(
-                        decision.mode_b_branch_classification);
-                message.mode_b_left_certified =
-                    decision.mode_b_left_certified;
-                message.mode_b_right_certified =
-                    decision.mode_b_right_certified;
-                message.mode_b_left_minimum_path_margin_m =
-                    static_cast<float>(
-                        decision.mode_b_left_minimum_path_margin_m);
-                message.mode_b_right_minimum_path_margin_m =
-                    static_cast<float>(
-                        decision.mode_b_right_minimum_path_margin_m);
-                message.mode_b_left_terminal_turn_margin_m =
-                    static_cast<float>(
-                        decision.mode_b_left_terminal_turn_margin_m);
-                message.mode_b_right_terminal_turn_margin_m =
-                    static_cast<float>(
-                        decision.mode_b_right_terminal_turn_margin_m);
-                message.mode_b_left_interpolation_status =
-                    static_cast<std::uint8_t>(
-                        decision.mode_b_left_interpolation_status);
-                message.mode_b_right_interpolation_status =
-                    static_cast<std::uint8_t>(
-                        decision.mode_b_right_interpolation_status);
-                message.mode_b_left_mu_star = static_cast<float>(
-                    decision.mode_b_left_mu_star);
-                message.mode_b_right_mu_star = static_cast<float>(
-                    decision.mode_b_right_mu_star);
-                message.mode_b_left_safe_rate_radps = static_cast<float>(
-                    decision.mode_b_left_safe_rate_radps);
-                message.mode_b_right_safe_rate_radps = static_cast<float>(
-                    decision.mode_b_right_safe_rate_radps);
                 message.v4_candidate_status = static_cast<std::uint8_t>(
                     decision.v4_candidates.status);
                 message.v4_candidate_count = static_cast<std::uint8_t>(
                     decision.v4_candidates.candidate_count);
-                for (std::size_t index = 0;
-                     index < decision.v4_candidates.candidate_count
-                        && index < decision.v4_candidates.candidates.size();
-                     ++index) {
-                    message.v4_candidate_roles[index] =
-                        static_cast<std::uint8_t>(
-                            decision.v4_candidates.candidates[index].role);
-                    message.v4_candidate_rates_radps[index] =
-                        static_cast<float>(decision.v4_candidates
-                            .candidates[index].heading_rate_v4_radps);
-                }
                 m_decision_publisher->publish(message);
             }
             latest_control_decision = output->decision;

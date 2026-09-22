@@ -1,4 +1,5 @@
-# Compact A-to-B trajectory intent in the shared local NED frame.
+# Historical per-candidate schema: retained to deserialize recorded rosbags.
+# Live /common/px4_N/trajectory_intent uses TrajectoryIntentBatch instead.
 uint64 source_timestamp_us
 uint64 selection_epoch
 uint8 candidate_id

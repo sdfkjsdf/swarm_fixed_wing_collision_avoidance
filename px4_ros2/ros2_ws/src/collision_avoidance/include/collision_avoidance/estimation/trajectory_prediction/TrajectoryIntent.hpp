@@ -73,12 +73,6 @@ struct TrajectoryIntentPacket
     // hypothetical candidate. This is not an acknowledgement from PX4.
     std::array<float, kTrajectoryIntentInputDimension> source_execution_input{};
     bool source_execution_input_available{false};
-    // Formation command and rejoin request captured with this candidate
-    // library revision. They make the component-selection objective part of
-    // the same frozen, distributed snapshot as the seven trajectories.
-    float nominal_lateral_acceleration_mps2{
-        std::numeric_limits<float>::quiet_NaN()};
-    bool safe_rejoin_requested{false};
 };
 
 static_assert(std::is_trivially_copyable_v<TrajectoryIntentPacket>);
@@ -94,9 +88,6 @@ struct ReceivedTrajectoryIntent
     std::uint64_t candidate_input_revision{0};
     PredictInput source_execution_input{};
     bool source_execution_input_available{false};
-    double nominal_lateral_acceleration_mps2{
-        std::numeric_limits<double>::quiet_NaN()};
-    bool safe_rejoin_requested{false};
     PredictionMeanTrajectory reconstructed_mean{};
     TrajectoryCone cone{};
 };

@@ -2537,7 +2537,7 @@ TEST(ManeuverSelectionWorker, NominalIntentReuseIsLimitedToOneActivationUpdate)
     EXPECT_GT(std::abs(output.decision.post_release_minimum_ad_m - straight_ad), 1.0);
 }
 
-TEST(ManeuverSelectionWorker, UnavailableRejoinMetadataDoesNotSuppressSevenCandidates)
+TEST(ManeuverSelectionWorker, UnavailableNominalDoesNotSuppressSevenCandidates)
 {
     for (bool future_nominal : {false, true}) {
         SCOPED_TRACE(future_nominal);
@@ -2574,11 +2574,8 @@ TEST(ManeuverSelectionWorker, UnavailableRejoinMetadataDoesNotSuppressSevenCandi
         ASSERT_TRUE(a.decision.safe_rejoin_active);
         ce::TrajectoryPredict predictor(p0.predictor_params);
         ce::TrajectoryIntentReceiver receiver(predictor, p0.uncertainty_params);
-        bool held_request = a.decision.safe_rejoin_active;
-        const auto check = [&](std::uint64_t offset, bool nominal_available) {
+        const auto check = [&](std::uint64_t offset) {
             SCOPED_TRACE(offset);
-            // Packet construction precedes the existing activation monitor update.
-            const bool request = held_request && nominal_available;
             auto output = pushBeliefAndProcess(*first,
                 beliefSnapshot(start + offset, -1000, 0, -20, 0));
             EXPECT_EQ(output.intent_packet_count, 7U);
@@ -2586,30 +2583,21 @@ TEST(ManeuverSelectionWorker, UnavailableRejoinMetadataDoesNotSuppressSevenCandi
             for (std::size_t i = 0; i < output.intent_packet_count; ++i) {
                 const auto & packet = output.intent_packets[i];
                 EXPECT_EQ(packet.candidate_id, i);
-                EXPECT_EQ(packet.safe_rejoin_requested, request);
-                EXPECT_EQ(std::isfinite(packet.nominal_lateral_acceleration_mps2), nominal_available);
                 ce::ReceivedTrajectoryIntent received;
                 EXPECT_TRUE(receiver.receive(packet, received));
-                // The receiver must still reject contradictory metadata from peers.
-                auto contradictory = packet;
-                contradictory.safe_rejoin_requested = true;
-                contradictory.nominal_lateral_acceleration_mps2 =
-                    std::numeric_limits<float>::quiet_NaN();
-                EXPECT_FALSE(receiver.receive(contradictory, received));
             }
-            held_request = output.decision.safe_rejoin_active;
         };
-        // Both cases start with a verified held request: one advertises a valid
-        // request, the other exercises the recorded +8 ms future-nominal failure.
+        // Exercise the recorded +8 ms future-nominal failure while release
+        // remains blocked. Nominal metadata no longer belongs to the library.
         ASSERT_TRUE(first->pushNominalSetpoint(nominalSnapshot(
             start + 400'000 + (future_nominal ? 8'000 : 0))));
-        check(400'000, !future_nominal);
-        check(450'000, true);  // Nominal becomes usable without relaxing time checks.
-        check(550'000, false); // Stale nominal must not suppress avoidance either.
+        check(400'000);
+        check(450'000); // Nominal becomes usable without relaxing time checks.
+        check(550'000); // Stale nominal must not suppress avoidance either.
         auto invalid = nominalSnapshot(start + 600'000);
         invalid.valid = false;
         ASSERT_TRUE(first->pushNominalSetpoint(invalid));
-        check(600'000, false);
+        check(600'000);
     }
 }
 

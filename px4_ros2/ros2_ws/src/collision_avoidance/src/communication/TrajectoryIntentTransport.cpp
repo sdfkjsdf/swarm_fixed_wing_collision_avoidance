@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <utility>
 
 namespace collision_avoidance::communication
@@ -17,6 +18,14 @@ std::int64_t wallNowNs() noexcept
 {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// NaN is allowed for an unused altitude command. Compare the transmitted
+// float bits, not numeric equality, when validating a shared source snapshot.
+template<typename T>
+bool sameBits(const T & first, const T & second) noexcept
+{
+    return std::memcmp(&first, &second, sizeof(T)) == 0;
 }
 
 void writeTransportTiming(std::ostream & out, int vehicle, int peer,
@@ -62,105 +71,103 @@ TrajectorySample decodeCompressedMean(
 }  // namespace
 
 std::size_t requiredTrajectoryIntentHistoryDepth(
-    std::size_t candidate_count,
     std::uint64_t coordination_delay_us,
     std::uint64_t trajectory_refresh_period_us) noexcept
 {
-    if (candidate_count == 0) {
-        return 1;
-    }
     if (trajectory_refresh_period_us == 0) {
-        return candidate_count;
+        return 1;
     }
     const std::uint64_t refresh_count =
         coordination_delay_us / trajectory_refresh_period_us + 1;
-    return candidate_count * static_cast<std::size_t>(refresh_count);
+    return static_cast<std::size_t>(refresh_count);
 }
 
 rclcpp::QoS trajectoryIntentQos(std::size_t history_depth)
 {
-    // All candidate messages from one refresh form one logical library.  A
-    // missing member must be recovered by DDS rather than silently turning a
-    // complete published library into CandidateSetsIncomplete downstream.
+    // History counts complete refreshes, not individual candidates. Keep the
+    // same coordination-window coverage and reliable/volatile delivery.
     rclcpp::QoS qos(rclcpp::KeepLast(std::max<std::size_t>(history_depth, 1)));
     qos.reliable();
     qos.durability_volatile();
     return qos;
 }
 
-collision_avoidance::msg::TrajectoryIntent toRosMessage(
-    const estimation::TrajectoryIntentPacket & packet)
+bool toRosMessage(const TrajectoryIntentPackets & packets, std::size_t count,
+    collision_avoidance::msg::TrajectoryIntentBatch & message)
 {
-    collision_avoidance::msg::TrajectoryIntent message;
-    message.source_timestamp_us = packet.source_timestamp_us;
-    message.selection_epoch = packet.selection_epoch;
-    message.candidate_id = packet.candidate_id;
-    message.candidate_set_size = packet.candidate_set_size;
+    if (count == 0 || count > packets.size()) return false;
+    const auto & common = packets[0];
+    if (common.candidate_set_kind != estimation::CandidateSetKind::LegacyRoll
+        && common.candidate_set_kind != estimation::CandidateSetKind::V4SafeControl) return false;
+    std::array<bool, estimation::kManeuverCandidateCount> seen{};
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto & packet = packets[i];
+        if (packet.candidate_id >= seen.size() || seen[packet.candidate_id]
+            || packet.candidate_set_size != count
+            || packet.source_timestamp_us != common.source_timestamp_us
+            || packet.selection_epoch != common.selection_epoch
+            || packet.candidate_set_kind != common.candidate_set_kind
+            || !sameBits(packet.initial_covariance, common.initial_covariance)
+            || !sameBits(packet.initial_state, common.initial_state)
+            || !sameBits(packet.initial_roll_setpoint_rad, common.initial_roll_setpoint_rad)
+            || !sameBits(packet.source_execution_input, common.source_execution_input)
+            || packet.source_execution_input_available
+                != common.source_execution_input_available) return false;
+        seen[packet.candidate_id] = true;
+    }
+    message = collision_avoidance::msg::TrajectoryIntentBatch{};
+    message.source_timestamp_us = common.source_timestamp_us;
+    message.selection_epoch = common.selection_epoch;
+    message.candidate_set_size = static_cast<std::uint8_t>(count);
     message.candidate_set_kind = static_cast<std::uint8_t>(
-        packet.candidate_set_kind);
-    std::copy(
-        packet.candidate_input.begin(),
-        packet.candidate_input.end(),
-        message.candidate_input.begin());
-    message.candidate_input_revision = packet.candidate_input_revision;
-    message.source_execution_input = packet.source_execution_input;
-    message.source_execution_input_available = packet.source_execution_input_available;
-    message.nominal_lateral_acceleration_mps2 =
-        packet.nominal_lateral_acceleration_mps2;
-    message.safe_rejoin_requested = packet.safe_rejoin_requested;
-    message.initial_roll_setpoint_rad = packet.initial_roll_setpoint_rad;
-    std::copy(
-        packet.initial_state.begin(),
-        packet.initial_state.end(),
-        message.initial_state.begin());
-    std::copy(
-        packet.initial_covariance.begin(),
-        packet.initial_covariance.end(),
-        message.initial_covariance.begin());
-    const auto compressed_mean = encodeCompressedMean(packet.compressed_mean);
-    std::copy(
-        compressed_mean.begin(),
-        compressed_mean.end(),
-        message.compressed_mean.begin());
-    return message;
+        common.candidate_set_kind);
+    message.initial_covariance = common.initial_covariance;
+    message.initial_state = common.initial_state;
+    message.initial_roll_setpoint_rad = common.initial_roll_setpoint_rad;
+    message.source_execution_input = common.source_execution_input;
+    message.source_execution_input_available = common.source_execution_input_available;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto & packet = packets[i];
+        auto & candidate = message.candidates[i];
+        candidate.candidate_id = packet.candidate_id;
+        candidate.candidate_input = packet.candidate_input;
+        candidate.candidate_input_revision = packet.candidate_input_revision;
+        candidate.compressed_mean = encodeCompressedMean(packet.compressed_mean);
+    }
+    return true;
 }
 
-estimation::TrajectoryIntentPacket fromRosMessage(
-    const collision_avoidance::msg::TrajectoryIntent & message)
+bool fromRosMessage(const collision_avoidance::msg::TrajectoryIntentBatch & message,
+    TrajectoryIntentPackets & packets)
 {
-    estimation::TrajectoryIntentPacket packet{};
-    packet.source_timestamp_us = message.source_timestamp_us;
-    packet.selection_epoch = message.selection_epoch;
-    packet.candidate_id = message.candidate_id;
-    packet.candidate_set_size = message.candidate_set_size;
-    packet.candidate_set_kind = static_cast<estimation::CandidateSetKind>(
-        message.candidate_set_kind);
-    std::copy(
-        message.candidate_input.begin(),
-        message.candidate_input.end(),
-        packet.candidate_input.begin());
-    packet.candidate_input_revision = message.candidate_input_revision;
-    packet.source_execution_input = message.source_execution_input;
-    packet.source_execution_input_available = message.source_execution_input_available;
-    packet.nominal_lateral_acceleration_mps2 =
-        message.nominal_lateral_acceleration_mps2;
-    packet.safe_rejoin_requested = message.safe_rejoin_requested;
-    packet.initial_roll_setpoint_rad = message.initial_roll_setpoint_rad;
-    std::copy(
-        message.initial_state.begin(),
-        message.initial_state.end(),
-        packet.initial_state.begin());
-    std::copy(
-        message.initial_covariance.begin(),
-        message.initial_covariance.end(),
-        packet.initial_covariance.begin());
-    std::array<float, 18> compressed_mean{};
-    std::copy(
-        message.compressed_mean.begin(),
-        message.compressed_mean.end(),
-        compressed_mean.begin());
-    packet.compressed_mean = decodeCompressedMean(compressed_mean);
-    return packet;
+    const auto count = message.candidate_set_size;
+    if (count == 0 || count > packets.size()
+        || message.candidate_set_kind > static_cast<std::uint8_t>(
+            estimation::CandidateSetKind::V4SafeControl)) return false;
+    std::array<bool, estimation::kManeuverCandidateCount> seen{};
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto id = message.candidates[i].candidate_id;
+        if (id >= seen.size() || seen[id]) return false;
+        seen[id] = true;
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        auto & packet = packets[i];
+        const auto & candidate = message.candidates[i];
+        packet.source_timestamp_us = message.source_timestamp_us;
+        packet.selection_epoch = message.selection_epoch;
+        packet.candidate_set_size = count;
+        packet.candidate_set_kind = static_cast<estimation::CandidateSetKind>(message.candidate_set_kind);
+        packet.initial_covariance = message.initial_covariance;
+        packet.candidate_id = candidate.candidate_id;
+        packet.candidate_input = candidate.candidate_input;
+        packet.candidate_input_revision = candidate.candidate_input_revision;
+        packet.source_execution_input = message.source_execution_input;
+        packet.source_execution_input_available = message.source_execution_input_available;
+        packet.initial_roll_setpoint_rad = message.initial_roll_setpoint_rad;
+        packet.initial_state = message.initial_state;
+        packet.compressed_mean = decodeCompressedMean(candidate.compressed_mean);
+    }
+    return true;
 }
 
 TrajectoryIntentPublisher::TrajectoryIntentPublisher(
@@ -169,22 +176,28 @@ TrajectoryIntentPublisher::TrajectoryIntentPublisher(
     std::size_t history_depth,
     bool measure_transport)
 : m_timing(measure_transport ? std::make_unique<TrajectoryTransportTimingBuffer>() : nullptr),
-  m_publisher(node.create_publisher<collision_avoidance::msg::TrajectoryIntent>(
+  m_publisher(node.create_publisher<collision_avoidance::msg::TrajectoryIntentBatch>(
       topic_name, trajectoryIntentQos(history_depth)))
 {
 }
 
-void TrajectoryIntentPublisher::publish(
-    const estimation::TrajectoryIntentPacket & packet)
+bool TrajectoryIntentPublisher::publish(const TrajectoryIntentPackets & packets, std::size_t count)
 {
-    const auto message = toRosMessage(packet);
+    collision_avoidance::msg::TrajectoryIntentBatch message;
+    if (!toRosMessage(packets, count, message)) return false;
     const auto sent_ns = m_timing ? wallNowNs() : 0;
     m_publisher->publish(message);
     // Control transport first; no allocation, formatting or I/O while running.
     if (m_timing) {
-        m_timing->append({packet.source_timestamp_us, packet.selection_epoch,
-            packet.candidate_input_revision, sent_ns, 0, 0, packet.candidate_id});
+        // Preserve logical candidate identities for existing latency analysis;
+        // all candidates now share ONE publish/callback timestamp and DDS sample.
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto & packet = packets[i];
+            m_timing->append({packet.source_timestamp_us, packet.selection_epoch,
+                packet.candidate_input_revision, sent_ns, 0, 0, packet.candidate_id});
+        }
     }
+    return true;
 }
 
 void TrajectoryIntentPublisher::writeStoppedTiming(std::ostream & out, int vehicle) const
@@ -201,23 +214,30 @@ TrajectoryIntentSubscription::TrajectoryIntentSubscription(
 : m_timing(measure_transport ? std::make_unique<TrajectoryTransportTimingBuffer>() : nullptr)
 {
     m_subscription =
-        node.create_subscription<collision_avoidance::msg::TrajectoryIntent>(
+        node.create_subscription<collision_avoidance::msg::TrajectoryIntentBatch>(
             topic_name,
             trajectoryIntentQos(history_depth),
             [this, callback = std::move(callback)](
-                collision_avoidance::msg::TrajectoryIntent::ConstSharedPtr message,
+                collision_avoidance::msg::TrajectoryIntentBatch::ConstSharedPtr message,
                 const rclcpp::MessageInfo & info) {
                 const auto received_ns = m_timing ? wallNowNs() : 0;
+                TrajectoryIntentPackets packets{};
+                if (!fromRosMessage(*message, packets)) return;
                 if (callback) {
-                    callback(fromRosMessage(*message));
+                    for (std::size_t i = 0; i < message->candidate_set_size; ++i) {
+                        callback(packets[i]);
+                    }
                 }
                 // The production input queue is serviced before diagnostic storage.
                 if (m_timing) {
                     const auto & metadata = info.get_rmw_message_info();
-                    m_timing->append({message->source_timestamp_us, message->selection_epoch,
-                        message->candidate_input_revision, received_ns,
-                        metadata.source_timestamp, metadata.received_timestamp,
-                        message->candidate_id});
+                    for (std::size_t i = 0; i < message->candidate_set_size; ++i) {
+                        const auto & candidate = message->candidates[i];
+                        m_timing->append({message->source_timestamp_us, message->selection_epoch,
+                            candidate.candidate_input_revision, received_ns,
+                            metadata.source_timestamp, metadata.received_timestamp,
+                            candidate.candidate_id});
+                    }
                 }
             });
 }

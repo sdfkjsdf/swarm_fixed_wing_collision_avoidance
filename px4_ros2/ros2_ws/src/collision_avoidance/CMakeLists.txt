@@ -25,7 +25,10 @@ find_package(Threads REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
     "msg/TrajectoryCone.msg"
     "msg/TrajectoryIntent.msg"
+    "msg/TrajectoryCandidate.msg"
+    "msg/TrajectoryIntentBatch.msg"
     "msg/ManeuverSelectionDecision.msg"
+    "msg/ManeuverCoordination.msg"
     "msg/InteractionGraphDiagnostics.msg"
     "msg/ManeuverBudgetTrace.msg"
 )

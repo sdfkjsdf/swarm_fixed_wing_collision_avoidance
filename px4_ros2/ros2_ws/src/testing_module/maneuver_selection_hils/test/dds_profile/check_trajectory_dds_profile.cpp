@@ -1,6 +1,6 @@
 // Offline startup check only: never linked into the guidance node.
 // Run with RMW_IMPLEMENTATION=rmw_fastrtps_cpp and the production XML profile.
-#include <collision_avoidance/msg/trajectory_intent.hpp>
+#include <collision_avoidance/msg/trajectory_intent_batch.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rmw_fastrtps_cpp/get_publisher.hpp>
 #include <fastdds/dds/publisher/qos/DataWriterQos.hpp>
@@ -12,7 +12,7 @@ int main(int argc, char ** argv)
     rclcpp::init(argc, argv);
     try {
         auto node = std::make_shared<rclcpp::Node>("check_trajectory_dds_profile");
-        auto qos = rclcpp::QoS(rclcpp::KeepLast(42)).reliable().durability_volatile();
+        auto qos = rclcpp::QoS(rclcpp::KeepLast(6)).reliable().durability_volatile();
         auto read_qos = [](const auto & publisher) {
             auto * writer = rmw_fastrtps_cpp::get_datawriter(
                 rcl_publisher_get_rmw_handle(publisher->get_publisher_handle().get()));
@@ -20,7 +20,7 @@ int main(int argc, char ** argv)
             return writer->get_qos();
         };
         // A real ROS publisher without a matching XML profile is the baseline.
-        auto other = node->create_publisher<collision_avoidance::msg::TrajectoryIntent>(
+        auto other = node->create_publisher<collision_avoidance::msg::TrajectoryIntentBatch>(
             "/common/dds_profile_control", qos);
         const auto baseline = read_qos(other);
         if (baseline.reliable_writer_qos().times.heartbeatPeriod.seconds != 3 ||
@@ -28,7 +28,7 @@ int main(int argc, char ** argv)
             throw std::runtime_error("unrelated writer default was modified");
         }
         for (int id = 0; id < 5; ++id) {
-            auto pub = node->create_publisher<collision_avoidance::msg::TrajectoryIntent>(
+            auto pub = node->create_publisher<collision_avoidance::msg::TrajectoryIntentBatch>(
                 "/common/px4_" + std::to_string(id) + "/trajectory_intent", qos);
             auto actual = read_qos(pub);
             auto & heartbeat = actual.reliable_writer_qos().times.heartbeatPeriod;

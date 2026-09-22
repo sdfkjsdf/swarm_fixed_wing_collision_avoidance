@@ -11,7 +11,7 @@
 #include <px4_msgs/msg/airspeed_validated.hpp>
 
 #include <collision_avoidance/communication/TrajectoryIntentTransport.hpp>
-#include <collision_avoidance/msg/maneuver_selection_decision.hpp>
+#include <collision_avoidance/msg/maneuver_coordination.hpp>
 #include <collision_avoidance/selection/ManeuverSelectionWorker.hpp>
 
 namespace collision_avoidance::communication
@@ -64,12 +64,12 @@ private:
 
     std::unique_ptr<TrajectoryIntentPublisher> m_intent_publisher;
     rclcpp::Publisher<
-        collision_avoidance::msg::ManeuverSelectionDecision>::SharedPtr
+        collision_avoidance::msg::ManeuverCoordination>::SharedPtr
         m_decision_publisher;
     std::vector<std::unique_ptr<TrajectoryIntentSubscription>>
         m_intent_subscriptions;
     std::vector<rclcpp::Subscription<
-        collision_avoidance::msg::ManeuverSelectionDecision>::SharedPtr>
+        collision_avoidance::msg::ManeuverCoordination>::SharedPtr>
         m_decision_subscriptions;
     rclcpp::Subscription<px4_msgs::msg::EstimatorTrajectoryBelief>::SharedPtr
         m_belief_subscription;

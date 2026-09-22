@@ -35,10 +35,7 @@ bool finiteCandidate(const estimation::ReceivedTrajectoryIntent & intent)
             != estimation::CandidateSetKind::LegacyRoll
         || !std::isfinite(intent.candidate_input.V_cmd)
         || !std::isfinite(intent.candidate_input.h_dot_cmd)
-        || !std::isfinite(intent.candidate_input.a_lat_cmd)
-        || (intent.safe_rejoin_requested
-            && !std::isfinite(
-                intent.nominal_lateral_acceleration_mps2))) {
+        || !std::isfinite(intent.candidate_input.a_lat_cmd)) {
         return false;
     }
     for (const auto & point : intent.cone) {
@@ -118,8 +115,6 @@ std::uint64_t trajectoryCandidateLibraryHash(
             hashValue(hash, intent.candidate_input.h_cmd);
             hashValue(hash, intent.candidate_input.h_dot_cmd);
             hashValue(hash, intent.candidate_input.a_lat_cmd);
-            hashValue(hash, intent.nominal_lateral_acceleration_mps2);
-            hashValue(hash, intent.safe_rejoin_requested);
             for (const auto & point : intent.cone) {
                 hashValue(hash, point.mean.p_n);
                 hashValue(hash, point.mean.p_e);
@@ -172,11 +167,6 @@ bool PairwiseAdCertificationEvaluator::evaluate(
             static_cast<int>(aircraft);
         const std::uint64_t source_timestamp_us =
             candidate_sets[aircraft][0].source_timestamp_us;
-        const double nominal_lateral_acceleration_mps2 =
-            candidate_sets[aircraft][0]
-                .nominal_lateral_acceleration_mps2;
-        const bool safe_rejoin_requested =
-            candidate_sets[aircraft][0].safe_rejoin_requested;
         candidate.source_timestamps_us[aircraft] = source_timestamp_us;
         for (std::size_t slot = 0;
              slot < kExhaustiveCandidatesPerAircraft; ++slot) {
@@ -184,14 +174,7 @@ bool PairwiseAdCertificationEvaluator::evaluate(
             if (!finiteCandidate(intent)
                 || intent.selection_epoch != selection_epoch
                 || intent.source_timestamp_us != source_timestamp_us
-                || intent.candidate_id != slot
-                || intent.safe_rejoin_requested != safe_rejoin_requested
-                || !(intent.nominal_lateral_acceleration_mps2
-                        == nominal_lateral_acceleration_mps2
-                    || (std::isnan(
-                            intent.nominal_lateral_acceleration_mps2)
-                        && std::isnan(
-                            nominal_lateral_acceleration_mps2)))) {
+                || intent.candidate_id != slot) {
                 result = candidate;
                 return false;
             }

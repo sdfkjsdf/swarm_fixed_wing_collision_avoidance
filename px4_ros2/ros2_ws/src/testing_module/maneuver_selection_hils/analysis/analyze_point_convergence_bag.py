@@ -17,6 +17,7 @@ import numpy as np
 import rosbag2_py
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
+from trajectory_intent_records import iter_candidate_intents
 
 
 AIRCRAFT_COUNT = 5
@@ -337,8 +338,9 @@ def read_bag(bag: Path):
     while reader.has_next():
         topic, serialized, bag_time_ns = reader.read_next()
         if topic in messages:
-            messages[topic].append(
-                (bag_time_ns, deserialize_message(serialized, classes[topic])))
+            message = deserialize_message(serialized, classes[topic])
+            items = iter_candidate_intents(message) if topic.endswith('/trajectory_intent') else (message,)
+            messages[topic].extend((bag_time_ns, item) for item in items)
     return messages
 
 
@@ -642,6 +644,10 @@ def communication_delay_summary(decisions):
 def v4_shadow_summary(decisions):
     result = []
     for vehicle, records in enumerate(decisions):
+        if any(not hasattr(message, "v4_core_status") for _, message in records):
+            result.append({"vehicle_id": vehicle, "available": False,
+                           "reason": "V4 diagnostics are not transmitted in ManeuverCoordination"})
+            continue
         enabled = [message for _, message in records if message.v4_enabled]
         evaluated = [
             message for message in enabled if message.v4_shadow_evaluated]
@@ -751,6 +757,10 @@ def v4_shadow_summary(decisions):
 def v4_horizon_gate_summary(decisions):
     result = []
     for vehicle, records in enumerate(decisions):
+        if any(not hasattr(message, "v4_horizon_gate_evaluated") for _, message in records):
+            result.append({"vehicle_id": vehicle, "available": False,
+                           "reason": "V4 diagnostics are not transmitted in ManeuverCoordination"})
+            continue
         evaluated = [
             message for _, message in records
             if message.v4_horizon_gate_evaluated]

@@ -1,5 +1,4 @@
-# Historical rosbag schema only. Live nodes publish ManeuverCoordination.
-# Kept unchanged below so earlier flight evidence remains readable.
+# Per-aircraft view of one distributed five-aircraft selection result.
 uint64 selection_timestamp_us
 int32 vehicle_id
 uint8 aircraft_count
@@ -78,68 +77,12 @@ bool formation_inhibit
 bool formation_allow_new_activation
 uint32 formation_inhibited_threat_mask
 
-# Robust 4.5 s near-nominal cone supervisor used only by horizon_gated_v4.
-bool v4_horizon_gate_evaluated
-bool v4_horizon_gate_valid
+# Minimal V4 coordination state consumed by peers; no V4/Mode-B diagnostics.
 bool v4_horizon_local_gate_active
-bool v4_horizon_gate_active
-float32 v4_horizon_h_worst_m
-float32 v4_horizon_trigger_m
-float32 v4_horizon_worst_time_offset_s
-int32 v4_horizon_worst_first_vehicle_id
-int32 v4_horizon_worst_second_vehicle_id
-
-# V4 diagnostics. v4_shadow_only distinguishes observation from cutover mode.
+uint8 v4_control_architecture
 bool v4_enabled
 bool v4_shadow_only
-uint8 v4_control_architecture
 bool v4_shadow_evaluated
 uint8 v4_shadow_status
-
-uint8 v4_airspeed_snapshot_status
-uint8 v4_airspeed_source
-int8 v4_px4_airspeed_source
-uint64 v4_airspeed_timestamp_us
-uint64 v4_airspeed_age_us
-
-uint8 v4_nominal_snapshot_status
-bool v4_nominal_available
-uint64 v4_nominal_timestamp_us
-uint64 v4_nominal_age_us
-
-uint8 v4_core_status
-uint8 v4_longitudinal_source
-float32 v4_effective_max_heading_rate_radps
-bool v4_left_feasible
-float32 v4_left_lower_radps
-float32 v4_left_upper_radps
-bool v4_right_feasible
-float32 v4_right_lower_radps
-float32 v4_right_upper_radps
-int32 v4_first_infeasible_vehicle_id
-uint8 v4_first_infeasible_direction
-float32 v4_first_infeasible_residual_mps
-
-# Closed-form backup Mode-B diagnostics. These fields remain inert when the
-# preserved legacy SafeControlSetV4 architecture is selected.
-uint8 mode_b_threat_status
-int32 mode_b_invalid_threat_vehicle_id
-uint8 mode_b_interpolation_status
-uint8 mode_b_branch_classification
-bool mode_b_left_certified
-bool mode_b_right_certified
-float32 mode_b_left_minimum_path_margin_m
-float32 mode_b_right_minimum_path_margin_m
-float32 mode_b_left_terminal_turn_margin_m
-float32 mode_b_right_terminal_turn_margin_m
-uint8 mode_b_left_interpolation_status
-uint8 mode_b_right_interpolation_status
-float32 mode_b_left_mu_star
-float32 mode_b_right_mu_star
-float32 mode_b_left_safe_rate_radps
-float32 mode_b_right_safe_rate_radps
-
 uint8 v4_candidate_status
 uint8 v4_candidate_count
-uint8[3] v4_candidate_roles
-float32[3] v4_candidate_rates_radps

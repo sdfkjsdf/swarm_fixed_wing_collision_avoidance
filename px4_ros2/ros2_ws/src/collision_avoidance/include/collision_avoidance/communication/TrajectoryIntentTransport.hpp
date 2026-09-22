@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -11,7 +12,7 @@
 
 #include <collision_avoidance/estimation/trajectory_prediction/TrajectoryIntent.hpp>
 #include <collision_avoidance/common/StoppedRecordBuffer.hpp>
-#include <collision_avoidance/msg/trajectory_intent.hpp>
+#include <collision_avoidance/msg/trajectory_intent_batch.hpp>
 
 namespace collision_avoidance::communication
 {
@@ -27,14 +28,17 @@ struct TrajectoryTransportTimingRecord
 using TrajectoryTransportTimingBuffer = common::StoppedRecordBuffer<
     TrajectoryTransportTimingRecord, 65536>;
 
-collision_avoidance::msg::TrajectoryIntent toRosMessage(
-    const estimation::TrajectoryIntentPacket & packet);
+using TrajectoryIntentPackets = std::array<estimation::TrajectoryIntentPacket,
+    estimation::kManeuverCandidateCount>;
 
-estimation::TrajectoryIntentPacket fromRosMessage(
-    const collision_avoidance::msg::TrajectoryIntent & message);
+// False rejects the entire batch before any output or input handoff.
+bool toRosMessage(const TrajectoryIntentPackets & packets, std::size_t count,
+    collision_avoidance::msg::TrajectoryIntentBatch & message);
+
+bool fromRosMessage(const collision_avoidance::msg::TrajectoryIntentBatch & message,
+    TrajectoryIntentPackets & packets);
 
 std::size_t requiredTrajectoryIntentHistoryDepth(
-    std::size_t candidate_count,
     std::uint64_t coordination_delay_us,
     std::uint64_t trajectory_refresh_period_us) noexcept;
 
@@ -49,12 +53,12 @@ public:
         std::size_t history_depth,
         bool measure_transport = false);
 
-    void publish(const estimation::TrajectoryIntentPacket & packet);
+    bool publish(const TrajectoryIntentPackets & packets, std::size_t count);
     void writeStoppedTiming(std::ostream & out, int vehicle) const;
 
 private:
     std::unique_ptr<TrajectoryTransportTimingBuffer> m_timing;
-    rclcpp::Publisher<collision_avoidance::msg::TrajectoryIntent>::SharedPtr
+    rclcpp::Publisher<collision_avoidance::msg::TrajectoryIntentBatch>::SharedPtr
         m_publisher;
 };
 
@@ -74,7 +78,7 @@ public:
 
 private:
     std::unique_ptr<TrajectoryTransportTimingBuffer> m_timing;
-    rclcpp::Subscription<collision_avoidance::msg::TrajectoryIntent>::SharedPtr
+    rclcpp::Subscription<collision_avoidance::msg::TrajectoryIntentBatch>::SharedPtr
         m_subscription;
 };
 

@@ -862,7 +862,7 @@ TEST(ExhaustiveManeuverCombinationEvaluator, EvaluatesAllFortyNineTwoAircraftCom
 }
 
 TEST(ExhaustiveManeuverCombinationEvaluator,
-    RejoinMetadataCannotOverrideAdCost)
+    SelectionHasNoRejoinObjective)
 {
     constexpr std::uint64_t timestamp_us = 9'500'000ULL;
     cs::MultiAircraftExhaustiveCandidateIntentSets candidate_sets{};
@@ -878,22 +878,12 @@ TEST(ExhaustiveManeuverCombinationEvaluator,
         }
     }
     cs::ExhaustiveManeuverCombinationEvaluator evaluator;
-    cs::ExhaustiveManeuverEvaluation baseline;
-    ASSERT_TRUE(evaluator.evaluate(timestamp_us, candidate_sets, 2U, baseline));
-    for (std::size_t aircraft = 0; aircraft < 2; ++aircraft) {
-        for (auto & intent : candidate_sets[aircraft]) {
-            intent.safe_rejoin_requested = true;
-            intent.nominal_lateral_acceleration_mps2 = aircraft == 0 ? -4.9 : 2.1;
-        }
-    }
     cs::ExhaustiveManeuverEvaluation evaluation;
     ASSERT_TRUE(evaluator.evaluate(
         timestamp_us, candidate_sets, 2U, evaluation));
     ASSERT_TRUE(evaluation.best_combination.all_pairs_feasible);
-    EXPECT_EQ(evaluation.best_combination.candidate_slots,
-        baseline.best_combination.candidate_slots);
-    EXPECT_DOUBLE_EQ(evaluation.best_combination.reciprocal_cost_sum,
-        baseline.best_combination.reciprocal_cost_sum);
+    EXPECT_EQ(evaluation.best_combination.candidate_slots[0], 0U);
+    EXPECT_EQ(evaluation.best_combination.candidate_slots[1], 6U);
     EXPECT_TRUE(std::isnan(evaluation.best_combination.nominal_rejoin_cost));
 }
 
