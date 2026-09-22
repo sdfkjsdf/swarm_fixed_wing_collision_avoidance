@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <!-- Five-aircraft deployment: only trajectory-intent writers are affected.
+       50 ms follows the trajectory refresh cadence; it is NOT a delivery bound.
+       Fast DDS 2.6 defaults to a 3 s periodic heartbeat. Leave all other times,
+       Reliable/KeepLast QoS, publication mode, and memory policy unchanged.
+       ROS Humble matches the fully-qualified ROS topic, without the DDS rt prefix.
+       Do not set RMW_FASTRTPS_USE_QOS_FROM_XML=1 for this profile. -->
+  <publisher profile_name="/common/px4_0/trajectory_intent">
+    <times><heartbeatPeriod><sec>0</sec><nanosec>50000000</nanosec></heartbeatPeriod></times>
+  </publisher>
+  <publisher profile_name="/common/px4_1/trajectory_intent">
+    <times><heartbeatPeriod><sec>0</sec><nanosec>50000000</nanosec></heartbeatPeriod></times>
+  </publisher>
+  <publisher profile_name="/common/px4_2/trajectory_intent">
+    <times><heartbeatPeriod><sec>0</sec><nanosec>50000000</nanosec></heartbeatPeriod></times>
+  </publisher>
+  <publisher profile_name="/common/px4_3/trajectory_intent">
+    <times><heartbeatPeriod><sec>0</sec><nanosec>50000000</nanosec></heartbeatPeriod></times>
+  </publisher>
+  <publisher profile_name="/common/px4_4/trajectory_intent">
+    <times><heartbeatPeriod><sec>0</sec><nanosec>50000000</nanosec></heartbeatPeriod></times>
+  </publisher>
+</profiles>

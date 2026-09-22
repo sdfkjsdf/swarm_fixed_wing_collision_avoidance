@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <utility>
 
 namespace collision_avoidance::communication
@@ -11,6 +12,28 @@ namespace
 
 using estimation::TrajectorySample;
 using estimation::Vec3;
+
+std::int64_t wallNowNs() noexcept
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+void writeTransportTiming(std::ostream & out, int vehicle, int peer,
+    const char * direction, const TrajectoryTransportTimingBuffer * timing)
+{
+    if (!timing) return;
+    out << "[stop-transport-begin],1," << vehicle << ',' << peer << ','
+        << direction << ',' << timing->size << ',' << timing->dropped << '\n';
+    for (std::size_t i = 0; i < timing->size; ++i) {
+        const auto & r = timing->records[i];
+        out << "[stop-transport]," << r.source_us << ',' << r.epoch << ','
+            << unsigned(r.candidate_id) << ',' << r.input_revision << ','
+            << r.wall_ns << ',' << r.dds_source_ns << ',' << r.dds_received_ns << '\n';
+    }
+    out << "[stop-transport-end]," << vehicle << ',' << peer << ','
+        << direction << ',' << timing->size << '\n';
+}
 
 std::array<float, 18> encodeCompressedMean(
     const TrajectorySample & sample) noexcept
@@ -143,8 +166,10 @@ estimation::TrajectoryIntentPacket fromRosMessage(
 TrajectoryIntentPublisher::TrajectoryIntentPublisher(
     rclcpp::Node & node,
     const std::string & topic_name,
-    std::size_t history_depth)
-: m_publisher(node.create_publisher<collision_avoidance::msg::TrajectoryIntent>(
+    std::size_t history_depth,
+    bool measure_transport)
+: m_timing(measure_transport ? std::make_unique<TrajectoryTransportTimingBuffer>() : nullptr),
+  m_publisher(node.create_publisher<collision_avoidance::msg::TrajectoryIntent>(
       topic_name, trajectoryIntentQos(history_depth)))
 {
 }
@@ -152,25 +177,55 @@ TrajectoryIntentPublisher::TrajectoryIntentPublisher(
 void TrajectoryIntentPublisher::publish(
     const estimation::TrajectoryIntentPacket & packet)
 {
-    m_publisher->publish(toRosMessage(packet));
+    const auto message = toRosMessage(packet);
+    const auto sent_ns = m_timing ? wallNowNs() : 0;
+    m_publisher->publish(message);
+    // Control transport first; no allocation, formatting or I/O while running.
+    if (m_timing) {
+        m_timing->append({packet.source_timestamp_us, packet.selection_epoch,
+            packet.candidate_input_revision, sent_ns, 0, 0, packet.candidate_id});
+    }
+}
+
+void TrajectoryIntentPublisher::writeStoppedTiming(std::ostream & out, int vehicle) const
+{
+    writeTransportTiming(out, vehicle, -1, "tx", m_timing.get());
 }
 
 TrajectoryIntentSubscription::TrajectoryIntentSubscription(
     rclcpp::Node & node,
     const std::string & topic_name,
     PacketCallback callback,
-    std::size_t history_depth)
+    std::size_t history_depth,
+    bool measure_transport)
+: m_timing(measure_transport ? std::make_unique<TrajectoryTransportTimingBuffer>() : nullptr)
 {
     m_subscription =
         node.create_subscription<collision_avoidance::msg::TrajectoryIntent>(
             topic_name,
             trajectoryIntentQos(history_depth),
-            [callback = std::move(callback)](
-                collision_avoidance::msg::TrajectoryIntent::ConstSharedPtr message) {
+            [this, callback = std::move(callback)](
+                collision_avoidance::msg::TrajectoryIntent::ConstSharedPtr message,
+                const rclcpp::MessageInfo & info) {
+                const auto received_ns = m_timing ? wallNowNs() : 0;
                 if (callback) {
                     callback(fromRosMessage(*message));
                 }
+                // The production input queue is serviced before diagnostic storage.
+                if (m_timing) {
+                    const auto & metadata = info.get_rmw_message_info();
+                    m_timing->append({message->source_timestamp_us, message->selection_epoch,
+                        message->candidate_input_revision, received_ns,
+                        metadata.source_timestamp, metadata.received_timestamp,
+                        message->candidate_id});
+                }
             });
+}
+
+void TrajectoryIntentSubscription::writeStoppedTiming(
+    std::ostream & out, int vehicle, int peer) const
+{
+    writeTransportTiming(out, vehicle, peer, "rx", m_timing.get());
 }
 
 }  // namespace collision_avoidance::communication

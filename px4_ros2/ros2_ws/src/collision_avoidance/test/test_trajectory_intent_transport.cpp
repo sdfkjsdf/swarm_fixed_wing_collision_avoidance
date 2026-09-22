@@ -1,4 +1,7 @@
 #include <gtest/gtest.h>
+#include <chrono>
+#include <sstream>
+#include <thread>
 
 #include <collision_avoidance/communication/TrajectoryIntentTransport.hpp>
 
@@ -81,4 +84,62 @@ TEST(TrajectoryIntentTransport, PreservesFixedPacketFields)
     EXPECT_FLOAT_EQ(
         received.compressed_mean.vel_t45.z,
         source.compressed_mean.vel_t45.z);
+}
+
+TEST(TrajectoryIntentTransport, StoppedTimingDoesNotChangePacketOrDelayInputHandoff)
+{
+    if (!rclcpp::ok()) { int argc = 0; rclcpp::init(argc, nullptr); }
+    auto node = std::make_shared<rclcpp::Node>("stopped_transport_timing_test");
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    ce::TrajectoryIntentPacket packet{};
+    packet.source_timestamp_us = 123456;
+    packet.selection_epoch = 17;
+    packet.candidate_id = 6;
+    packet.candidate_input_revision = 91;
+    packet.candidate_input = {20.F, 100.F, 0.F, 8.F};
+    std::uint64_t delivered = 0;
+    std::int64_t callback_wall = 0;
+    std::ostringstream during_callback;
+    cc::TrajectoryIntentSubscription * subscription = nullptr;
+    cc::TrajectoryIntentSubscription receiver(*node, "/test/stopped_transport",
+        [&](const ce::TrajectoryIntentPacket & received) {
+            ++delivered;
+            callback_wall = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            EXPECT_EQ(received.source_timestamp_us, packet.source_timestamp_us);
+            EXPECT_EQ(received.candidate_input, packet.candidate_input);
+            EXPECT_EQ(received.selection_epoch, packet.selection_epoch);
+            // Same-thread test only: prove append occurs after handing off input.
+            subscription->writeStoppedTiming(during_callback, 1, 0);
+        }, 42, true);
+    subscription = &receiver;
+    cc::TrajectoryIntentPublisher sender(*node, "/test/stopped_transport", 42, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    sender.publish(packet);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!delivered && std::chrono::steady_clock::now() < deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_EQ(delivered, 1U);
+    EXPECT_NE(during_callback.str().find("[stop-transport-begin],1,1,0,rx,0,0"), std::string::npos);
+    std::ostringstream tx, rx;
+    sender.writeStoppedTiming(tx, 0);
+    receiver.writeStoppedTiming(rx, 1, 0);
+    EXPECT_NE(tx.str().find("[stop-transport-begin],1,0,-1,tx,1,0"), std::string::npos);
+    EXPECT_NE(rx.str().find("[stop-transport-begin],1,1,0,rx,1,0"), std::string::npos);
+    auto event_time = [](const std::string & text) {
+        auto begin = text.find("[stop-transport],");
+        for (int i = 0; i < 5; ++i) begin = text.find(',', begin) + 1;
+        return std::stoll(text.substr(begin));
+    };
+    EXPECT_LE(event_time(tx.str()), event_time(rx.str()));
+    EXPECT_LE(event_time(rx.str()), callback_wall);
+
+    cc::TrajectoryIntentPublisher disabled(*node, "/test/disabled_transport", 42);
+    disabled.publish(packet);
+    std::ostringstream disabled_log;
+    disabled.writeStoppedTiming(disabled_log, 0);
+    EXPECT_TRUE(disabled_log.str().empty());
 }

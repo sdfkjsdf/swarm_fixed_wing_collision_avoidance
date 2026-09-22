@@ -73,7 +73,7 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
             worker_params.trajectory_refresh_period_us);
 
     m_intent_publisher = std::make_unique<TrajectoryIntentPublisher>(
-        m_node, own_intent_topic, intent_history_depth);
+        m_node, own_intent_topic, intent_history_depth, worker_params.stopped_stage_timing_enabled);
     m_decision_publisher = m_node.create_publisher<
         collision_avoidance::msg::ManeuverSelectionDecision>(
         "/common/px4_" + std::to_string(m_vehicle_id)
@@ -105,7 +105,7 @@ DistributedManeuverSelectionRuntime::DistributedManeuverSelectionRuntime(
                             "[maneuver-selection] remote intent input queue full");
                     }
                 },
-                intent_history_depth));
+                intent_history_depth, worker_params.stopped_stage_timing_enabled));
         const std::string remote_decision_topic =
             "/common/px4_" + std::to_string(remote_vehicle_id)
             + "/maneuver_selection_decision";
@@ -301,6 +301,13 @@ bool DistributedManeuverSelectionRuntime::enabled() const noexcept
 void DistributedManeuverSelectionRuntime::stopAndWriteStageTiming(std::ostream & out)
 {
     m_worker.stopAndWriteStageTiming(out);
+    if (m_intent_publisher) m_intent_publisher->writeStoppedTiming(out, m_vehicle_id);
+    std::size_t subscription_index = 0;
+    for (int peer = 0; peer < m_total_agent_count; ++peer) {
+        if (peer != m_vehicle_id && subscription_index < m_intent_subscriptions.size()) {
+            m_intent_subscriptions[subscription_index++]->writeStoppedTiming(out, m_vehicle_id, peer);
+        }
+    }
     writeStoppedBudget(out, m_vehicle_id, "worker", m_worker.stoppedBudgetTraces());
     if (const auto * records = m_worker.stoppedGraphDiagnostics()) {
         out << "[stop-observation-begin],1," << m_vehicle_id

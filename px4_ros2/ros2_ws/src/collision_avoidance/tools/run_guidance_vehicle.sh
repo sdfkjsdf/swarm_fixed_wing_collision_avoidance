@@ -27,6 +27,18 @@ GUIDANCE_BIN=${GUIDANCE_BIN:-${PACKAGE_PREFIX}/lib/collision_avoidance/vtol_guid
 GUIDANCE_CONFIG=${GUIDANCE_CONFIG:-${PACKAGE_SHARE}/config/${GUIDANCE_CONFIG_NAME:-flocking_params.yaml}}
 AMAC_POLICY_CONFIG=${AMAC_POLICY_CONFIG:-${PACKAGE_SHARE}/config/${AMAC_POLICY_CONFIG_NAME:-amac_distributed_formation.yaml}}
 
+# Topic-specific Fast DDS recovery timing for the five-aircraft deployment.
+# An explicitly supplied DDS profile remains authoritative. No default-profile
+# override: PX4, coordination, discovery, and other publishers keep their QoS.
+if [[ "${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}" == "rmw_fastrtps_cpp" \
+        && "${TOTAL_AGENT_NUM}" == 5 && -z "${FASTRTPS_DEFAULT_PROFILES_FILE:-}" ]]; then
+    export FASTRTPS_DEFAULT_PROFILES_FILE="${PACKAGE_SHARE}/config/fastdds_trajectory_5agents.xml"
+    if [[ ! -r "${FASTRTPS_DEFAULT_PROFILES_FILE}" ]]; then
+        echo "trajectory DDS profile not found: ${FASTRTPS_DEFAULT_PROFILES_FILE}" >&2
+        exit 1
+    fi
+fi
+
 for required_file in "${GUIDANCE_BIN}" "${GUIDANCE_CONFIG}" "${AMAC_POLICY_CONFIG}"; do
     if [[ ! -e "${required_file}" ]]; then
         echo "required guidance artifact not found: ${required_file}" >&2

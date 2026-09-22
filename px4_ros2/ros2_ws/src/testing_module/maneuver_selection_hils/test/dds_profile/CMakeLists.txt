@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.8)
+project(check_trajectory_dds_profile)
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(collision_avoidance REQUIRED)
+find_package(rmw_fastrtps_cpp REQUIRED)
+find_package(fastrtps REQUIRED)
+add_executable(check_trajectory_dds_profile check_trajectory_dds_profile.cpp)
+target_compile_features(check_trajectory_dds_profile PRIVATE cxx_std_17)
+ament_target_dependencies(check_trajectory_dds_profile
+  rclcpp collision_avoidance rmw_fastrtps_cpp fastrtps)
