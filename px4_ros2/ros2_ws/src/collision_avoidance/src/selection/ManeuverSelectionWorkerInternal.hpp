@@ -104,9 +104,6 @@ inline bool validParams(const ManeuverSelectionWorkerParams & params) noexcept
                 || params.interaction_graph_params
                         .ad_masd_config_version == 0
                 || params.interaction_graph_params.config_version == 0))
-        || !finitePositive(
-            params.activation_params
-                .relative_speed_epsilon_mps)
         || (params.formation_discrimination_enabled
             && (params.execution_policy
                     != ManeuverExecutionPolicy::AmacAdThreshold

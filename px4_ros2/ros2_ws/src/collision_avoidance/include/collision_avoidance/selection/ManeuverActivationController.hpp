@@ -12,16 +12,8 @@ namespace collision_avoidance::selection
 enum class ManeuverDeactivationReason : std::uint8_t
 {
     None = 0,
-    FutureCpaClear,
-};
-
-struct ManeuverActivationControllerParams
-{
-    // Project reconstruction for the unpublished Lockheed CPA special case.
-    // Below this relative speed, current separation is used instead of
-    // dividing by a near-zero denominator. Runtime profiles must calibrate
-    // this threshold from their synchronized velocity noise.
-    double relative_speed_epsilon_mps{1.0e-6};
+    // Value 1 belonged to the removed CPA termination rule in older bags.
+    CoordinatedNominalReturnSafe = 2,
 };
 
 struct ManeuverActivationSample
@@ -30,6 +22,8 @@ struct ManeuverActivationSample
     bool valid{false};
     double minimum_ad_m{0.0};
     std::uint32_t unsafe_threat_mask{0};
+    // Current pair budgets/kinematics are also used by optional Formation
+    // discrimination; they are not a second termination criterion.
     std::array<double, kMaximumSelectionAircraft> activation_criteria_m{};
     std::array<std::array<double, 3>, kMaximumSelectionAircraft>
         relative_positions_ned_m{};
@@ -46,9 +40,9 @@ struct ManeuverActivationSample
     // evaluated component tuple and its execution without changing the legacy
     // local-AD trigger when the interaction graph is disabled.
     bool coordinated_activation_requested{false};
-    // CPA clear is necessary but not sufficient for release.  The worker
-    // sets this only after the actual Formation rollout is safe.
-    bool allow_deactivation{true};
+    // Explicit permission from the worker: fresh joint nominal rollout,
+    // ownship transition against active peers, and all peer confirmations.
+    bool allow_deactivation{false};
 };
 
 struct ManeuverActivationStatus
@@ -59,8 +53,6 @@ struct ManeuverActivationStatus
     ManeuverDeactivationReason deactivation_reason{
         ManeuverDeactivationReason::None};
     std::uint64_t activation_timestamp_us{0};
-    std::uint32_t affected_threat_mask{0};
-    std::array<double, kMaximumSelectionAircraft> activation_criteria_m{};
     std::uint8_t latched_candidate_id{0};
     std::uint64_t latched_candidate_input_revision{0};
     estimation::PredictInput latched_input{};
@@ -72,13 +64,10 @@ struct ManeuverActivationStatus
 class ManeuverActivationController
 {
 public:
-    explicit ManeuverActivationController(
-        const ManeuverActivationControllerParams & params = {});
+    ManeuverActivationController() = default;
 
     ManeuverActivationStatus update(
         const ManeuverActivationSample & sample) noexcept;
-    bool futureCpaClear(
-        const ManeuverActivationSample & sample) const noexcept;
     bool replaceActiveCommand(
         std::uint8_t candidate_id,
         std::uint64_t candidate_input_revision,
@@ -87,14 +76,6 @@ public:
     void reset() noexcept;
 
 private:
-    void addNewAffectedThreats(
-        const ManeuverActivationSample & sample) noexcept;
-    bool futureCpaDistance(
-        const std::array<double, 3> & relative_position_ned_m,
-        const std::array<double, 3> & relative_velocity_ned_mps,
-        double & distance_m) const noexcept;
-
-    ManeuverActivationControllerParams m_params;
     ManeuverActivationStatus m_status{};
     std::uint64_t m_last_timestamp_us{0};
 };

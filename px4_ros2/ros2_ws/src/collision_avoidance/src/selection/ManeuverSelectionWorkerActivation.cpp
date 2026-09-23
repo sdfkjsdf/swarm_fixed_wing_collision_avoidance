@@ -74,7 +74,8 @@ bool ManeuverSelectionWorker::buildActivationSample(
     std::uint64_t now_us,
     ManeuverActivationSample & sample,
     ManeuverSelectionDecision & decision,
-    NominalIntentSet & nominal)
+    NominalIntentSet & nominal,
+    const bool selected_best_only)
 {
     sample = ManeuverActivationSample{};
     sample.timestamp_us = now_us;
@@ -120,7 +121,10 @@ bool ManeuverSelectionWorker::buildActivationSample(
     }
     const ManeuverActivationStatus activation =
         m_activation_controller.status();
-    const bool monitor_actual_execution = activation.active;
+    // The normal activation path is unchanged. A release check also evaluates
+    // the exact selected-best view that this node will monitor after release,
+    // without changing the controller state or the selected command.
+    const bool monitor_actual_execution = activation.active && !selected_best_only;
     const std::uint8_t ownship_candidate_id = monitor_actual_execution
         ? activation.latched_candidate_id
         : m_selected_candidate_ids[ownship_index];
@@ -160,7 +164,7 @@ bool ManeuverSelectionWorker::buildActivationSample(
     // this aircraft's latch, each active peer's advertised latch, and the
     // Formation intent of every inactive peer. Release additionally checks the
     // proposed nominal transition below, not continuation of ownship avoidance.
-    // CPA always starts from the measured ownship flight vector.
+    // Optional Formation discrimination uses the current flight vector.
     const double horizontal_speed_squared_m2ps2 =
         m_latest_state.V * m_latest_state.V
         - m_latest_state.h_dot * m_latest_state.h_dot;
@@ -184,10 +188,6 @@ bool ManeuverSelectionWorker::buildActivationSample(
     double minimum_ad = std::numeric_limits<double>::infinity();
     double reciprocal_cost_sum = 0.0;
     bool reciprocal_cost_defined = true;
-    // Check the command we would actually switch to against peers that may
-    // still be avoiding. Inactive peers are covered by the joint nominal check.
-    bool transition_safe = monitor_actual_execution
-        && buildNominalIntentSet(now_us, nominal);
     std::size_t evaluated_threat_count = 0;
     for (int remote_id = 0;
          remote_id < m_params.total_agent_count; ++remote_id) {
@@ -280,14 +280,13 @@ bool ManeuverSelectionWorker::buildActivationSample(
                 now_us, *ownship_intent, *remote_intent, pair)) {
             return false;
         }
-        if (transition_safe && remote_avoidance_active) {
-            CombinationEvaluation transition_pair;
-            transition_safe = m_pair_evaluator.evaluatePair(
-                now_us, nominal.candidates[ownship_index][0],
-                *remote_intent, transition_pair) && transition_pair.feasible;
+        if (remote_avoidance_active) {
+            // Reuse the exact execution intent resolved for monitoring. No
+            // second cache lookup, reconstruction or covariance propagation.
+            nominal.active_peer_intents[remote_index] = remote_intent;
         }
         ++evaluated_threat_count;
-        if (m_params.masd_diagnostics_enabled) {
+        if (m_params.masd_diagnostics_enabled && !selected_best_only) {
             ManeuverBudgetTrace trace;
             trace.event = 3;
             trace.epoch = m_latest_selection_decision.local_selection_epoch;
@@ -318,10 +317,7 @@ bool ManeuverSelectionWorker::buildActivationSample(
         if (pair.ad_m < 0.0) {
             sample.unsafe_threat_mask |= std::uint32_t{1} << remote_index;
         }
-        // The public alternate-termination study does not publish the exact
-        // threshold implementation. This project maps its "original
-        // activation criteria" to the pair MASD used by AD = PMR - MASD and
-        // freezes that value when the pair first becomes unsafe.
+        // Optional Formation discrimination uses the current pair budget.
         sample.activation_criteria_m[remote_index] = pair.masd_m;
         if (pair.reciprocal_cost_defined) {
             reciprocal_cost_sum += pair.reciprocal_cost;
@@ -356,7 +352,6 @@ bool ManeuverSelectionWorker::buildActivationSample(
     }
     sample.minimum_ad_m = minimum_ad;
     sample.valid = true;
-    nominal.ownship_transition_safe = transition_safe;
     decision.ad_m = minimum_ad;
     decision.reciprocal_cost_sum = reciprocal_cost_defined
         ? reciprocal_cost_sum
@@ -490,13 +485,15 @@ bool ManeuverSelectionWorker::buildNominalIntentSet(
     return true;
 }
 
-bool ManeuverSelectionWorker::evaluateNominalPostRelease(
+ManeuverSelectionWorker::ReturnSafetyEvaluation
+ManeuverSelectionWorker::evaluateReturnSafety(
     std::uint64_t now_us,
-    JointCombinationEvaluation & evaluation,
+    const bool check_ownship_transition,
     NominalIntentSet & nominal)
 {
+    ReturnSafetyEvaluation result;
     if (!buildNominalIntentSet(now_us, nominal)) {
-        return false;
+        return result;
     }
 
     JointManeuverEvaluation nominal_evaluation;
@@ -507,11 +504,31 @@ bool ManeuverSelectionWorker::evaluateNominalPostRelease(
             static_cast<std::size_t>(m_params.total_agent_count),
             nominal_evaluation)
         || !nominal_evaluation.has_best) {
-        return false;
+        return result;
     }
-    evaluation = nominal_evaluation.combinations[
+    result.all_nominal = nominal_evaluation.combinations[
         nominal_evaluation.best_combination_index];
-    return evaluation.valid;
+    // A return already blocked by the joint nominal rollout needs no mixed
+    // comparisons. Keep its nominal result available for peer confirmation.
+    if (!result.all_nominal.valid || !result.all_nominal.all_pairs_feasible
+        || !check_ownship_transition) {
+        return result;
+    }
+
+    const std::size_t ownship_index = static_cast<std::size_t>(m_params.vehicle_id);
+    for (const auto * peer_intent : nominal.active_peer_intents) {
+        if (peer_intent == nullptr) {
+            continue; // Inactive peers are covered by the all-nominal rollout.
+        }
+        CombinationEvaluation transition_pair;
+        if (!m_pair_evaluator.evaluatePair(
+                now_us, nominal.candidates[ownship_index][0],
+                *peer_intent, transition_pair) || !transition_pair.feasible) {
+            return result;
+        }
+    }
+    result.safe_to_return = true;
+    return result;
 }
 
 bool ManeuverSelectionWorker::allPeersConfirmPostRelease(
@@ -625,9 +642,7 @@ void ManeuverSelectionWorker::applyFormationActivationGate(
     decision.formation_evaluated = true;
 
     // Formation is strictly a new-activation exemption. Once avoidance is
-    // active, keep the complete AD-derived unsafe mask so newly unsafe threats
-    // are added to the CPA termination monitor even if they resemble a
-    // formation encounter.
+    // active, keep the complete AD-derived unsafe mask for risk monitoring.
     if (m_activation_controller.status().active) {
         return;
     }
@@ -755,7 +770,6 @@ void ManeuverSelectionWorker::updateActivationState(
     decision.nominal_lateral_acceleration_mps2 =
         decision.nominal_setpoint_available
         ? nominal_input.a_lat_cmd : std::numeric_limits<double>::quiet_NaN();
-    decision.cpa_clear = false;
     const bool retained_post_release_evaluation =
         m_has_last_post_release_evaluation
         && m_last_post_release_evaluation_timestamp_us <= now_us
@@ -803,8 +817,10 @@ void ManeuverSelectionWorker::updateActivationState(
             }
         }
     }
-    JointCombinationEvaluation post_release_evaluation;
-    if (evaluateNominalPostRelease(now_us, post_release_evaluation, nominal)) {
+    const ReturnSafetyEvaluation return_safety = evaluateReturnSafety(
+        now_us, sample.valid && activation_before_rollup.active, nominal);
+    const auto & post_release_evaluation = return_safety.all_nominal;
+    if (post_release_evaluation.valid) {
         m_last_post_release_evaluation = post_release_evaluation;
         m_last_post_release_evaluation_timestamp_us = now_us;
         m_has_last_post_release_evaluation = true;
@@ -817,20 +833,25 @@ void ManeuverSelectionWorker::updateActivationState(
     }
     const ManeuverActivationStatus previous_status =
         m_activation_controller.status();
-    if (previous_status.active && sample.valid) {
-        decision.cpa_clear = m_activation_controller.futureCpaClear(sample);
-    }
-    if (previous_status.active && decision.cpa_clear) {
+    if (previous_status.active) {
         decision.post_release_peer_confirmed =
-            decision.post_release_safe
-            && decision.post_release_evaluation_timestamp_us == now_us
-            && nominal.ownship_transition_safe
+            sample.valid && return_safety.safe_to_return
             && allPeersConfirmPostRelease(now_us);
-        sample.allow_deactivation =
-            decision.post_release_peer_confirmed;
+        if (decision.post_release_peer_confirmed) {
+            // Project release-consistency guard, not a published Lockheed
+            // termination equation: do not release into an already-triggered
+            // selected-best state. Keep the AD < 0 activation rule unchanged.
+            // Reuse reconstructed candidate cones; no candidate search, new
+            // trajectory generation, wire fields, cooldown or positive margin.
+            ManeuverActivationSample after_release;
+            ManeuverSelectionDecision after_release_decision;
+            sample.allow_deactivation = buildActivationSample(
+                now_us, after_release, after_release_decision, nominal, true)
+                && after_release.minimum_ad_m >= 0.0;
+        }
         m_safe_rejoin_active = !sample.allow_deactivation;
     } else {
-        sample.allow_deactivation = true;
+        sample.allow_deactivation = false;
         m_safe_rejoin_active = false;
     }
     const ManeuverActivationStatus status =

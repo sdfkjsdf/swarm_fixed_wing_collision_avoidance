@@ -2379,8 +2379,7 @@ TEST(ManeuverSelectionWorker, MonitorsActivationBetweenSelectionEvents)
     EXPECT_EQ(second_output.decision.local_selection_epoch, selected_epoch);
 }
 
-TEST(ManeuverSelectionWorker,
-    DeactivatesWithoutV4AfterCpaAndCoordinatedFormationRolloutAreSafe)
+static void verifyCoordinatedNominalReturn(int peer_gate)
 {
     auto first_params = params();
     auto second_params = params(1);
@@ -2450,6 +2449,17 @@ TEST(ManeuverSelectionWorker,
         // unrelated epoch must not deadlock an otherwise coordinated release.
         second_peer.local_selection_epoch += 100U;
         first_peer.local_selection_epoch += 200U;
+        // Keep the nominal commands and trajectories valid while rejecting
+        // only the independent peer release acknowledgement.
+        if (peer_gate != 0 && step <= 1) {
+            for (auto * report : {&first_peer, &second_peer}) {
+                report->post_release_evaluated = peer_gate != 3;
+                report->post_release_safe = peer_gate != 1;
+                report->post_release_evaluation_timestamp_us = peer_gate == 2
+                    ? timestamp_us - 2'000'000ULL
+                    : (peer_gate == 4 ? timestamp_us + 50'000ULL : timestamp_us);
+            }
+        }
         ASSERT_TRUE(first.pushRemoteDecision(1, second_peer));
         ASSERT_TRUE(second.pushRemoteDecision(0, first_peer));
         first_output = pushBeliefAndProcess(
@@ -2466,6 +2476,14 @@ TEST(ManeuverSelectionWorker,
                 0.0, 20.0, 0.0));
         ASSERT_TRUE(first_output.has_decision);
         ASSERT_TRUE(second_output.has_decision);
+        if (peer_gate != 0 && step == 1) {
+            EXPECT_TRUE(first_output.decision.post_release_safe);
+            EXPECT_TRUE(second_output.decision.post_release_safe);
+            EXPECT_TRUE(first_output.decision.activation_requested);
+            EXPECT_TRUE(second_output.decision.activation_requested);
+            EXPECT_FALSE(first_output.decision.post_release_peer_confirmed);
+            EXPECT_FALSE(second_output.decision.post_release_peer_confirmed);
+        }
         exchangePackets(first, second, first_output, second_output);
         first_ended = first_ended
             || first_output.decision.activation_just_ended;
@@ -2487,10 +2505,18 @@ TEST(ManeuverSelectionWorker,
     EXPECT_FALSE(second_output.decision.activation_requested);
     EXPECT_EQ(
         first_output.decision.deactivation_reason,
-        cs::ManeuverDeactivationReason::FutureCpaClear);
+        cs::ManeuverDeactivationReason::CoordinatedNominalReturnSafe);
     EXPECT_EQ(
         second_output.decision.deactivation_reason,
-        cs::ManeuverDeactivationReason::FutureCpaClear);
+        cs::ManeuverDeactivationReason::CoordinatedNominalReturnSafe);
+}
+
+TEST(ManeuverSelectionWorker, DeactivatesOnlyAfterCoordinatedNominalReturnIsSafe)
+{
+    for (int peer_gate = 0; peer_gate < 5; ++peer_gate) {
+        SCOPED_TRACE(peer_gate);
+        verifyCoordinatedNominalReturn(peer_gate);
+    }
 }
 
 TEST(ManeuverSelectionWorker, NominalIntentReuseIsLimitedToOneActivationUpdate)
@@ -2535,6 +2561,191 @@ TEST(ManeuverSelectionWorker, NominalIntentReuseIsLimitedToOneActivationUpdate)
     ASSERT_TRUE(output.decision.post_release_evaluated);
     EXPECT_EQ(output.decision.post_release_evaluation_timestamp_us, start + 350'000);
     EXPECT_GT(std::abs(output.decision.post_release_minimum_ad_m - straight_ad), 1.0);
+}
+
+TEST(ManeuverSelectionWorker, UnifiedReturnChecksMixedExecutionAndRefreshesPeerViews)
+{
+    auto p0 = params(0);
+    auto p1 = params(1);
+    p0.exhaustive_test_mode = p1.exhaustive_test_mode = true;
+    auto local = std::make_unique<cs::ManeuverSelectionWorker>(p0);
+    auto peer = std::make_unique<cs::ManeuverSelectionWorker>(p1);
+    constexpr std::uint64_t start = 6'500'000;
+    ASSERT_TRUE(local->pushPublishedSetpoint(publishedInput(start, 0)));
+    ASSERT_TRUE(peer->pushPublishedSetpoint(publishedInput(start, 0)));
+    cs::ManeuverSelectionWorkerOutput own, other;
+    for (std::uint64_t offset = 0; offset <= 250'000; offset += 50'000) {
+        ASSERT_TRUE(local->pushNominalSetpoint(nominalSnapshot(start + offset)));
+        ASSERT_TRUE(peer->pushNominalSetpoint(nominalSnapshot(start + offset)));
+        own = pushBeliefAndProcess(*local,
+            beliefSnapshot(start + offset, -5, 0, 20, 0));
+        other = pushBeliefAndProcess(*peer,
+            beliefSnapshot(start + offset, 5, 0, -20, 0));
+        exchangePackets(*local, *peer, own, other);
+    }
+    const auto commits = confirmTwoAircraftProposal(*local, *peer, own, other);
+    ASSERT_TRUE(commits[0].decision.activation_requested);
+
+    // Construct a mixed-execution collision at t=4 s: ownship flies straight,
+    // peer continues its left-turn candidate. Both nominal commands are
+    // straight/parallel, so their all-nominal rollout remains separated.
+    ce::TrajectoryPredict predictor(p1.predictor_params);
+    const auto candidates = ce::makeLevelTurnCandidateTable(
+        p1.ground_speed_command_mps, 100.0, p1.gravity_mps2);
+    ASSERT_NE(candidates.find(0), nullptr);
+    std::array<ce::PredictState, 41> turning{};
+    predictor.predict(ce::PredictState{0, 0, 100, 20, 0, 0, 0},
+        *candidates.find(0), 0.1, turning);
+    const double peer_n = 80.0 - turning.back().p_n;
+    const double peer_e = -turning.back().p_e;
+
+    for (int step = 0; step < 3; ++step) {
+        const auto stamp = start + 300'000 + step * 50'000;
+        ASSERT_TRUE(peer->pushNominalSetpoint(nominalSnapshot(stamp)));
+        // Step 0: nominal is unsafe even with a peer's 'safe' report.
+        // Step 1: nominal is safe, but mixed execution is unsafe.
+        // Step 2: peer has returned; do not retain step 1's active-peer view.
+        other = pushBeliefAndProcess(*peer, beliefSnapshot(stamp,
+            step == 0 ? 1.0 : peer_n, step == 0 ? 0.0 : peer_e, 20, 0));
+        const ce::TrajectoryIntentPacket * active_packet = nullptr;
+        for (std::size_t k = 0; k < other.intent_packet_count; ++k) {
+            const auto & packet = other.intent_packets[k];
+            ASSERT_TRUE(local->pushRemoteIntent(1, packet));
+            if (packet.candidate_id == 0) active_packet = &packet;
+        }
+        ASSERT_NE(active_packet, nullptr);
+        auto report = peerDecision(commits[1].decision);
+        report.ownship_candidate_id = active_packet->candidate_id;
+        report.ownship_candidate_valid = true;
+        report.selected_candidate_ids[1] = active_packet->candidate_id;
+        report.selected_candidate_input_revisions[1] = active_packet->candidate_input_revision;
+        report.activation_requested = step != 2;
+        report.command_execution_requested = step != 2;
+        report.nominal_setpoint_available = true;
+        report.nominal_setpoint_timestamp_us = stamp;
+        report.nominal_ground_speed_command_mps = 20;
+        report.nominal_altitude_command_m = 100;
+        report.nominal_lateral_acceleration_mps2 = 0;
+        report.post_release_evaluated = true;
+        report.post_release_safe = true;
+        report.post_release_evaluation_timestamp_us = stamp;
+        ASSERT_TRUE(local->pushRemoteDecision(1, report));
+        ASSERT_TRUE(local->pushNominalSetpoint(nominalSnapshot(stamp)));
+        own = pushBeliefAndProcess(*local, beliefSnapshot(stamp, 0, 0, 20, 0));
+        ASSERT_TRUE(own.has_decision);
+        ASSERT_TRUE(own.decision.post_release_evaluated);
+        EXPECT_EQ(own.decision.post_release_safe, step != 0);
+        EXPECT_EQ(own.decision.activation_requested, step != 2);
+        EXPECT_EQ(own.decision.post_release_peer_confirmed, step == 2);
+        EXPECT_EQ(own.decision.activation_just_ended, step == 2);
+    }
+}
+
+TEST(ManeuverSelectionWorker, ReleaseCannotEnterAnAlreadyTriggeredSelectedBest)
+{
+    auto p0 = params(0);
+    auto p1 = params(1);
+    p0.exhaustive_test_mode = p1.exhaustive_test_mode = true;
+    auto local = std::make_unique<cs::ManeuverSelectionWorker>(p0);
+    auto peer = std::make_unique<cs::ManeuverSelectionWorker>(p1);
+    constexpr std::uint64_t start = 6'500'000;
+    ASSERT_TRUE(local->pushPublishedSetpoint(publishedInput(start, 0)));
+    ASSERT_TRUE(peer->pushPublishedSetpoint(publishedInput(start, 0)));
+    cs::ManeuverSelectionWorkerOutput own, other;
+    for (std::uint64_t offset = 0; offset <= 250'000; offset += 50'000) {
+        ASSERT_TRUE(local->pushNominalSetpoint(nominalSnapshot(start + offset)));
+        ASSERT_TRUE(peer->pushNominalSetpoint(nominalSnapshot(start + offset)));
+        own = pushBeliefAndProcess(*local,
+            beliefSnapshot(start + offset, -5, 0, 20, 0));
+        other = pushBeliefAndProcess(*peer,
+            beliefSnapshot(start + offset, 5, 0, -20, 0));
+        exchangePackets(*local, *peer, own, other);
+    }
+    const auto commits = confirmTwoAircraftProposal(*local, *peer, own, other);
+    ASSERT_TRUE(commits[0].decision.activation_requested);
+    const auto ids = commits[0].decision.selected_candidate_ids;
+
+    // Build a geometric counterexample, not a tuned flight fixture: place the
+    // two committed best curves at an intersection while the straight nominal
+    // curves miss. The fixed angle/time enumeration covers either turn sign.
+    ce::TrajectoryPredict predictor(p0.predictor_params);
+    const auto table = ce::makeLevelTurnCandidateTable(20, 100, p0.gravity_mps2);
+    ASSERT_NE(table.find(ids[0]), nullptr);
+    ASSERT_NE(table.find(ids[1]), nullptr);
+    ce::TrajectoryIntentSender sender(predictor, table);
+    ce::TrajectoryIntentReceiver receiver(predictor);
+    cs::ManeuverCombinationEvaluator evaluator(p0.evaluator_params);
+    ce::PredictStateCovariance covariance{};
+    for (std::size_t i = 0; i < 7; ++i) covariance[i * 7 + i] = .01;
+    ce::PredictState other_state{};
+    bool found = false;
+    for (const double heading : {1.5707963267948966, -1.5707963267948966,
+                                 3.141592653589793}) {
+        if (found) break;
+        std::array<ce::PredictState, 46> first_curve{}, second_curve{};
+        predictor.predict(ce::PredictState{0, 0, 100, 20, 0, 0, 0},
+            *table.find(ids[0]), .1, first_curve);
+        predictor.predict(ce::PredictState{0, 0, 100, 20, heading, 0, 0},
+            *table.find(ids[1]), .1, second_curve);
+        for (const std::size_t index : {40U, 30U, 20U}) {
+            other_state = {first_curve[index].p_n - second_curve[index].p_n,
+                first_curve[index].p_e - second_curve[index].p_e,
+                100, 20, heading, 0, 0};
+            std::array<ce::ReceivedTrajectoryIntent, 2> nominal{}, best{};
+            const std::array<ce::PredictState, 2> states{
+                ce::PredictState{0, 0, 100, 20, 0, 0, 0}, other_state};
+            for (std::size_t i = 0; i < 2; ++i) {
+                ce::TrajectoryIntentPacket packet;
+                ASSERT_TRUE(sender.buildForCandidateInput(start + 300'000, 3,
+                    {20, 100, 0, 0}, states[i], covariance, packet));
+                ASSERT_TRUE(receiver.receive(packet, nominal[i]));
+                ASSERT_TRUE(sender.buildForSelectedCandidate(start + 300'000,
+                    ids[i], states[i], covariance, packet));
+                ASSERT_TRUE(receiver.receive(packet, best[i]));
+            }
+            cs::CombinationEvaluation n, b;
+            ASSERT_TRUE(evaluator.evaluatePair(start + 300'000, nominal[0], nominal[1], n));
+            ASSERT_TRUE(evaluator.evaluatePair(start + 300'000, best[0], best[1], b));
+            if (n.ad_m > 20 && b.ad_m < 0) { found = true; break; }
+        }
+    }
+    ASSERT_TRUE(found) << "selected IDs " << int(ids[0]) << ',' << int(ids[1]);
+
+    for (int step = 0; step < 4; ++step) {
+        const auto stamp = start + 300'000 + step * 50'000;
+        // 0: safe nominal return but unsafe best; 1: both clear -> release;
+        // 2: unchanged clear state -> no rearm; 3: a new conflict -> rearm.
+        const double north = step == 3 ? 5 : other_state.p_n + (step > 0 ? 500 : 0);
+        const double east = step == 3 ? 0 : other_state.p_e;
+        ASSERT_TRUE(peer->pushNominalSetpoint(nominalSnapshot(stamp)));
+        other = pushBeliefAndProcess(*peer, beliefSnapshot(stamp, north, east,
+            step == 3 ? -20 : 20 * std::cos(other_state.psi),
+            step == 3 ? 0 : 20 * std::sin(other_state.psi)));
+        for (std::size_t k = 0; k < other.intent_packet_count; ++k)
+            ASSERT_TRUE(local->pushRemoteIntent(1, other.intent_packets[k]));
+        auto report = peerDecision(commits[1].decision);
+        report.activation_requested = false;
+        report.command_execution_requested = false;
+        report.nominal_setpoint_available = true;
+        report.nominal_setpoint_timestamp_us = stamp;
+        report.nominal_ground_speed_command_mps = 20;
+        report.nominal_altitude_command_m = 100;
+        report.nominal_lateral_acceleration_mps2 = 0;
+        report.post_release_evaluated = true;
+        report.post_release_safe = true;
+        report.post_release_evaluation_timestamp_us = stamp;
+        ASSERT_TRUE(local->pushRemoteDecision(1, report));
+        ASSERT_TRUE(local->pushNominalSetpoint(nominalSnapshot(stamp)));
+        own = pushBeliefAndProcess(*local, beliefSnapshot(stamp, 0, 0, 20, 0));
+        ASSERT_TRUE(own.has_decision);
+        EXPECT_EQ(own.decision.activation_requested, step == 0 || step == 3) << step;
+        EXPECT_EQ(own.decision.activation_just_ended, step == 1) << step;
+        EXPECT_EQ(own.decision.activation_just_started, step == 3) << step;
+        if (step == 0) {
+            EXPECT_TRUE(own.decision.post_release_safe);
+            EXPECT_TRUE(own.decision.post_release_peer_confirmed);
+        }
+    }
 }
 
 TEST(ManeuverSelectionWorker, UnavailableNominalDoesNotSuppressSevenCandidates)
@@ -3868,7 +4079,6 @@ TEST(ManeuverSelectionWorker, ComponentEpisodeSurvivesLocalCommitInEitherArrival
         const auto released = pushGraphBeliefAndProcess(*workers[1],
             beliefSnapshot(start + 600'000, 500.0, 0.0, 22.0, 0.0));
         ASSERT_FALSE(released.decision.activation_requested)
-            << "CPA=" << released.decision.cpa_clear
             << " post=" << released.decision.post_release_evaluated
             << "," << released.decision.post_release_safe
             << " peer=" << released.decision.post_release_peer_confirmed

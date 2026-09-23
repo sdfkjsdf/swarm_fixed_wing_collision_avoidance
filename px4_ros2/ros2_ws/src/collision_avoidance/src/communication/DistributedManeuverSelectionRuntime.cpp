@@ -468,7 +468,6 @@ void DistributedManeuverSelectionRuntime::drainWorkerOutput()
                 message.nominal_lateral_acceleration_mps2 =
                     static_cast<float>(
                         decision.nominal_lateral_acceleration_mps2);
-                message.cpa_clear = decision.cpa_clear;
                 message.post_release_evaluated =
                     decision.post_release_evaluated;
                 message.post_release_safe = decision.post_release_safe;

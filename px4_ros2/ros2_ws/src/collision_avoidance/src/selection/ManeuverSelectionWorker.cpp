@@ -36,7 +36,6 @@ ManeuverSelectionWorker::ManeuverSelectionWorker(
   m_pair_evaluator(params.evaluator_params),
   m_barrier_evaluator(params.evaluator_params),
   m_joint_evaluator(params.evaluator_params),
-  m_activation_controller(params.activation_params),
   m_v4_safe_control(params.v4_safe_control_params),
   m_mode_b_interpolator(params.mode_b_interpolator_params),
   m_mode_b_intent_adapter(params.mode_b_intent_adapter_params),

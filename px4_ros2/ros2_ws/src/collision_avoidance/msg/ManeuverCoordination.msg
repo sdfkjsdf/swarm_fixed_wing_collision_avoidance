@@ -15,6 +15,8 @@ uint64 nominal_setpoint_timestamp_us
 float32 nominal_ground_speed_command_mps
 float32 nominal_altitude_command_m
 float32 nominal_lateral_acceleration_mps2
+# Reserved false for compatibility with recorded CDR layouts. CPA is no
+# longer evaluated; deactivation_reason=2 identifies nominal-return release.
 bool cpa_clear
 bool post_release_evaluated
 bool post_release_safe

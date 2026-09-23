@@ -91,7 +91,6 @@ struct ManeuverSelectionWorkerParams
     std::uint64_t candidate_refresh_period_us{250'000};
     std::uint64_t coordination_delay_us{250'000};
     std::uint64_t maximum_belief_delay_us{1'000'000};
-    ManeuverActivationControllerParams activation_params{};
     // Project-defined active-best hysteresis. Public AMAC sources do not
     // disclose these numerical margins, so runtime switching is opt-in.
     bool active_switching_enabled{false};
@@ -119,7 +118,7 @@ struct ManeuverSelectionWorkerParams
     SafeControlCandidateAdapterParams v4_candidate_adapter_params{};
     // Lockheed baseline formation discrimination is disabled until an
     // explicitly calibrated profile is supplied. It gates only new AMAC
-    // activations and is independent of both CPA termination and Mode B.
+    // activations and is independent of nominal-return termination and Mode B.
     bool formation_discrimination_enabled{false};
     formation::FormationBoundaryConfig formation_boundary_config{};
     formation::FormationAggregationPolicy formation_aggregation_policy{
@@ -210,7 +209,6 @@ struct ManeuverSelectionDecision
         std::numeric_limits<double>::quiet_NaN()};
     double nominal_lateral_acceleration_mps2{
         std::numeric_limits<double>::quiet_NaN()};
-    bool cpa_clear{false};
     bool post_release_evaluated{false};
     bool post_release_safe{false};
     double post_release_minimum_ad_m{
@@ -779,16 +777,26 @@ private:
     bool finalizePendingCoordination(
         ManeuverSelectionWorkerOutput & output);
 
-    // Activation, CPA termination, formation gate and post-release checks.
+    // Activation, formation gate and coordinated nominal-return checks.
     // Call-local: activation and post-release use the same owner-thread inputs.
     // Cache failed builds too; the next activation update gets a fresh context.
     struct NominalIntentSet
     {
         MultiAircraftCandidateIntentSets candidates{};
         std::array<std::size_t, kMaximumSelectionAircraft> counts{};
+        // Non-owning views into owner-thread caches, valid only in this update.
+        // A valid activation sample supplies every currently active peer here.
+        std::array<const estimation::ReceivedTrajectoryIntent *,
+            kMaximumSelectionAircraft> active_peer_intents{};
         bool attempted{false};
         bool valid{false};
-        bool ownship_transition_safe{false};
+    };
+    struct ReturnSafetyEvaluation
+    {
+        // Shared with peers even when ownship's mixed transition is unsafe.
+        JointCombinationEvaluation all_nominal{};
+        // Both all-nominal and ownship-return/active-peer checks have passed.
+        bool safe_to_return{false};
     };
     bool buildNominalIntentSet(
         std::uint64_t now_us,
@@ -797,14 +805,15 @@ private:
         std::uint64_t now_us,
         ManeuverActivationSample & sample,
         ManeuverSelectionDecision & decision,
-        NominalIntentSet & nominal);
+        NominalIntentSet & nominal,
+        bool selected_best_only = false);
     std::uint32_t selectedComponentMemberMask(
         std::size_t aircraft_index) const noexcept;
     bool selectedComponentActivationRequested(
         std::uint32_t ownship_component_mask) const noexcept;
-    bool evaluateNominalPostRelease(
+    ReturnSafetyEvaluation evaluateReturnSafety(
         std::uint64_t now_us,
-        JointCombinationEvaluation & evaluation,
+        bool check_ownship_transition,
         NominalIntentSet & nominal);
     bool allPeersConfirmPostRelease(
         std::uint64_t now_us) const noexcept;

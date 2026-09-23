@@ -11,11 +11,6 @@
     # enable their own candidate filter explicitly.
     positive_margin_filter_enabled: false
 
-    # Current-flight-vector CPA. The relative-speed threshold is the
-    # rounded 3-sigma first-difference noise estimate from the final half of
-    # flocking_only_baseline_20260831_01 at 10 Hz.
-    amac_relative_speed_epsilon_mps: 0.21
-
     # Formation remains nominal guidance. No geometry-specific line profile
     # exempts a pair from the common AD activation rule.
     formation_discrimination_enabled: false
